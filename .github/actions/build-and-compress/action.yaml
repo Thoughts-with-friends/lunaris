@@ -4,6 +4,9 @@ inputs:
   target:
     description: "Rust target triple"
     required: true
+  build_dir:
+    description: "Build target directory"
+    required: true
   profile:
     description: "Build profile"
     required: true
@@ -41,7 +44,7 @@ runs:
       shell: pwsh
       if: runner.os == 'Windows'
       run: |
-        Move-Item -Path ./target/${{ matrix.job.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe -Destination './build'
+        Move-Item -Path ./target/${{ matrix.job.target }}/${{ inputs.build_dir }}/${{ inputs.app_name }}.exe -Destination './build'
         Compress-Archive -Path './build/*' -DestinationPath './${{ inputs.asset_name }}'
 
     - name: Compress outputs(MacOS/Linux)
@@ -49,5 +52,5 @@ runs:
       shell: bash
       run: |
         mkdir -p ./build
-        mv ./target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }} ./build
+        mv ./target/${{ inputs.target }}/${{ inputs.build_dir }}/${{ inputs.app_name }} ./build
         tar -czf ${{ inputs.asset_name }} -C ./build .

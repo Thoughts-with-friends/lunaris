@@ -10,6 +10,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   PROFILE: dev # dev or release
+  BUILD_DIR: debug
 
 jobs:
   build:
@@ -45,6 +46,7 @@ jobs:
         uses: ./.github/actions/build-and-compress
         with:
           target: ${{ matrix.job.target }}
+          build_dir: ${{ env.BUILD_DIR }}
           profile: ${{ env.PROFILE }}
           app_name: ${{ env.APP_NAME }}
           asset_name: ${{ matrix.job.asset }}
