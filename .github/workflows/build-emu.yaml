@@ -9,7 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  PROFILE: debug
+  PROFILE: dev # dev or release
 
 jobs:
   build:
