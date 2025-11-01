@@ -1,0 +1,22 @@
+[workspace.package]
+authors = ["DiaSird"]
+categories = ["encoding"]
+description = "A modern Nintendo DS emulator written in Rust"
+edition = "2024"
+keywords = ["emulator", "rust"]
+license = "GPL-3.0"
+readme = "README.md"
+repository = "https://github.com/Thoughts-with-friends/lunaris"                     # NOTE: Without it, CLI & CI build will error.
+rust-version = "1.91"
+version = "0.1.0"
+
+[workspace]
+members = ["core/arm7", "core/arm9", "core/audio", "gui/desk"]
+resolver = "2"
+
+[workspace.dependencies]
+
+# workspace members
+arm7 = { path = "./core/arm7" }
+arm9 = { path = "./core/arm9" }
+audio = { path = "./core/audio" }

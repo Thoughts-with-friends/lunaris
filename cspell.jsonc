@@ -1,0 +1,9 @@
+{
+  "words": [
+    "hexdump",
+    "serde",
+    "wgpu",
+    "winit"
+  ],
+  "ignorePaths": []
+}
