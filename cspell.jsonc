@@ -1,6 +1,7 @@
 {
   "words": [
     "hexdump",
+    "Lunaris",
     "serde",
     "wgpu",
     "winit"
