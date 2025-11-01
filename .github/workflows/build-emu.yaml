@@ -11,6 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   PROFILE: dev # dev or release
   BUILD_DIR: debug
+  APP_NAME: desk
 
 jobs:
   build:
