@@ -39,7 +39,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4.2.2
-
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
       - name: Build and Compress
         uses: ./.github/actions/build-and-compress
         with:
