@@ -58,4 +58,6 @@ jobs:
         uses: actions/upload-artifact@v4.6.2
         with:
           name: ${{ matrix.job.asset }}
-          path: ./build/
+          path: |
+            ./build/
+            ./core/free_bios/bios

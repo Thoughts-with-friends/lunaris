@@ -6,7 +6,7 @@ pub mod firmware;
 mod tests {
     use super::arm7::BIOS_ARM7_BIN;
     use super::arm9::BIOS_ARM9_BIN;
-    use super::firmware::{DSType, default_firmware};
+    use super::firmware::FIRMWARE_DS;
 
     fn create_dir_all() -> std::io::Result<&'static std::path::Path> {
         let dir_name: &std::path::Path = std::path::Path::new("bios");
@@ -34,15 +34,14 @@ mod tests {
         let dir_name = create_dir_all()?;
 
         // Firmware
-        const FW: [u8; 0x40000] = default_firmware::<0x40000>(DSType::Ds);
-        std::fs::write(dir_name.join("firmware.bin"), &FW)?;
-        println!("Saved firmware.bin ({} bytes)", FW.len());
+        std::fs::write(dir_name.join("firmware.bin"), &FIRMWARE_DS)?;
+        println!("Saved firmware.bin ({} bytes)", FIRMWARE_DS.len());
 
         // Basic sanity check for first few bytes
-        assert_eq!(FW[0x08], b'M');
-        assert_eq!(FW[0x09], b'A');
-        assert_eq!(FW[0x0A], b'C');
-        assert_eq!(FW[0x0B], 0x68);
+        assert_eq!(FIRMWARE_DS[0x08], b'M');
+        assert_eq!(FIRMWARE_DS[0x09], b'A');
+        assert_eq!(FIRMWARE_DS[0x0A], b'C');
+        assert_eq!(FIRMWARE_DS[0x0B], 0x68);
 
         println!("Basic sanity check passed.");
         Ok(())

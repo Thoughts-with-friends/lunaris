@@ -11,12 +11,38 @@ pub enum DSType {
     Ds,
     Lite,
     Dsi,
+    /// iQue: Chinese Nintendo DS, uses region-locked cartridges and localized OS
     Ique,
     IqueLite,
 }
 
+impl DSType {
+    const fn model_spec(&self) -> u8 {
+        match self {
+            DSType::Ds => 0xFF,
+            DSType::Lite => 0x20,
+            DSType::Ique => 0x57,
+            DSType::IqueLite => 0x43,
+            DSType::Dsi => 0x63,
+        }
+    }
+}
+
+///
+/// # Example
+/// ```rust
+/// use free_bios::firmware::FIRMWARE_DS;
+/// std::fs::write("firmware.bin", &FIRMWARE_DS).unwrap();
+/// ```
+/// DS firmware for standard DS/Lite (256KB)
+pub const FIRMWARE_DS: [u8; 0x40000] = default_firmware::<0x40000>(DSType::Ds);
+/// DS firmware for DSi (128KB)
+pub const FIRMWARE_DSI: [u8; 0x20000] = default_firmware::<0x20000>(DSType::Dsi);
+/// DS firmware for iQue DS (512KB)
+pub const FIRMWARE_DS_IQUE: [u8; 0x80000] = default_firmware::<0x80000>(DSType::Ique);
+
 // CRC16 calculation using while loop, const compatible
-pub const fn crc16(user: [u8; 0x70]) -> u16 {
+const fn crc16(user: [u8; 0x70]) -> u16 {
     let mut crc: u16 = 0xFFFF;
     let mut i = 0;
     while i < 0x70 {
@@ -35,23 +61,8 @@ pub const fn crc16(user: [u8; 0x70]) -> u16 {
     crc
 }
 
-// Firmware length based on model
-pub const fn firmware_len(model: DSType) -> usize {
-    match model {
-        DSType::Dsi => 0x2_0000,
-        DSType::Ds | DSType::Lite => 0x4_0000,
-        DSType::Ique | DSType::IqueLite => 0x8_0000,
-    }
-}
-
 /// Const-compatible firmware creation
-///
-/// # Example
-/// ```rust
-/// use free_bios::firmware::{default_firmware, DSType};
-/// const FIRMWARE: [u8; 0x40000] = default_firmware::<0x40000>(DSType::Ds);
-/// ```
-pub const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
+const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
     let mut firmware = [0u8; N];
 
     // 0x04..0x07
@@ -80,13 +91,7 @@ pub const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
     firmware[0x1C] = 0x06;
 
     // 0x1D model-specific
-    firmware[0x1D] = match model {
-        DSType::Ds => 0xFF,
-        DSType::Lite => 0x20,
-        DSType::Ique => 0x57,
-        DSType::IqueLite => 0x43,
-        DSType::Dsi => 0x63,
-    };
+    firmware[0x1D] = model.model_spec();
 
     // 0x1E..0x1F
     firmware[0x1E] = 0xFF;
