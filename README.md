@@ -49,3 +49,18 @@
     </a>
   </p>
 </div>
+
+A Nintendo DS emulator - Rust-based
+
+## How to Build
+
+```shell
+cargo build --release
+```
+
+## References
+
+- [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
+- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator, sorta
+- [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
+- [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
