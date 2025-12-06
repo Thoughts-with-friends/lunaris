@@ -52,6 +52,7 @@ jobs:
           app_name: ${{ env.APP_NAME }}
           asset_name: ${{ matrix.job.asset }}
           features: ${{ matrix.job.features }}
+      - run: cargo test --profile ${{ env.PROFILE }} --target ${{ matrix.job.target }} --all
 
       # NOTE: For some reason, the artifact is not pre-compressed even though it is compressed. So we compress it.
       - name: Upload a Build Artifact
