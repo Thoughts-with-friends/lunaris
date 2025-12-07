@@ -58,6 +58,24 @@ A Nintendo DS emulator - Rust-based
 cargo build --release
 ```
 
+## Todo List
+
+- [x] **Phase 0**: FreeBIOS Development
+- [ ] **Phase 1**: Foundation Setup (Memory, Constants)
+- [ ] **Phase 2**: CPU Core Implementation
+- [ ] **Phase 3**: Memory / I/O Management
+- [ ] **Phase 4**: GPU Infrastructure
+- [ ] **Phase 5**: BIOS / ROM Loading
+- [ ] **Phase 6**: UI / Threading
+- [ ] **Phase 7**: Audio System
+- [ ] **Phase 8**: Interrupt System
+- [ ] **Phase 9**: Instruction Set Completion (ARM9)
+- [ ] **Phase 10**: ARM7 Implementation
+- [ ] **Phase 11**: 3D Graphics
+- [ ] **Phase 12**: Save Data System
+- [ ] **Phase 13**: WiFi / Networking
+- [ ] **Phase 14**: Optimization / Debugging
+
 ## References
 
 - [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator

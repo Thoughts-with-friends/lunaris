@@ -1,8 +1,6 @@
-/*
-  SPDX-FileCopyrightText: (C) 2007 kelpsyberry
-  SPDX-License-Identifier: GPL-3.0-or-later
-  https://github.com/kelpsyberry/dust/blob/main/core/src/spi/firmware.rs#L8
-*/
+// SPDX-FileCopyrightText: (C) 2007 kelpsyberry
+// SPDX-License-Identifier: GPL-3.0-or-later
+// https://github.com/kelpsyberry/dust/blob/main/core/src/spi/firmware.rs#L8
 
 /// DSType enum
 /// DS, Lite, DSi, iQue DS, iQue DS Lite
@@ -35,11 +33,11 @@ impl DSType {
 /// std::fs::write("firmware.bin", &FIRMWARE_DS).unwrap();
 /// ```
 /// DS firmware for standard DS/Lite (256KB)
-pub const FIRMWARE_DS: [u8; 0x40000] = default_firmware::<0x40000>(DSType::Ds);
+pub static FIRMWARE_DS: [u8; 0x40000] = default_firmware::<0x40000>(DSType::Ds);
 /// DS firmware for DSi (128KB)
-pub const FIRMWARE_DSI: [u8; 0x20000] = default_firmware::<0x20000>(DSType::Dsi);
+pub static FIRMWARE_DSI: [u8; 0x20000] = default_firmware::<0x20000>(DSType::Dsi);
 /// DS firmware for iQue DS (512KB)
-pub const FIRMWARE_DS_IQUE: [u8; 0x80000] = default_firmware::<0x80000>(DSType::Ique);
+pub static FIRMWARE_DS_IQUE: [u8; 0x80000] = default_firmware::<0x80000>(DSType::Ique);
 
 // CRC16 calculation using while loop, const compatible
 const fn crc16(user: [u8; 0x70]) -> u16 {
@@ -117,7 +115,7 @@ const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
             i += 1;
         }
 
-        firmware[start + 0x00] = 5;
+        firmware[start] = 5;
         firmware[start + 0x02] = if u == 0 { 1 } else { 0 };
         firmware[start + 0x03] = 1;
         firmware[start + 0x04] = 1;

@@ -19,11 +19,11 @@ mod tests {
         let dir_name = create_dir_all()?;
 
         // ARM7 BIOS
-        std::fs::write(dir_name.join("bios_arm7.bin"), &BIOS_ARM7_BIN)?;
+        std::fs::write(dir_name.join("bios_arm7.bin"), BIOS_ARM7_BIN)?;
         println!("Saved bios_arm7.bin ({} bytes)", BIOS_ARM7_BIN.len());
 
         // ARM9 BIOS
-        std::fs::write(dir_name.join("bios_arm9.bin"), &BIOS_ARM9_BIN)?;
+        std::fs::write(dir_name.join("bios_arm9.bin"), BIOS_ARM9_BIN)?;
         println!("Saved bios_arm9.bin ({} bytes)", BIOS_ARM9_BIN.len());
 
         Ok(())
@@ -34,7 +34,7 @@ mod tests {
         let dir_name = create_dir_all()?;
 
         // Firmware
-        std::fs::write(dir_name.join("firmware.bin"), &FIRMWARE_DS)?;
+        std::fs::write(dir_name.join("firmware.bin"), FIRMWARE_DS)?;
         println!("Saved firmware.bin ({} bytes)", FIRMWARE_DS.len());
 
         // Basic sanity check for first few bytes
