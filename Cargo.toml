@@ -11,7 +11,7 @@ rust-version = "1.91"
 version = "0.1.0"
 
 [workspace]
-members = ["core/arm7", "core/arm9", "core/audio", "core/free_bios", "core/mem_const", "gui/desk"]
+members = ["core/arm7", "core/arm9", "core/audio", "core/cpu", "core/free_bios", "core/mem_const", "gui/desk"]
 resolver = "3"
 default-members = ["gui/desk"]
 
@@ -21,7 +21,9 @@ default-members = ["gui/desk"]
 arm7 = { path = "./core/arm7" }
 arm9 = { path = "./core/arm9" }
 audio = { path = "./core/audio" }
+cpu = { path = "./core/cpu" }
 free_bios = { path = "./core/free_bios" }
+mem_const = { path = "./core/mem_const" }
 
 
 [workspace.lints.clippy]

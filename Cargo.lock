@@ -86,6 +86,9 @@ checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 [[package]]
 name = "arm7"
 version = "0.1.0"
+dependencies = [
+ "mem_const",
+]
 
 [[package]]
 name = "arm9"
@@ -318,6 +321,10 @@ dependencies = [
  "core-foundation",
  "libc",
 ]
+
+[[package]]
+name = "cpu"
+version = "0.1.0"
 
 [[package]]
 name = "crossbeam-utils"

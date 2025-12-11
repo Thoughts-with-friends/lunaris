@@ -1,14 +1,18 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+mod bios;
+mod cartridge;
+mod cp15;
+mod cpu;
+mod dma;
+mod emulator;
+mod gpu;
+mod ipc;
+mod rtc;
+mod spi;
+mod spu;
+mod timers;
+mod wifi;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod read_arm7;
+mod write_arm7;
