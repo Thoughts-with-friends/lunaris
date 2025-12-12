@@ -7,6 +7,7 @@ mod cpu;
 mod dma;
 mod emulator;
 mod gpu;
+mod interrupts;
 mod ipc;
 mod rtc;
 mod spi;

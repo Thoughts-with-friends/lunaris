@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use crate::emulator::Emulator;
+use crate::interrupts::Interrupt;
 use mem_const::*;
 
 impl Emulator {
-    pub fn arm9_read_word(&mut self, address: u32) -> u32 {
+    /// ARM7 read 32-bit word
+    pub fn arm7_read_word(&mut self, address: u32) -> u32 {
         // Main RAM
         if (MAIN_RAM_START..SHARED_WRAM_START).contains(&address) {
             let off = (address & MAIN_RAM_MASK) as usize;
@@ -58,6 +60,14 @@ impl Emulator {
                 return 0;
             }
             0x04100000 => {
+                let word: u32 = self.fifo9.read_queue();
+
+                if self.fifo9.request_empty_irq {
+                    self.request_interrupt9(Interrupt::IPC_FIFO_EMPTY);
+                    self.fifo9.request_empty_irq = false;
+                }
+
+                return word;
                 // uint32_t word = fifo9.read_queue();
                 // if (fifo9.request_empty_IRQ) {
                 // request_interrupt9(INTERRUPT::IPC_FIFO_EMPTY);

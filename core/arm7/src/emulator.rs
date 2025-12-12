@@ -6,7 +6,7 @@ use crate::cp15::CP15;
 use crate::cpu::ARMCPU;
 use crate::dma::NDS_DMA;
 use crate::gpu::GPU;
-use crate::ipc::IpcSync;
+use crate::ipc::{IpcFifo, IpcSync};
 use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
 use crate::spu::SPU;
@@ -288,6 +288,10 @@ pub struct Emulator {
     /// IPC synchronization objects
     pub ipcsync_nds9: IpcSync,
     pub ipcsync_nds7: IpcSync,
+
+    /// FIFO
+    pub fifo7: IpcFifo,
+    pub fifo9: IpcFifo,
 }
 
 impl Emulator {
@@ -296,6 +300,16 @@ impl Emulator {
         Emulator {
             arm9: ARMCPU::new(0), // FIXME?
             arm7: ARMCPU::new(1), // FIXME?
+            bios: BIOS::new(),
+            arm9_cp15: CP15::new(),
+            cart: NDSCart::new(),
+            dma: NDS_DMA::new(),
+            gpu: GPU::new(),
+            rtc: RealTimeClock::new(),
+            spi: SPIBus::new(),
+            spu: SPU::new(),
+            timers: NDSTiming::new(),
+            wifi: NDSTiming::new(),
 
             main_ram: vec![0u8; 4 * 1024 * 1024], // 4MB
             shared_wram: vec![0u8; 32 * 1024],    // 32KB
@@ -307,6 +321,12 @@ impl Emulator {
             key_input: KeyInputReg::default(),
             ext_key_in: ExtKeyInReg::default(),
             pow_cnt2: PowCnt2Reg::default(),
+
+            cycle_count: 0,
+            ipcsync_nds7: IpcSync::new(),
+            ipcsync_nds9: IpcSync::new(),
+            fifo7: IpcFifo::new(),
+            fifo9: IpcFifo::new(),
 
             dma_fill: [0u32; 4],
             siocnt: 0,
@@ -551,9 +571,9 @@ impl Emulator {
     // ARM7 Memory Access
 
     /// ARM7 read 32-bit word
-    pub fn arm7_read_word(&self, address: u32) -> u32 {
-        self.read_word_internal(address)
-    }
+    // pub fn arm7_read_word(&self, address: u32) -> u32 {
+    //     self.read_word_internal(address)
+    // }
 
     /// ARM7 read 16-bit halfword
     pub fn arm7_read_halfword(&self, address: u32) -> u16 {
