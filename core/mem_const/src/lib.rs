@@ -116,10 +116,10 @@ pub const VRAM_H_SIZE: u32 = 1024 * 32;
 pub const VRAM_I_SIZE: u32 = 1024 * 16;
 
 /// Size of ARM9 BIOS in bytes
-pub const BIOS9_SIZE: u32 = 1024 * 4;
+pub const BIOS9_SIZE: usize = 1024 * 4;
 
 /// Size of ARM7 BIOS in bytes
-pub const BIOS7_SIZE: u32 = 1024 * 16;
+pub const BIOS7_SIZE: usize = 1024 * 16;
 
 // Masks
 

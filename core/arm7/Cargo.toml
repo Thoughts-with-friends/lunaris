@@ -4,4 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+free_bios = { workspace = true }
 mem_const = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+[features]
+default = ["tracing"]
+tracing = ["dep:tracing"]

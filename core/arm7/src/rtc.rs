@@ -136,16 +136,69 @@ impl RealTimeClock {
         self.io_reg
     }
 
-    /// Write to RTC
-    pub fn write(&mut self, value: u16, is_byte: bool) -> Result<(), String> {
+    /// Write to the RTC register.
+    pub fn write(&mut self, mut value: u16, is_byte: bool) {
+        // If this is a byte write, merge with the previous high byte.
         if is_byte {
-            // Byte write
-            self.io_reg = (self.io_reg & 0xFF00) | (value & 0xFF);
-        } else {
-            // Word write
-            self.io_reg = value;
+            value |= self.io_reg & 0xFF00;
         }
-        Ok(())
+
+        // Extract control bits
+        let data = (value & 0x0001) as u32; // Bit 0: data in/out
+        let clock_out = (value & 0x0002) != 0; // Bit 1: clock (active low)
+        let select_out = (value & 0x0004) != 0; // Bit 2: select (chip enable)
+        let is_writing = (value & 0x0010) != 0; // Bit 4: direction (1 = write)
+
+        if select_out && (self.io_reg & 0x0004) == 0 {
+            self.input = 0;
+            self.input_bit_num = 0;
+            self.input_index = 0;
+            self.output_bit_num = 0;
+            self.output_index = 0;
+        }
+
+        // Chip select handling & If select changed from LOW -> HIGH, reset buffers
+        // When select is already active and clock transitions to low
+        if (select_out && !clock_out) && is_writing {
+            // Writing data bit into RTC
+            self.input |= data << self.input_bit_num;
+            self.input_bit_num += 1;
+
+            // When one byte is filled, interpret it
+            if self.input_bit_num == 8 {
+                self.input_bit_num = 0;
+                self.interpret_input();
+                self.input = 0;
+            }
+        }
+
+        if (select_out && !clock_out) && !is_writing {
+            if (self.internal_output[self.output_index as usize] & (1 << self.output_bit_num)) != 0
+            {
+                self.io_reg |= 0x0001; // set bit 0
+            } else {
+                self.io_reg &= !0x0001; // clear bit 0
+            }
+            self.output_bit_num += 1;
+
+            // Advance to next output byte
+            if self.output_bit_num == 8 {
+                self.output_bit_num = 0;
+                if self.output_index < 7 {
+                    self.output_index += 1;
+                }
+            }
+        }
+
+        // Commit the written value to io_reg
+        //
+        // If writing mode: full register is updated.
+        // If reading mode: only bit 0 comes from RTC, the rest from `value`.
+        if is_writing {
+            self.io_reg = value;
+        } else {
+            self.io_reg = (self.io_reg & 0x0001) | (value & 0xFFFE);
+        }
     }
 
     // Getter methods

@@ -16,6 +16,7 @@ resolver = "3"
 default-members = ["gui/desk"]
 
 [workspace.dependencies]
+tracing = "0.1.43"
 
 # workspace members
 arm7 = { path = "./core/arm7" }

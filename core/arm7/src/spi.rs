@@ -1,5 +1,5 @@
-/// Serial Peripheral Interface (SPI) bus for Nintendo DS
-/// Manages communication with Firmware, Touchscreen, and other SPI devices
+//! Serial Peripheral Interface (SPI) bus for Nintendo DS
+//! Manages communication with Firmware, Touchscreen, and other SPI devices
 
 /// SPI Control Register
 #[derive(Debug, Clone, Copy)]
@@ -152,31 +152,30 @@ impl SPIBus {
     }
 
     /// Write to SPI data register
-    pub fn write_spidata(&mut self, data: u8) -> Result<(), String> {
-        self.input = data;
-        self.spicnt.busy = true;
+    pub fn write_spidata(&mut self, data: u8) {
+        if self.spicnt.enabled {
+            self.spicnt.busy = false;
 
-        // Process transfer based on device selection
-        match self.spicnt.device {
-            0 => {
-                // Firmware device
-                self.firmware_transfer(data)?;
+            // Process transfer based on device selection
+            match self.spicnt.device {
+                0 => {
+                    //Power management
+                    self.output = 0;
+                }
+                1 => {
+                    // Firmware device
+                    self.output = self.firmware_transfer(data);
+                }
+                2 => {
+                    self.output = self.touchscreen_transfer(data); // Touchscreen device
+                }
+                _ => self.output = 0,
             }
-            1 => {
-                // Touchscreen device
-                self.touchscreen_transfer(data)?;
-            }
-            2 => {
-                // Power management device
-                self.power_transfer(data)?;
-            }
-            3 => {
-                // GBA cartridge (not typically used on DS)
-            }
-            _ => {}
-        }
 
-        Ok(())
+            if self.spicnt.irq_after_transfer {
+                unsafe { self.emulator_ptr.as_ref().unwrap().requesting_interrupt(7) };
+            };
+        };
     }
 
     /// Get SPI control register

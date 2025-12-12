@@ -4,31 +4,31 @@
 type InterpreterFunc = fn();
 
 // dummy fns
-fn data_processing() {}
-fn multiply() {}
-fn store_halfword() {}
-fn undefined() {}
-fn store_doubleword() {}
-fn load_halfword() {}
-fn load_signed_byte() {}
-fn load_signed_halfword() {}
-fn multiply_long() {}
-fn saturated_op() {}
-fn signed_halfword_multiply() {}
-fn swap() {}
-fn branch_exchange() {}
-fn blx_reg() {}
-fn count_leading_zeros() {}
-fn store_word() {}
-fn load_word() {}
-fn store_byte() {}
-fn load_byte() {}
-fn store_block() {}
-fn load_block() {}
-fn branch() {}
-fn branch_link() {}
-fn coprocessor_reg_transfer() {}
-fn swi() {}
+const fn data_processing() {}
+const fn multiply() {}
+const fn store_halfword() {}
+const fn undefined() {}
+const fn store_doubleword() {}
+const fn load_halfword() {}
+const fn load_signed_byte() {}
+const fn load_signed_halfword() {}
+const fn multiply_long() {}
+const fn saturated_op() {}
+const fn signed_halfword_multiply() {}
+const fn swap() {}
+const fn branch_exchange() {}
+const fn blx_reg() {}
+const fn count_leading_zeros() {}
+const fn store_word() {}
+const fn load_word() {}
+const fn store_byte() {}
+const fn load_byte() {}
+const fn store_block() {}
+const fn load_block() {}
+const fn branch() {}
+const fn branch_link() {}
+const fn coprocessor_reg_transfer() {}
+const fn swi() {}
 
 // arm interpreter function table
 #[rustfmt::skip]

@@ -1,3 +1,5 @@
+use mem_const::{BIOS7_SIZE, BIOS9_SIZE};
+
 /// Core emulator system that manages CPU, memory, and all peripheral devices
 /// Handles the dual-CPU architecture of the Nintendo DS and system timing
 use crate::bios::BIOS;
@@ -11,6 +13,7 @@ use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
 use crate::spu::SPU;
 use crate::timers::NDSTiming;
+use crate::wifi::WiFi;
 use std::collections::VecDeque;
 
 /// Button input register for standard DS buttons
@@ -179,15 +182,56 @@ pub enum Interrupt {
     DMA2 = 10,
     DMA3 = 11,
     Keypad = 12,
-    GameCart = 13,
-    IPC_Sync = 16,
-    IPC_SendEmpty = 17,
-    IPC_RecvNotEmpty = 18,
-    NdsMeCardData = 19,
-    Geometry = 20,
-    Screens = 21,
-    Mem = 22,
-    RTCAlarm = 23,
+    GBA_SLOT = 13,
+    IPCSYNC = 16,
+    IPC_FIFO_EMPTY,
+    IPC_FIFO_NEMPTY,
+    CART_TRANSFER,
+    CART_IREQ_MC,
+    GEOMETRY_FIFO,
+    UNFOLD_SCREEN,
+    SPI,
+    WIFI,
+}
+
+pub enum BiosMem<const BIOS_SIZE: usize> {
+    /// len: BIOS_SIZE
+    User(Vec<u8>),
+    Const(&'static [u8; BIOS_SIZE]),
+}
+
+impl Default for BiosMem<BIOS7_SIZE> {
+    fn default() -> Self {
+        BiosMem::Const(&free_bios::arm7::BIOS_ARM7_BIN)
+    }
+}
+
+impl Default for BiosMem<BIOS9_SIZE> {
+    fn default() -> Self {
+        BiosMem::Const(&free_bios::arm9::BIOS_ARM9_BIN)
+    }
+}
+
+impl core::ops::Index<usize> for BiosMem<BIOS7_SIZE> {
+    type Output = u8;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            BiosMem::User(items) => &items[index],
+            BiosMem::Const(items) => &items[index],
+        }
+    }
+}
+
+impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS7_SIZE> {
+    type Output = [u8];
+
+    fn index(&self, index: core::ops::Range<usize>) -> &Self::Output {
+        match self {
+            BiosMem::User(items) => &items[index],
+            BiosMem::Const(items) => &items[index],
+        }
+    }
 }
 
 /// Core Nintendo DS emulator system
@@ -205,7 +249,7 @@ pub struct Emulator {
     pub spi: SPIBus,
     pub spu: SPU,
     pub timers: NDSTiming,
-    pub wifi: NDSTiming,
+    pub wifi: WiFi,
 
     /// Main system RAM (4MB)
     pub main_ram: Vec<u8>,
@@ -213,6 +257,10 @@ pub struct Emulator {
     pub shared_wram: Vec<u8>,
     /// ARM7-only WRAM (64KB)
     pub arm7_wram: Vec<u8>,
+
+    pub arm9_bios: BiosMem<BIOS9_SIZE>,
+    pub arm7_bios: BiosMem<BIOS7_SIZE>,
+
     /// VRAM for graphics (used by GPU)
     pub vram: Vec<u8>,
     /// VRAM palette memory
@@ -309,14 +357,18 @@ impl Emulator {
             spi: SPIBus::new(),
             spu: SPU::new(),
             timers: NDSTiming::new(),
-            wifi: NDSTiming::new(),
+            wifi: WiFi::new(),
 
             main_ram: vec![0u8; 4 * 1024 * 1024], // 4MB
             shared_wram: vec![0u8; 32 * 1024],    // 32KB
             arm7_wram: vec![0u8; 64 * 1024],      // 64KB
-            vram: vec![0u8; 656 * 1024],          // 656KB VRAM
-            palette_ram: vec![0u8; 2 * 1024],     // 2KB palette
-            oam: vec![0u8; 2 * 1024],             // 2KB OAM
+
+            arm7_bios: BiosMem::default(),
+            arm9_bios: BiosMem::default(),
+
+            vram: vec![0u8; 656 * 1024],      // 656KB VRAM
+            palette_ram: vec![0u8; 2 * 1024], // 2KB palette
+            oam: vec![0u8; 2 * 1024],         // 2KB OAM
 
             key_input: KeyInputReg::default(),
             ext_key_in: ExtKeyInReg::default(),
@@ -565,38 +617,6 @@ impl Emulator {
 
     /// ARM9 write 8-bit byte
     pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
-        self.write_byte_internal(address, byte);
-    }
-
-    // ARM7 Memory Access
-
-    /// ARM7 read 32-bit word
-    // pub fn arm7_read_word(&self, address: u32) -> u32 {
-    //     self.read_word_internal(address)
-    // }
-
-    /// ARM7 read 16-bit halfword
-    pub fn arm7_read_halfword(&self, address: u32) -> u16 {
-        self.read_halfword_internal(address)
-    }
-
-    /// ARM7 read 8-bit byte
-    pub fn arm7_read_byte(&self, address: u32) -> u8 {
-        self.read_byte_internal(address)
-    }
-
-    /// ARM7 write 32-bit word
-    pub fn arm7_write_word(&mut self, address: u32, word: u32) {
-        self.write_word_internal(address, word);
-    }
-
-    /// ARM7 write 16-bit halfword
-    pub fn arm7_write_halfword(&mut self, address: u32, halfword: u16) {
-        self.write_halfword_internal(address, halfword);
-    }
-
-    /// ARM7 write 8-bit byte
-    pub fn arm7_write_byte(&mut self, address: u32, byte: u8) {
         self.write_byte_internal(address, byte);
     }
 
