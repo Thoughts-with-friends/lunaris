@@ -213,7 +213,11 @@ impl Emulator {
             0x040001BA => self.cart.set_hi_key2_seed1(halfword.into()),
 
             0x040001C0 => self.spi.set_spicnt(halfword),
-            0x040001C2 => self.spi.write_spidata((halfword & 0xFF) as u8),
+            0x040001C2 => {
+                if self.spi.write_spidata((halfword & 0xFF) as u8) {
+                    self.requesting_interrupt(7);
+                }
+            }
 
             0x04000206 => {} // WIFIWAITCNT TODO
 
@@ -297,7 +301,11 @@ impl Emulator {
                 .cart
                 .receive_command(byte, (address - 0x040001A8) as usize),
 
-            0x040001C2 => self.spi.write_spidata(byte),
+            0x040001C2 => {
+                if self.spi.write_spidata(byte) {
+                    self.requesting_interrupt(7);
+                }
+            }
 
             0x04000208 => self.int7_reg_ime = byte & 1,
 

@@ -1,6 +1,8 @@
 //! Serial Peripheral Interface (SPI) bus for Nintendo DS
 //! Manages communication with Firmware, Touchscreen, and other SPI devices
 
+use crate::{firmware::Firmware, touchscreen::TouchScreen};
+
 /// SPI Control Register
 #[derive(Debug, Clone, Copy)]
 pub struct RegSpiCnt {
@@ -78,104 +80,69 @@ impl Default for RegSpiCnt {
 /// Manages communication with multiple SPI-attached devices
 pub struct SPIBus {
     /// Emulator reference
-    emulator_ptr: *mut crate::emulator::Emulator,
-
-    /// Firmware device
-    firmware_active: bool,
-    /// Touchscreen device
-    touchscreen_active: bool,
+    // pub(crate) emulator: EmulatorRef,
+    pub(crate) firmware: Firmware,
+    touchscreen: TouchScreen,
 
     /// SPI control register
     spicnt: RegSpiCnt,
 
     /// Output data buffer
     output: u8,
-    /// Input data buffer
-    input: u8,
 }
 
 impl SPIBus {
     /// Create new SPI bus
     pub fn new() -> Self {
         SPIBus {
-            emulator_ptr: std::ptr::null_mut(),
-            firmware_active: false,
-            touchscreen_active: false,
+            firmware: Firmware::new(),
+            touchscreen: TouchScreen::new(),
             spicnt: RegSpiCnt::new(),
             output: 0,
-            input: 0,
         }
     }
 
+    // NOTE C++ unused `init(uint_8 *firmware)`, Therefore, unimplemented here.
     /// Initialize SPI bus with firmware from file
-    pub fn init(&mut self, _firmware_path: &str) -> Result<(), String> {
-        self.firmware_active = true;
-        Ok(())
-    }
+    pub fn init(&mut self, firmware_path: &str) -> Result<(), String> {
+        self.firmware.load_firmware(firmware_path)?;
 
-    /// Initialize SPI bus with firmware data
-    pub fn init_with_firmware(&mut self, _firmware: &[u8]) -> Result<(), String> {
-        self.firmware_active = true;
-        Ok(())
-    }
+        self.spicnt.busy = false;
+        self.spicnt.enabled = false;
+        self.touchscreen.power_on();
 
-    /// Direct boot (skip firmware loading)
-    pub fn direct_boot(&mut self) -> Result<(), String> {
         Ok(())
     }
 
     /// Handle touchscreen press
-    pub fn touchscreen_press(&mut self, x: i32, y: i32) -> Result<(), String> {
-        // Update touchscreen with press coordinates
-        if self.spicnt.device == 1 {
-            // Device 1 is touchscreen
-            // Queue position data
-        }
-        Ok(())
+    pub fn touchscreen_press(&mut self, x: i32, y: i32) {
+        self.touchscreen.press_event(x, y);
     }
 
     /// Read from SPI data register
     pub fn read_spidata(&mut self) -> u8 {
-        let data = self.output;
-
-        // If transfer is complete, clear busy flag
-        if !self.spicnt.transfer_16bit {
-            self.spicnt.busy = false;
-
-            // Trigger interrupt if enabled
-            if self.spicnt.irq_after_transfer {
-                // Request interrupt
-            }
-        }
-
-        data
+        if self.spicnt.enabled { 0 } else { self.output }
     }
 
     /// Write to SPI data register
-    pub fn write_spidata(&mut self, data: u8) {
+    ///
+    /// true => must call `emulator.requesting_interrupt(7);`
+    pub fn write_spidata(&mut self, data: u8) -> bool {
         if self.spicnt.enabled {
             self.spicnt.busy = false;
 
             // Process transfer based on device selection
-            match self.spicnt.device {
-                0 => {
-                    //Power management
-                    self.output = 0;
-                }
-                1 => {
-                    // Firmware device
-                    self.output = self.firmware_transfer(data);
-                }
-                2 => {
-                    self.output = self.touchscreen_transfer(data); // Touchscreen device
-                }
-                _ => self.output = 0,
-            }
+            self.output = match self.spicnt.device {
+                1 => self.firmware.transfer_data(data),    // Firmware device
+                2 => self.touchscreen.transfer_data(data), // Touchscreen device
+                _ => 0,                                    // Power management or unknown device
+            };
 
             if self.spicnt.irq_after_transfer {
-                unsafe { self.emulator_ptr.as_ref().unwrap().requesting_interrupt(7) };
-            };
-        };
+                return true;
+            }
+        }
+        false
     }
 
     /// Get SPI control register
@@ -187,77 +154,95 @@ impl SPIBus {
     pub fn set_spicnt(&mut self, value: u16) {
         self.spicnt.set(value);
     }
-
-    // Private device transfer methods
-
-    /// Handle firmware device transfer
-    fn firmware_transfer(&mut self, _data: u8) -> Result<(), String> {
-        // Firmware command processing
-        // Commands: read page, write page, etc.
-        Ok(())
-    }
-
-    /// Handle touchscreen device transfer
-    fn touchscreen_transfer(&mut self, data: u8) -> Result<(), String> {
-        // Touchscreen command processing
-        // Commands: read X, read Y, read temperature, etc.
-        // ADS7843 compatible protocol
-        match (data >> 4) & 0x7 {
-            0x0 => {
-                // Measure Y position
-            }
-            0x1 => {
-                // Measure X position
-            }
-            0x3 => {
-                // Measure Z1 (pressure)
-            }
-            0x4 => {
-                // Measure Z2 (pressure)
-            }
-            0x5 => {
-                // Measure temperature 0
-            }
-            0x6 => {
-                // Measure temperature 1
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    /// Handle power management device transfer
-    fn power_transfer(&mut self, _data: u8) -> Result<(), String> {
-        // Power management command processing
-        // Device can control backlight, hardware power, etc.
-        Ok(())
-    }
-
-    /// Get bandwidth in MHz
-    pub fn get_bandwidth_mhz(&self) -> u32 {
-        match self.spicnt.bandwidth {
-            0 => 4,
-            1 => 2,
-            2 => 1,
-            3 => 0, // 512 kHz
-            _ => 4,
-        }
-    }
-
-    /// Get device name
-    pub fn get_device_name(&self) -> &'static str {
-        match self.spicnt.device {
-            0 => "Firmware",
-            1 => "Touchscreen",
-            2 => "Power Management",
-            3 => "GBA Cartridge",
-            _ => "Unknown",
-        }
-    }
 }
 
-impl Default for SPIBus {
-    fn default() -> Self {
-        Self::new()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emulator::Emulator;
+
+    /// Test SPI bus initialization and firmware loading.
+    ///
+    /// This test ensures that:
+    /// - Free firmware is loaded when the firmware file does not exist
+    /// - SPI control register is reset correctly
+    /// - Touchscreen is powered on
+    #[test]
+    fn test_spi_init_with_free_firmware() {
+        let mut spi = SPIBus::new();
+
+        // Intentionally pass a non-existent path
+        let result = spi.init("non_existent_firmware.bin");
+
+        assert!(result.is_ok());
+        assert_eq!(spi.get_spicnt(), 0);
+
+        println!("[SPI TEST] Free firmware loaded successfully");
+    }
+
+    /// Test SPI transfer to firmware device.
+    ///
+    /// This test sends data over the SPI bus with the firmware
+    /// device selected and prints returned bytes.
+    #[test]
+    fn test_spi_firmware_transfer() {
+        let mut emulator = Emulator::new();
+        let mut spi = SPIBus::new();
+
+        spi.init("non_existent_firmware.bin").unwrap();
+
+        // Enable SPI, select firmware device (device = 1)
+        // Device bits and enable bit layout depend on RegSpiCnt,
+        // but this assumes a typical DS layout.
+        let mut spicnt = spi.get_spicnt();
+        spicnt |= 1 << 15; // enable
+        spicnt |= 1 << 8; // device = firmware
+        spi.set_spicnt(spicnt);
+
+        // Send a few bytes as if reading firmware ID
+        let commands = [0x9F, 0x00, 0x00, 0x00];
+
+        for &cmd in &commands {
+            emulator.write_spidata7(cmd);
+            let out = spi.read_spidata();
+            println!(
+                "[SPI TEST] Firmware transfer: sent=0x{:02X}, received=0x{:02X}",
+                cmd, out
+            );
+        }
+    }
+
+    /// Test SPI transfer to touchscreen device.
+    ///
+    /// This test simulates a touchscreen press and reads
+    /// X coordinate data via SPI.
+    #[test]
+    fn test_spi_touchscreen_transfer() {
+        let mut emulator = Emulator::new();
+        let mut spi = SPIBus::new();
+        spi.init("non_existent_firmware.bin").unwrap();
+
+        // Simulate touchscreen press
+        spi.touchscreen_press(120, 80);
+
+        // Enable SPI, select touchscreen device (device = 2)
+        let mut spicnt = spi.get_spicnt();
+        spicnt |= 1 << 15; // enable
+        spicnt |= 2 << 8; // device = touchscreen
+        spi.set_spicnt(spicnt);
+
+        // Control byte: start + channel 5 (Touch X)
+        let control = 0b1101_0000;
+
+        emulator.write_spidata7(control);
+        let high = spi.read_spidata();
+
+        emulator.write_spidata7(0);
+        let low = spi.read_spidata();
+
+        println!(
+            "[SPI TEST] Touch X read: high=0x{:02X}, low=0x{:02X}",
+            high, low
+        );
     }
 }

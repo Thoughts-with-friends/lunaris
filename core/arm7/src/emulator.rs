@@ -15,6 +15,7 @@ use crate::spu::SPU;
 use crate::timers::NDSTiming;
 use crate::wifi::WiFi;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 /// Button input register for standard DS buttons
 #[derive(Debug, Clone, Copy, Default)]
@@ -460,9 +461,52 @@ impl Emulator {
         Ok(())
     }
 
-    /// Direct boot (skip BIOS)
-    pub fn direct_boot(&mut self) -> Result<(), String> {
-        Ok(())
+    /// Direct boot
+    ///
+    /// Perform a direct boot using firmware data.
+    ///
+    /// This function is a faithful Rust translation of the original
+    /// C++ `Firmware::direct_boot` implementation.
+    /// It writes firmware-derived values directly into ARM7 memory,
+    /// matching all offsets, sizes, and bit shifts exactly.
+    pub fn direct_boot(&mut self) {
+        // Write zero to boot flag
+        self.arm7_write_word(0x027FF864, 0);
+
+        // Write shifted value from firmware[0x20]
+        let value_0x20 = u16::from_le_bytes([
+            self.spi.firmware.raw_firmware[0x20],
+            self.spi.firmware.raw_firmware[0x21],
+        ]);
+        self.arm7_write_word(0x027FF868, (value_0x20 as u32) << 3);
+
+        // Write halfword from firmware[0x26]
+        let value_0x26 = u16::from_le_bytes([
+            self.spi.firmware.raw_firmware[0x26],
+            self.spi.firmware.raw_firmware[0x27],
+        ]);
+        self.arm7_write_halfword(0x027FF874, value_0x26);
+
+        // Write halfword from firmware[0x04]
+        let value_0x04 = u16::from_le_bytes([
+            self.spi.firmware.raw_firmware[0x04],
+            self.spi.firmware.raw_firmware[0x05],
+        ]);
+        self.arm7_write_halfword(0x027FF876, value_0x04);
+
+        // Copy USER data block (0x70 bytes, word-aligned)
+        for i in (0..0x70).step_by(4) {
+            let offset = (self.spi.firmware.user_data as usize) + i;
+
+            let word = u32::from_le_bytes([
+                self.spi.firmware.raw_firmware[offset],
+                self.spi.firmware.raw_firmware[offset + 1],
+                self.spi.firmware.raw_firmware[offset + 2],
+                self.spi.firmware.raw_firmware[offset + 3],
+            ]);
+
+            self.arm7_write_word(0x027FFC80 + i as u32, word);
+        }
     }
 
     /// Debug mode
@@ -481,6 +525,13 @@ impl Emulator {
             (self.int7_reg_ie & self.int7_reg_if) != 0 && self.int7_reg_ime != 0
         } else {
             (self.int9_reg_ie & self.int9_reg_if) != 0 && self.int9_reg_ime != 0
+        }
+    }
+
+    /// Write to SPI data register (ARM7)
+    pub fn write_spidata7(&mut self, byte: u8) {
+        if self.spi.write_spidata(byte) {
+            self.requesting_interrupt(7);
         }
     }
 

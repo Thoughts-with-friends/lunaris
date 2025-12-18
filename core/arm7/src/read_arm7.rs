@@ -29,7 +29,7 @@ impl Emulator {
             0x04000120 => 0,
             0x04000180 => self.ipcsync_nds7.read().into(),
             0x040001A4 => self.cart.get_romctrl(),
-            0x040001C0 => (self.spi.get_spicnt() | (self.spi.read_spidata() << 16) as u16).into(),
+            0x040001C0 => (self.spi.get_spicnt() as u32) | (self.spi.read_spidata() as u32) << 16,
             0x04000208 => self.int7_reg_ime as u32,
             0x04000210 => self.int7_reg_ie,
             0x04000214 => self.int7_reg_if,

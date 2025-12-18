@@ -6,14 +6,15 @@ mod cp15;
 mod cpu;
 mod dma;
 mod emulator;
+mod firmware;
 mod gpu;
 mod interrupts;
 mod ipc;
+mod read_arm7;
 mod rtc;
 mod spi;
 mod spu;
 mod timers;
+mod touchscreen;
 mod wifi;
-
-mod read_arm7;
 mod write_arm7;
