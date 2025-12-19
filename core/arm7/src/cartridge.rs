@@ -370,6 +370,8 @@ impl NDSCart {
     }
 
     /// Read command byte
+    ///
+    /// - `index`(address): Command byte index (0-7)
     pub fn read_command(&self, index: usize) -> u8 {
         if index < 8 {
             self.command_buffer[index]

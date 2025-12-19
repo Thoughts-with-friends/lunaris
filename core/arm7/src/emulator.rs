@@ -235,6 +235,28 @@ impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS7_SIZE> {
     }
 }
 
+impl core::ops::Index<usize> for BiosMem<BIOS9_SIZE> {
+    type Output = u8;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            BiosMem::User(items) => &items[index],
+            BiosMem::Const(items) => &items[index],
+        }
+    }
+}
+
+impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS9_SIZE> {
+    type Output = [u8];
+
+    fn index(&self, index: core::ops::Range<usize>) -> &Self::Output {
+        match self {
+            BiosMem::User(items) => &items[index],
+            BiosMem::Const(items) => &items[index],
+        }
+    }
+}
+
 /// Core Nintendo DS emulator system
 /// Manages dual ARM CPUs, memory, and all peripheral devices
 pub struct Emulator {

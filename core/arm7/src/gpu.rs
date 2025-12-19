@@ -1,8 +1,11 @@
 /// Graphics Processing Unit (GPU) implementation for Nintendo DS
 /// Handles 2D and 3D rendering, VRAM management, and display output
-use std::sync::{Arc, Mutex};
-
 use mem_const::{VRAM_C_MASK, VRAM_D_MASK, addr_in_range};
+
+use crate::{
+    emulator::{Emulator, SchedulerEvent},
+    gpu_engine::GPU2DEngine,
+};
 
 /// Display status register for screen state
 #[derive(Debug, Clone, Copy)]
@@ -194,14 +197,14 @@ pub const VRAM_I_SIZE: usize = 16 * 1024; // 16KB
 /// Manages 2D and 3D rendering for both screens
 pub struct GPU {
     /// Emulator reference
-    emulator_ptr: *mut crate::emulator::Emulator,
+    emulator_ptr: *mut Emulator,
 
-    /// 2D Engine A (upper screen)
-    engine_a_active: bool,
-    /// 2D Engine B (lower screen)
-    engine_b_active: bool,
-    /// 3D Engine enabled
-    engine_3d_active: bool,
+    /// 2D Engine A
+    eng_a: GPU2DEngine,
+    /// 2D Engine B
+    eng_b: GPU2DEngine,
+
+    eng_3d: GPU_3d,
 
     /// Frame rendering complete flag
     frame_complete: bool,
@@ -251,11 +254,6 @@ pub struct GPU {
 
     /// Power control register
     powcnt1: PowCnt1Reg,
-
-    /// Upper screen framebuffer (256x192 pixels)
-    upper_framebuffer: Arc<Mutex<Vec<u32>>>,
-    /// Lower screen framebuffer (256x192 pixels)
-    lower_framebuffer: Arc<Mutex<Vec<u32>>>,
 }
 
 impl GPU {
@@ -263,10 +261,9 @@ impl GPU {
     pub fn new() -> Self {
         GPU {
             emulator_ptr: std::ptr::null_mut(),
-
-            engine_a_active: false,
-            engine_b_active: false,
-            engine_3d_active: false,
+            eng_a: GPU_2D_Engine::new(),
+            eng_b: GPU_2D_Engine::new(),
+            eng_3d: GPU_3d::new(),
 
             frame_complete: false,
             frames_skipped: 0,
@@ -304,15 +301,22 @@ impl GPU {
             vramcnt_i: VramBankCnt::new(),
 
             powcnt1: PowCnt1Reg::new(),
-
-            upper_framebuffer: Arc::new(Mutex::new(vec![0u32; 256 * 192])),
-            lower_framebuffer: Arc::new(Mutex::new(vec![0u32; 256 * 192])),
         }
     }
 
     /// Get current cycle count
     pub fn get_cycles(&self) -> u64 {
         self.cycles
+    }
+
+    //    void draw_3D_scanline(uint32_t* framebuffer, uint8_t bg_priorities[256], uint8_t bg0_priority);
+    pub fn draw_3d_scanline(
+        &self,
+        framebuffer: &mut [u32],
+        bg_prirorities: [u8; 256],
+        bg0_priority: u8,
+    ) {
+        todo!()
     }
 
     /// Power on GPU
@@ -329,19 +333,19 @@ impl GPU {
     }
 
     /// Handle scheduler event
-    pub fn handle_event(&mut self, _event: &crate::emulator::SchedulerEvent) -> Result<(), String> {
+    pub fn handle_event(&mut self, _event: &SchedulerEvent) -> Result<(), String> {
         // Process timing events (VBLANK, HBLANK, etc.)
         Ok(())
     }
 
     /// Get upper screen framebuffer data
-    pub fn get_upper_frame(&self) -> Vec<u32> {
-        self.upper_framebuffer.lock().unwrap().clone()
+    pub fn get_upper_frame(&self, buffer: &mut [u32]) -> Vec<u32> {
+        todo!()
     }
 
     /// Get lower screen framebuffer data
-    pub fn get_lower_frame(&self) -> Vec<u32> {
-        self.lower_framebuffer.lock().unwrap().clone()
+    pub fn get_lower_frame(&self, buffer: &mut [u32]) -> Vec<u32> {
+        todo!()
     }
 
     /// Mark frame start
@@ -372,6 +376,52 @@ impl GPU {
     /// Check if display screens are swapped
     pub fn display_swapped(&self) -> bool {
         self.powcnt1.swap_display
+    }
+
+    /// Read from palette A
+    pub fn read_palette_a(&self, address: u32) -> u16 {
+        let address = address as usize;
+        if address + 1 < self.palette_a.len() {
+            let lo = self.palette_a[address] as u16;
+            let hi = self.palette_a[address + 1] as u16;
+            lo | (hi << 8)
+        } else {
+            0
+        }
+    }
+
+    /// Read from palette B
+    pub fn read_palette_b(&self, address: u32) -> u16 {
+        let address = address as usize;
+        if address + 1 < self.palette_b.len() {
+            let lo = self.palette_b[address] as u16;
+            let hi = self.palette_b[address + 1] as u16;
+            lo | (hi << 8)
+        } else {
+            0
+        }
+    }
+
+    /// Write to palette A
+    pub fn write_palette_a(&mut self, address: u32, value: u16) {
+        let address = address as usize;
+        if address < self.palette_a.len() {
+            self.palette_a[address] = (value & 0xFF) as u8;
+        }
+        if address + 1 < self.palette_a.len() {
+            self.palette_a[address + 1] = ((value >> 8) & 0xFF) as u8;
+        }
+    }
+
+    /// Write to palette B
+    pub fn write_palette_b(&mut self, address: u32, value: u16) {
+        let address = address as usize;
+        if address < self.palette_b.len() {
+            self.palette_b[address] = (value & 0xFF) as u8;
+        }
+        if address + 1 < self.palette_b.len() {
+            self.palette_b[address + 1] = ((value >> 8) & 0xFF) as u8;
+        }
     }
 
     pub fn read_arm7_u16(&self, address: u32) -> u16 {
@@ -479,46 +529,12 @@ impl GPU {
         }
     }
 
-    /// Read from palette A
-    pub fn read_palette_a(&self, address: usize) -> u16 {
-        if address + 1 < self.palette_a.len() {
-            let lo = self.palette_a[address] as u16;
-            let hi = self.palette_a[address + 1] as u16;
-            lo | (hi << 8)
-        } else {
-            0
-        }
+    pub fn get_dispcnt_a(&self) -> u32 {
+        self.eng_a.get_dispcnt()
     }
 
-    /// Read from palette B
-    pub fn read_palette_b(&self, address: usize) -> u16 {
-        if address + 1 < self.palette_b.len() {
-            let lo = self.palette_b[address] as u16;
-            let hi = self.palette_b[address + 1] as u16;
-            lo | (hi << 8)
-        } else {
-            0
-        }
-    }
-
-    /// Write to palette A
-    pub fn write_palette_a(&mut self, address: usize, value: u16) {
-        if address < self.palette_a.len() {
-            self.palette_a[address] = (value & 0xFF) as u8;
-        }
-        if address + 1 < self.palette_a.len() {
-            self.palette_a[address + 1] = ((value >> 8) & 0xFF) as u8;
-        }
-    }
-
-    /// Write to palette B
-    pub fn write_palette_b(&mut self, address: usize, value: u16) {
-        if address < self.palette_b.len() {
-            self.palette_b[address] = (value & 0xFF) as u8;
-        }
-        if address + 1 < self.palette_b.len() {
-            self.palette_b[address + 1] = ((value >> 8) & 0xFF) as u8;
-        }
+    pub fn get_dispcnt_b(&self) -> u32 {
+        self.eng_b.get_dispcnt()
     }
 
     /// Get DISPSTAT7 register value
