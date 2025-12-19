@@ -93,10 +93,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arm9"
-version = "0.1.0"
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -503,6 +499,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
+]
+
+[[package]]
+name = "gpu"
+version = "0.1.0"
+dependencies = [
+ "mem_const",
+ "tracing",
 ]
 
 [[package]]

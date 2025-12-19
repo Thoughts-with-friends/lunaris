@@ -165,7 +165,7 @@ pub const VRAM_I_MASK: u32 = VRAM_I_SIZE - 1;
 // Other constants
 
 /// Number of pixels per horizontal line
-pub const PIXELS_PER_LINE: u32 = 256;
+pub const PIXELS_PER_LINE: usize = 256;
 
 /// Number of vertical scanlines
-pub const SCANLINES: u32 = 192;
+pub const SCANLINES: usize = 192;

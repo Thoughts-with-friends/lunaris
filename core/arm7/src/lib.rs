@@ -7,9 +7,7 @@ mod cpu;
 mod dma;
 mod emulator;
 mod firmware;
-mod gpu;
-mod gpu_2d;
-mod gpu_3d;
+
 mod interrupts;
 mod ipc;
 mod read_arm7;

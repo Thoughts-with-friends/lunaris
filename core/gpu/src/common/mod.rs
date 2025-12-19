@@ -1,11 +1,13 @@
 /// Graphics Processing Unit (GPU) implementation for Nintendo DS
 /// Handles 2D and 3D rendering, VRAM management, and display output
-use mem_const::{VRAM_C_MASK, VRAM_D_MASK, addr_in_range};
-
-use crate::{
-    emulator::{Emulator, SchedulerEvent},
-    gpu_engine::GPU2DEngine,
-};
+pub(crate) mod _2d;
+pub(crate) mod arm_rw;
+pub(crate) mod draw_sprite;
+pub(crate) mod init;
+pub(crate) mod tmp;
+pub(crate) mod vram_reader;
+use crate::gpu_2d::Gpu2DEngine;
+use crate::gpu_3d::Gpu3D;
 
 /// Display status register for screen state
 #[derive(Debug, Clone, Copy)]
@@ -195,16 +197,13 @@ pub const VRAM_I_SIZE: usize = 16 * 1024; // 16KB
 
 /// Graphics Processing Unit
 /// Manages 2D and 3D rendering for both screens
-pub struct GPU {
-    /// Emulator reference
-    emulator_ptr: *mut Emulator,
-
+pub struct Gpu {
     /// 2D Engine A
-    eng_a: GPU2DEngine,
+    eng_a: Gpu2DEngine,
     /// 2D Engine B
-    eng_b: GPU2DEngine,
+    eng_b: Gpu2DEngine,
 
-    eng_3d: GPU_3d,
+    eng_3d: Gpu3D,
 
     /// Frame rendering complete flag
     frame_complete: bool,
@@ -256,14 +255,13 @@ pub struct GPU {
     powcnt1: PowCnt1Reg,
 }
 
-impl GPU {
+impl Gpu {
     /// Create new GPU instance
     pub fn new() -> Self {
-        GPU {
-            emulator_ptr: std::ptr::null_mut(),
-            eng_a: GPU_2D_Engine::new(),
-            eng_b: GPU_2D_Engine::new(),
-            eng_3d: GPU_3d::new(),
+        Gpu {
+            eng_a: Gpu2DEngine::new(),
+            eng_b: Gpu2DEngine::new(),
+            eng_3d: Gpu3D::new(),
 
             frame_complete: false,
             frames_skipped: 0,
@@ -303,232 +301,21 @@ impl GPU {
             powcnt1: PowCnt1Reg::new(),
         }
     }
+}
 
-    /// Get current cycle count
-    pub fn get_cycles(&self) -> u64 {
-        self.cycles
-    }
+pub fn bytes_to_palette(bytes: &[u8]) -> &[u16] {
+    assert_eq!(bytes.len() % 2, 0, "u8 vector length must be even");
+    unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) }
+}
 
-    //    void draw_3D_scanline(uint32_t* framebuffer, uint8_t bg_priorities[256], uint8_t bg0_priority);
-    pub fn draw_3d_scanline(
-        &self,
-        framebuffer: &mut [u32],
-        bg_prirorities: [u8; 256],
-        bg0_priority: u8,
-    ) {
-        todo!()
-    }
+/// # Panics
+/// Panics if address is out of bounds(<= 0x3ff == 1023) for palette memory
+pub fn read_palette_value(bytes: &[u8], address: u32) -> u16 {
+    let off = (address & 0x3ff) as usize;
+    u16::from_le_bytes(bytes[off..off + 2].try_into().unwrap())
+}
 
-    /// Power on GPU
-    pub fn power_on(&mut self) -> Result<(), String> {
-        self.frame_complete = false;
-        self.vcount = 0;
-        Ok(())
-    }
-
-    /// Run 3D rendering for specified cycles
-    pub fn run_3d(&mut self, _cycles: u64) -> Result<(), String> {
-        // 3D geometry and rendering processing
-        Ok(())
-    }
-
-    /// Handle scheduler event
-    pub fn handle_event(&mut self, _event: &SchedulerEvent) -> Result<(), String> {
-        // Process timing events (VBLANK, HBLANK, etc.)
-        Ok(())
-    }
-
-    /// Get upper screen framebuffer data
-    pub fn get_upper_frame(&self, buffer: &mut [u32]) -> Vec<u32> {
-        todo!()
-    }
-
-    /// Get lower screen framebuffer data
-    pub fn get_lower_frame(&self, buffer: &mut [u32]) -> Vec<u32> {
-        todo!()
-    }
-
-    /// Mark frame start
-    pub fn start_frame(&mut self) {
-        self.frame_complete = false;
-    }
-
-    /// Mark frame completion
-    pub fn end_frame(&mut self) {
-        self.frame_complete = true;
-    }
-
-    /// Check for GXFIFO DMA request
-    pub fn check_gxfifo_dma(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Check for GXFIFO interrupt
-    pub fn check_gxfifo_irq(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Check if current frame is complete
-    pub fn is_frame_complete(&self) -> bool {
-        self.frame_complete
-    }
-
-    /// Check if display screens are swapped
-    pub fn display_swapped(&self) -> bool {
-        self.powcnt1.swap_display
-    }
-
-    /// Read from palette A
-    pub fn read_palette_a(&self, address: u32) -> u16 {
-        let address = address as usize;
-        if address + 1 < self.palette_a.len() {
-            let lo = self.palette_a[address] as u16;
-            let hi = self.palette_a[address + 1] as u16;
-            lo | (hi << 8)
-        } else {
-            0
-        }
-    }
-
-    /// Read from palette B
-    pub fn read_palette_b(&self, address: u32) -> u16 {
-        let address = address as usize;
-        if address + 1 < self.palette_b.len() {
-            let lo = self.palette_b[address] as u16;
-            let hi = self.palette_b[address + 1] as u16;
-            lo | (hi << 8)
-        } else {
-            0
-        }
-    }
-
-    /// Write to palette A
-    pub fn write_palette_a(&mut self, address: u32, value: u16) {
-        let address = address as usize;
-        if address < self.palette_a.len() {
-            self.palette_a[address] = (value & 0xFF) as u8;
-        }
-        if address + 1 < self.palette_a.len() {
-            self.palette_a[address + 1] = ((value >> 8) & 0xFF) as u8;
-        }
-    }
-
-    /// Write to palette B
-    pub fn write_palette_b(&mut self, address: u32, value: u16) {
-        let address = address as usize;
-        if address < self.palette_b.len() {
-            self.palette_b[address] = (value & 0xFF) as u8;
-        }
-        if address + 1 < self.palette_b.len() {
-            self.palette_b[address + 1] = ((value >> 8) & 0xFF) as u8;
-        }
-    }
-
-    pub fn read_arm7_u16(&self, address: u32) -> u16 {
-        {
-            let mut reg = 0;
-            if self.vramcnt_c.enabled {
-                if addr_in_range(
-                    address,
-                    0x06000000 + self.vramcnt_c.offset * 0x20000,
-                    VRAM_C_SIZE as u32,
-                ) && self.vramcnt_c.mst == 2
-                {
-                    let start = (address & VRAM_C_MASK) as usize;
-                    let end = (start + 2) as usize;
-                    reg |= u16::from_le_bytes(self.vram_c[start..end].try_into().unwrap());
-                }
-            }
-            if self.vramcnt_d.enabled {
-                if addr_in_range(
-                    address,
-                    0x06000000 + self.vramcnt_d.offset * 0x20000,
-                    VRAM_D_SIZE as u32,
-                ) && self.vramcnt_d.mst == 2
-                {
-                    let start = (address & VRAM_D_MASK) as usize;
-                    let end = (start + 2) as usize;
-                    reg |= u16::from_le_bytes(self.vram_d[start..end].try_into().unwrap());
-                }
-            }
-            return reg;
-        }
-    }
-
-    pub fn read_arm7_u32(&self, address: u32) -> u32 {
-        {
-            let mut reg = 0;
-            if self.vramcnt_c.enabled {
-                if addr_in_range(
-                    address,
-                    0x06000000 + self.vramcnt_c.offset * 0x20000,
-                    VRAM_C_SIZE as u32,
-                ) && self.vramcnt_c.mst == 2
-                {
-                    let start = (address & VRAM_C_MASK) as usize;
-                    let end = (start + 4) as usize;
-                    reg |= u32::from_le_bytes(self.vram_c[start..end].try_into().unwrap());
-                }
-            }
-            if self.vramcnt_d.enabled {
-                if addr_in_range(
-                    address,
-                    0x06000000 + self.vramcnt_d.offset * 0x20000,
-                    VRAM_D_SIZE as u32,
-                ) && self.vramcnt_d.mst == 2
-                {
-                    let start = (address & VRAM_D_MASK) as usize;
-                    let end = (start + 4) as usize;
-                    reg |= u32::from_le_bytes(self.vram_d[start..end].try_into().unwrap());
-                }
-            }
-            return reg;
-        }
-    }
-
-    /// Write 32-bit word from ARM7 to VRAM (C and D)
-    pub fn write_arm7_u32(&mut self, address: u32, value: u32) {
-        // VRAM C
-        if self.vramcnt_c.enabled {
-            let start = 0x06000000 + self.vramcnt_c.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_C_SIZE as u32) && self.vramcnt_c.mst == 2 {
-                let start = (address & VRAM_C_MASK) as usize;
-                self.vram_c[start..start + 4].copy_from_slice(&value.to_le_bytes());
-            }
-        }
-
-        // VRAM D
-        if self.vramcnt_d.enabled {
-            let start = 0x06000000 + self.vramcnt_d.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_D_SIZE as u32) && self.vramcnt_d.mst == 2 {
-                let start = (address & VRAM_D_MASK) as usize;
-                self.vram_d[start..start + 4].copy_from_slice(&value.to_le_bytes());
-            }
-        }
-    }
-
-    /// Write 8-bit byte from ARM7 to VRAM (C and D)
-    /// Matches the behavior of C++: VRAM_C[address & mask] = value;
-    pub fn write_arm7_u8(&mut self, address: u32, value: u8) {
-        // VRAM C
-        if self.vramcnt_c.enabled {
-            let start = 0x06000000 + self.vramcnt_c.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_C_SIZE as u32) && self.vramcnt_c.mst == 2 {
-                let idx = (address & VRAM_C_MASK) as usize;
-                self.vram_c[idx] = value;
-            }
-        }
-
-        // VRAM D
-        if self.vramcnt_d.enabled {
-            let start = 0x06000000 + self.vramcnt_d.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_D_SIZE as u32) && self.vramcnt_d.mst == 2 {
-                let idx = (address & VRAM_D_MASK) as usize;
-                self.vram_d[idx] = value;
-            }
-        }
-    }
-
+impl Gpu {
     pub fn get_dispcnt_a(&self) -> u32 {
         self.eng_a.get_dispcnt()
     }
@@ -799,14 +586,9 @@ impl GPU {
     fn draw_sprite_line(&mut self, _engine_a: bool) {
         // Sprite rendering
     }
-
-    /// Draw scanline
-    fn draw_scanline(&mut self) {
-        // Composite backgrounds, sprites, and effects for current scanline
-    }
 }
 
-impl Default for GPU {
+impl Default for Gpu {
     fn default() -> Self {
         Self::new()
     }
