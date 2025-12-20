@@ -11,8 +11,8 @@ impl Gpu {
         {
             // Clear buffers
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             engine.sprite_scanline.fill(0);
             colors.fill(0);
@@ -85,8 +85,8 @@ impl Gpu {
                     let tile_addr: u32;
                     {
                         let engine = match is_engine_a {
-                            true => &mut self.eng_a,
-                            false => &mut self.eng_b,
+                            true => &mut self.engine_upper,
+                            false => &mut self.engine_lower,
                         };
 
                         tile_addr = if engine.dispcnt.bitmap_obj_1d {
@@ -101,15 +101,15 @@ impl Gpu {
 
                     let mut pixel_addr = vram_obj_base + tile_addr;
                     for x_offset in x..(x + width) {
-                        if x_offset < 0 || x_offset >= PIXELS_PER_LINE as u32 {
+                        if x_offset >= PIXELS_PER_LINE as u32 {
                             pixel_addr += 2;
                             continue;
                         }
 
                         {
                             let engine = match is_engine_a {
-                                true => &mut self.eng_a,
-                                false => &mut self.eng_b,
+                                true => &mut self.engine_upper,
+                                false => &mut self.engine_lower,
                             };
                             if bg_priority > engine.final_bg_priority[x_offset as usize] {
                                 pixel_addr += 2;
@@ -125,8 +125,8 @@ impl Gpu {
 
                         if (color & (1 << 15)) != 0 {
                             let engine = match is_engine_a {
-                                true => &mut self.eng_a,
-                                false => &mut self.eng_b,
+                                true => &mut self.engine_upper,
+                                false => &mut self.engine_lower,
                             };
                             engine.sprite_scanline[x_offset as usize] = color as u32 | (1 << 31);
                         }
@@ -152,8 +152,8 @@ impl Gpu {
 
                     {
                         let engine = match is_engine_a {
-                            true => &mut self.eng_a,
-                            false => &mut self.eng_b,
+                            true => &mut self.engine_upper,
+                            false => &mut self.engine_lower,
                         };
 
                         // Determine y-dimension count
@@ -201,8 +201,8 @@ impl Gpu {
 
                                 {
                                     let engine = match is_engine_a {
-                                        true => &mut self.eng_a,
-                                        false => &mut self.eng_b,
+                                        true => &mut self.engine_upper,
+                                        false => &mut self.engine_lower,
                                     };
 
                                     if priority > engine.final_bg_priority[idx as usize] {
@@ -212,8 +212,8 @@ impl Gpu {
                                     let address = 0x200 + palette as u32 * 32 + color_index * 2;
 
                                     engine.sprite_scanline[idx] = match is_engine_a {
-                                        true => read_palette_value(&self.palette_a, address),
-                                        false => read_palette_value(&self.palette_b, address),
+                                        true => read_palette_value(&self.palette_upper, address),
+                                        false => read_palette_value(&self.palette_lower, address),
                                     }
                                         as u32
                                         | (1 << 31);
@@ -243,8 +243,8 @@ impl Gpu {
                                 {
                                     let (final_bg_priority, obj_extended_palette) = {
                                         let engine = match is_engine_a {
-                                            true => &mut self.eng_a,
-                                            false => &mut self.eng_b,
+                                            true => &mut self.engine_upper,
+                                            false => &mut self.engine_lower,
                                         };
                                         (
                                             engine.final_bg_priority[idx as usize],
@@ -262,11 +262,15 @@ impl Gpu {
                                     let sprite_scanline = match is_engine_a {
                                         true => match obj_extended_palette {
                                             true => self.read_extpal_obja(obj_address),
-                                            false => read_palette_value(&self.palette_a, address),
+                                            false => {
+                                                read_palette_value(&self.palette_upper, address)
+                                            }
                                         },
                                         false => match obj_extended_palette {
                                             true => self.read_extpal_objb(obj_address),
-                                            false => read_palette_value(&self.palette_b, address),
+                                            false => {
+                                                read_palette_value(&self.palette_lower, address)
+                                            }
                                         },
                                     }
                                         as u32
@@ -274,8 +278,8 @@ impl Gpu {
 
                                     {
                                         let engine = match is_engine_a {
-                                            true => &mut self.eng_a,
-                                            false => &mut self.eng_b,
+                                            true => &mut self.engine_upper,
+                                            false => &mut self.engine_lower,
                                         };
                                         engine.sprite_scanline[idx as usize] = sprite_scanline;
                                     }
@@ -291,8 +295,8 @@ impl Gpu {
         let vcount = self.get_vcount();
         for i in 0..PIXELS_PER_LINE {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
 
             if (engine.sprite_scanline[i] & (1 << 31)) == 0 {
@@ -407,8 +411,8 @@ impl Gpu {
         let y_dimension_num;
         {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             y_dimension_num = if engine.dispcnt.tile_obj_1d {
                 tile_num <<= engine.dispcnt.tile_obj_1d_bound;
@@ -446,8 +450,8 @@ impl Gpu {
 
                     let (is_priority, obj_extended_palette) = {
                         let engine = match is_engine_a {
-                            true => &mut self.eng_a,
-                            false => &mut self.eng_b,
+                            true => &mut self.engine_upper,
+                            false => &mut self.engine_lower,
                         };
                         (
                             priority <= engine.final_bg_priority[px as usize],
@@ -465,14 +469,14 @@ impl Gpu {
                                 self.read_extpal_objb(obj_addr)
                             }
                         } else if is_engine_a {
-                            read_palette_value(&self.palette_a, palette_address)
+                            read_palette_value(&self.palette_upper, palette_address)
                         } else {
-                            read_palette_value(&self.palette_b, palette_address)
+                            read_palette_value(&self.palette_lower, palette_address)
                         };
                         {
                             let engine = match is_engine_a {
-                                true => &mut self.eng_a,
-                                false => &mut self.eng_b,
+                                true => &mut self.engine_upper,
+                                false => &mut self.engine_lower,
                             };
                             engine.sprite_scanline[px as usize] = color as u32 | (1 << 31);
                         }
@@ -508,8 +512,8 @@ impl Gpu {
 
                     let is_priority = {
                         let engine = match is_engine_a {
-                            true => &mut self.eng_a,
-                            false => &mut self.eng_b,
+                            true => &mut self.engine_upper,
+                            false => &mut self.engine_lower,
                         };
                         priority <= engine.final_bg_priority[px as usize]
                     };
@@ -518,14 +522,14 @@ impl Gpu {
                         let palette_addr = 0x200 + palette_id * 32 + color as u32 * 2;
 
                         color = if is_engine_a {
-                            read_palette_value(&self.palette_a, palette_addr)
+                            read_palette_value(&self.palette_upper, palette_addr)
                         } else {
-                            read_palette_value(&self.palette_b, palette_addr)
+                            read_palette_value(&self.palette_lower, palette_addr)
                         };
                         {
                             let engine = match is_engine_a {
-                                true => &mut self.eng_a,
-                                false => &mut self.eng_b,
+                                true => &mut self.engine_upper,
+                                false => &mut self.engine_lower,
                             };
                             engine.sprite_scanline[px as usize] = color as u32 | (1 << 31);
                         }

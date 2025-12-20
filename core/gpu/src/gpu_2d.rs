@@ -277,11 +277,11 @@ impl Gpu2DEngine {
         */
     }
 
-    // Sets an external framebuffer as the render target.
-    // C++ code is empty.
-    // pub fn set_framebuffer(&mut self, buffer: &mut [u32]) {
-    // framebuffer = buffer;
-    // }
+    /// Sets an external framebuffer as the render target.
+    pub fn set_framebuffer(&mut self, buffer: Vec<u32>) {
+        let _framebuffer = buffer;
+        unimplemented!("C++ code is empty.")
+    }
 
     // ============================================================
     // Timing

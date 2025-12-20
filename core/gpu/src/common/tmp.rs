@@ -9,21 +9,21 @@ use mem_const::*;
 impl Gpu {
     pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8) {
         let engine = match is_engine_a {
-            true => &mut self.eng_a,
-            false => &mut self.eng_b,
+            true => &mut self.engine_upper,
+            false => &mut self.engine_lower,
         };
 
         let framebuffer = &mut engine.framebuffer;
         let bg_priorities = &mut engine.final_bg_priority;
-        self.eng_3d
+        self.engine_3d
             .render_scanline(framebuffer, bg_priorities, bg_priority);
     }
 
     /// Draws one scanline.
     pub fn draw_scanline(&mut self, bg_enable: [bool; 4]) {
-        let is_engine_a = if self.powcnt1.engine_a {
+        let is_engine_a = if self.power_control_reg.engine_upper {
             true
-        } else if self.powcnt1.engine_b {
+        } else if self.power_control_reg.engine_lower {
             false
         } else {
             return;
@@ -34,8 +34,8 @@ impl Gpu {
         // Clear scanline
         for i in 0..PIXELS_PER_LINE {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             engine.framebuffer[line_start + i] = 0xFF000000;
             engine.front_framebuffer[line_start + i] = 0xFF000000;
@@ -44,8 +44,8 @@ impl Gpu {
         {
             // Reset BG priority
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             engine.final_bg_priority.fill(0xFF);
         }
@@ -55,8 +55,8 @@ impl Gpu {
 
         let window_masked = {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             engine.dispcnt.display_win0
                 || engine.dispcnt.display_win1
@@ -68,21 +68,21 @@ impl Gpu {
             self.get_window_mask(is_engine_a);
         } else {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             engine.window_mask.fill(0xFF);
         }
 
         // Draw BG layers by priority
         for priority in (0..=3).rev() {
-            for bg_index in 0..4 {
-                if !bg_enable[bg_index] {
+            for (bg_index, bg_enable_value) in bg_enable.iter().enumerate() {
+                if !bg_enable_value {
                     continue;
                 }
                 let engine = match is_engine_a {
-                    true => &mut self.eng_a,
-                    false => &mut self.eng_b,
+                    true => &mut self.engine_upper,
+                    false => &mut self.engine_lower,
                 };
                 if (engine.bgcnt[bg_index] & 0x3) as u8 != priority {
                     continue;
@@ -113,8 +113,7 @@ impl Gpu {
                         _ => {}
                     },
                     3 => match engine.dispcnt.bg_mode {
-                        0 => self.draw_bg_txt(3, is_engine_a),
-                        3 | 4 | 5 => self.draw_bg_ext(3, is_engine_a),
+                        0 | 3 | 4 | 5 => self.draw_bg_ext(3, is_engine_a),
                         _ => {}
                     },
                     _ => {}
@@ -124,8 +123,8 @@ impl Gpu {
 
         let (display_obj, display_mode) = {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             (engine.dispcnt.display_obj, engine.dispcnt.display_mode)
         };
@@ -143,8 +142,8 @@ impl Gpu {
             0 => {
                 for i in 0..PIXELS_PER_LINE {
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.front_framebuffer[line_start + i] = 0xFFF3F3F3;
                 }
@@ -152,8 +151,8 @@ impl Gpu {
             1 => {
                 for i in 0..PIXELS_PER_LINE {
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.front_framebuffer[line_start + i] = engine.framebuffer[line_start + i];
                 }
@@ -161,8 +160,8 @@ impl Gpu {
             2 => {
                 let vram_block = {
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.dispcnt.vram_block
                 };
@@ -172,16 +171,15 @@ impl Gpu {
                         vram[line_start + x]
                     };
 
-                    let r = (ds_color & 0x1F) << 3;
-                    let g = ((ds_color >> 5) & 0x1F) << 3;
-                    let b = ((ds_color >> 10) & 0x1F) << 3;
+                    let r = ((ds_color & 0x1F) << 3) as u32;
+                    let g = (((ds_color >> 5) & 0x1F) << 3) as u32;
+                    let b = (((ds_color >> 10) & 0x1F) << 3) as u32;
 
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
-                    engine.front_framebuffer[line_start + x] =
-                        (0xFF000000 | (r << 16) | (g << 8) | b) as u32
+                    engine.front_framebuffer[line_start + x] = 0xFF000000 | (r << 16) | (g << 8) | b
                 }
             }
             _ => {}
@@ -189,8 +187,8 @@ impl Gpu {
 
         let (enable_a_busy, capture_size) = {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             (
                 is_engine_a && engine.dispcapcnt.enable_busy,
@@ -211,8 +209,8 @@ impl Gpu {
             if self.get_vcount() < y_size {
                 let (read_offset, write_offset, vram_write_block, vram_block) = {
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     let read_offset = match engine.dispcnt.display_mode {
                         2 => 0,
@@ -232,8 +230,8 @@ impl Gpu {
 
                 for x in 0..x_size {
                     let engine = match is_engine_a {
-                        true => &self.eng_a,
-                        false => &self.eng_b,
+                        true => &self.engine_upper,
+                        false => &self.engine_lower,
                     };
                     let source_a = engine.framebuffer[line_start + x];
                     let source_b = {
@@ -285,8 +283,8 @@ impl Gpu {
         }
 
         let engine = match is_engine_a {
-            true => &mut self.eng_a,
-            false => &mut self.eng_b,
+            true => &mut self.engine_upper,
+            false => &mut self.engine_lower,
         };
 
         // Apply master brightness

@@ -1,28 +1,15 @@
-use crate::gpu::{
-    DispStatReg, GPU, Gpu2DEngine, PowCnt1Reg, VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE,
-    VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE, VRAM_H_SIZE, VRAM_I_SIZE, VramBankCnt,
-};
+use crate::common::{Gpu, SchedulerEvent};
 
-impl GPU {
+impl Gpu {
     /// Get current cycle count
     pub fn get_cycles(&self) -> u64 {
         self.cycles
     }
 
-    //    void draw_3D_scanline(uint32_t* framebuffer, uint8_t bg_priorities[256], uint8_t bg0_priority);
-    pub fn draw_3d_scanline(
-        &self,
-        framebuffer: &mut [u32],
-        bg_prirorities: [u8; 256],
-        bg0_priority: u8,
-    ) {
-        todo!()
-    }
-
     /// Power on GPU
     pub fn power_on(&mut self) -> Result<(), String> {
         self.frame_complete = false;
-        self.vcount = 0;
+        self.vertical_count = 0;
         Ok(())
     }
 
@@ -39,13 +26,21 @@ impl GPU {
     }
 
     /// Get upper screen framebuffer data
-    pub fn get_upper_frame(&self, buffer: &mut [u32]) -> Vec<u32> {
-        todo!()
+    pub fn get_upper_frame(&self, buffer: &mut [u32]) {
+        let engine = match self.power_control_reg.swap_display {
+            true => &self.engine_upper,
+            false => &self.engine_lower,
+        };
+        engine.get_framebuffer(buffer);
     }
 
     /// Get lower screen framebuffer data
-    pub fn get_lower_frame(&self, buffer: &mut [u32]) -> Vec<u32> {
-        todo!()
+    pub fn get_lower_frame(&self, buffer: &mut [u32]) {
+        let engine = match self.power_control_reg.swap_display {
+            true => &self.engine_lower,
+            false => &self.engine_upper,
+        };
+        engine.get_framebuffer(buffer);
     }
 
     /// Mark frame start
@@ -75,15 +70,15 @@ impl GPU {
 
     /// Check if display screens are swapped
     pub fn display_swapped(&self) -> bool {
-        self.powcnt1.swap_display
+        self.power_control_reg.swap_display
     }
 
     /// Read from palette A
     pub fn read_palette_a(&self, address: u32) -> u16 {
         let address = address as usize;
-        if address + 1 < self.palette_a.len() {
-            let lo = self.palette_a[address] as u16;
-            let hi = self.palette_a[address + 1] as u16;
+        if address + 1 < self.palette_upper.len() {
+            let lo = self.palette_upper[address] as u16;
+            let hi = self.palette_upper[address + 1] as u16;
             lo | (hi << 8)
         } else {
             0
@@ -93,9 +88,9 @@ impl GPU {
     /// Read from palette B
     pub fn read_palette_b(&self, address: u32) -> u16 {
         let address = address as usize;
-        if address + 1 < self.palette_b.len() {
-            let lo = self.palette_b[address] as u16;
-            let hi = self.palette_b[address + 1] as u16;
+        if address + 1 < self.palette_lower.len() {
+            let lo = self.palette_lower[address] as u16;
+            let hi = self.palette_lower[address + 1] as u16;
             lo | (hi << 8)
         } else {
             0
@@ -105,22 +100,22 @@ impl GPU {
     /// Write to palette A
     pub fn write_palette_a(&mut self, address: u32, value: u16) {
         let address = address as usize;
-        if address < self.palette_a.len() {
-            self.palette_a[address] = (value & 0xFF) as u8;
+        if address < self.palette_upper.len() {
+            self.palette_upper[address] = (value & 0xFF) as u8;
         }
-        if address + 1 < self.palette_a.len() {
-            self.palette_a[address + 1] = ((value >> 8) & 0xFF) as u8;
+        if address + 1 < self.palette_upper.len() {
+            self.palette_upper[address + 1] = ((value >> 8) & 0xFF) as u8;
         }
     }
 
     /// Write to palette B
     pub fn write_palette_b(&mut self, address: u32, value: u16) {
         let address = address as usize;
-        if address < self.palette_b.len() {
-            self.palette_b[address] = (value & 0xFF) as u8;
+        if address < self.palette_lower.len() {
+            self.palette_lower[address] = (value & 0xFF) as u8;
         }
-        if address + 1 < self.palette_b.len() {
-            self.palette_b[address + 1] = ((value >> 8) & 0xFF) as u8;
+        if address + 1 < self.palette_lower.len() {
+            self.palette_lower[address + 1] = ((value >> 8) & 0xFF) as u8;
         }
     }
 }

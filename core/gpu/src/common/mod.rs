@@ -9,6 +9,15 @@ pub(crate) mod vram_reader;
 use crate::gpu_2d::Gpu2DEngine;
 use crate::gpu_3d::Gpu3D;
 
+/// Scheduler event entry for timing-based events
+#[derive(Debug, Clone)]
+pub struct SchedulerEvent {
+    /// Event identifier (GPU event, DMA event, etc.)
+    pub event_id: u32,
+    /// Timestamp when event should fire
+    pub time_stamp: u64,
+}
+
 /// Display status register for screen state
 #[derive(Debug, Clone, Copy)]
 pub struct DispStatReg {
@@ -87,7 +96,7 @@ impl Default for DispStatReg {
 
 /// VRAM bank configuration
 #[derive(Debug, Clone, Copy)]
-pub struct VramBankCnt {
+pub struct VramBankCfg {
     /// Master select mode for this bank
     pub mst: u32,
     /// Offset within mode
@@ -96,10 +105,10 @@ pub struct VramBankCnt {
     pub enabled: bool,
 }
 
-impl VramBankCnt {
+impl VramBankCfg {
     /// Create new VRAM bank configuration
     pub fn new() -> Self {
-        VramBankCnt {
+        VramBankCfg {
             mst: 0,
             offset: 0,
             enabled: false,
@@ -107,38 +116,42 @@ impl VramBankCnt {
     }
 }
 
-impl Default for VramBankCnt {
+impl Default for VramBankCfg {
     fn default() -> Self {
         Self::new()
     }
 }
 
 /// Power control register for GPU features
+///
+/// POWCNT1 - Graphics Power Control Register (R/W)
+///
+/// - https://problemkaputt.de/gbatek.htm#dsiomaps
 #[derive(Debug, Clone, Copy)]
-pub struct PowCnt1Reg {
+pub struct PowerCtrlReg {
     /// LCD display enable
     pub lcd_enable: bool,
     /// Engine A power (2D upper screen)
-    pub engine_a: bool,
+    pub engine_upper: bool,
     /// 3D rendering enable
     pub rendering_3d: bool,
     /// 3D geometry enable
     pub geometry_3d: bool,
     /// Engine B power (2D lower screen)
-    pub engine_b: bool,
+    pub engine_lower: bool,
     /// Swap upper/lower display screens
     pub swap_display: bool,
 }
 
-impl PowCnt1Reg {
+impl PowerCtrlReg {
     /// Create new power control register
     pub fn new() -> Self {
-        PowCnt1Reg {
+        PowerCtrlReg {
             lcd_enable: true,
-            engine_a: true,
+            engine_upper: true,
             rendering_3d: true,
             geometry_3d: true,
-            engine_b: true,
+            engine_lower: true,
             swap_display: false,
         }
     }
@@ -149,7 +162,7 @@ impl PowCnt1Reg {
         if self.lcd_enable {
             value |= 1;
         }
-        if self.engine_a {
+        if self.engine_upper {
             value |= 2;
         }
         if self.rendering_3d {
@@ -158,7 +171,7 @@ impl PowCnt1Reg {
         if self.geometry_3d {
             value |= 8;
         }
-        if self.engine_b {
+        if self.engine_lower {
             value |= 16;
         }
         if self.swap_display {
@@ -170,15 +183,15 @@ impl PowCnt1Reg {
     /// Set register value from 16-bit halfword
     pub fn set(&mut self, value: u16) {
         self.lcd_enable = (value & 1) != 0;
-        self.engine_a = (value & 2) != 0;
+        self.engine_upper = (value & 2) != 0;
         self.rendering_3d = (value & 4) != 0;
         self.geometry_3d = (value & 8) != 0;
-        self.engine_b = (value & 16) != 0;
+        self.engine_lower = (value & 16) != 0;
         self.swap_display = (value & 32) != 0;
     }
 }
 
-impl Default for PowCnt1Reg {
+impl Default for PowerCtrlReg {
     fn default() -> Self {
         Self::new()
     }
@@ -198,12 +211,12 @@ pub const VRAM_I_SIZE: usize = 16 * 1024; // 16KB
 /// Graphics Processing Unit
 /// Manages 2D and 3D rendering for both screens
 pub struct Gpu {
-    /// 2D Engine A
-    eng_a: Gpu2DEngine,
-    /// 2D Engine B
-    eng_b: Gpu2DEngine,
+    /// 2D Engine upper screen
+    engine_upper: Gpu2DEngine,
+    /// 2D Engine lower screen
+    engine_lower: Gpu2DEngine,
 
-    eng_3d: Gpu3D,
+    engine_3d: Gpu3D,
 
     /// Frame rendering complete flag
     frame_complete: bool,
@@ -225,43 +238,43 @@ pub struct Gpu {
     vram_i: Vec<u8>,
 
     /// Palette memory for engine A (1024 bytes)
-    palette_a: Vec<u8>,
+    palette_upper: Vec<u8>,
     /// Palette memory for engine B (1024 bytes)
-    palette_b: Vec<u8>,
+    palette_lower: Vec<u8>,
 
     /// OAM (Object Attribute Memory) for sprites (2KB)
     oam: Vec<u8>,
 
     /// Display status register for ARM7
-    dispstat7: DispStatReg,
+    display_status_arm7: DispStatReg,
     /// Display status register for ARM9
-    dispstat9: DispStatReg,
+    display_status_arm9: DispStatReg,
 
     /// Current vertical line counter
-    vcount: u16,
+    vertical_count: u16,
 
     /// VRAM bank configuration A-I
-    vramcnt_a: VramBankCnt,
-    vramcnt_b: VramBankCnt,
-    vramcnt_c: VramBankCnt,
-    vramcnt_d: VramBankCnt,
-    vramcnt_e: VramBankCnt,
-    vramcnt_f: VramBankCnt,
-    vramcnt_g: VramBankCnt,
-    vramcnt_h: VramBankCnt,
-    vramcnt_i: VramBankCnt,
+    vramcnt_a: VramBankCfg,
+    vramcnt_b: VramBankCfg,
+    vramcnt_c: VramBankCfg,
+    vramcnt_d: VramBankCfg,
+    vramcnt_e: VramBankCfg,
+    vramcnt_f: VramBankCfg,
+    vramcnt_g: VramBankCfg,
+    vramcnt_h: VramBankCfg,
+    vramcnt_i: VramBankCfg,
 
     /// Power control register
-    powcnt1: PowCnt1Reg,
+    power_control_reg: PowerCtrlReg,
 }
 
 impl Gpu {
     /// Create new GPU instance
     pub fn new() -> Self {
         Gpu {
-            eng_a: Gpu2DEngine::new(),
-            eng_b: Gpu2DEngine::new(),
-            eng_3d: Gpu3D::new(),
+            engine_upper: Gpu2DEngine::new(),
+            engine_lower: Gpu2DEngine::new(),
+            engine_3d: Gpu3D::new(std::ptr::null_mut(), std::ptr::null_mut()),
 
             frame_complete: false,
             frames_skipped: 0,
@@ -278,27 +291,27 @@ impl Gpu {
             vram_h: vec![0u8; VRAM_H_SIZE],
             vram_i: vec![0u8; VRAM_I_SIZE],
 
-            palette_a: vec![0u8; 1024],
-            palette_b: vec![0u8; 1024],
+            palette_upper: vec![0u8; 1024],
+            palette_lower: vec![0u8; 1024],
 
             oam: vec![0u8; 2048],
 
-            dispstat7: DispStatReg::new(),
-            dispstat9: DispStatReg::new(),
+            display_status_arm7: DispStatReg::new(),
+            display_status_arm9: DispStatReg::new(),
 
-            vcount: 0,
+            vertical_count: 0,
 
-            vramcnt_a: VramBankCnt::new(),
-            vramcnt_b: VramBankCnt::new(),
-            vramcnt_c: VramBankCnt::new(),
-            vramcnt_d: VramBankCnt::new(),
-            vramcnt_e: VramBankCnt::new(),
-            vramcnt_f: VramBankCnt::new(),
-            vramcnt_g: VramBankCnt::new(),
-            vramcnt_h: VramBankCnt::new(),
-            vramcnt_i: VramBankCnt::new(),
+            vramcnt_a: VramBankCfg::new(),
+            vramcnt_b: VramBankCfg::new(),
+            vramcnt_c: VramBankCfg::new(),
+            vramcnt_d: VramBankCfg::new(),
+            vramcnt_e: VramBankCfg::new(),
+            vramcnt_f: VramBankCfg::new(),
+            vramcnt_g: VramBankCfg::new(),
+            vramcnt_h: VramBankCfg::new(),
+            vramcnt_i: VramBankCfg::new(),
 
-            powcnt1: PowCnt1Reg::new(),
+            power_control_reg: PowerCtrlReg::new(),
         }
     }
 }
@@ -400,46 +413,46 @@ impl Gpu {
     }
 
     pub fn get_dispcnt_a(&self) -> u32 {
-        self.eng_a.get_dispcnt()
+        self.engine_upper.get_dispcnt()
     }
 
     pub fn get_dispcnt_b(&self) -> u32 {
-        self.eng_b.get_dispcnt()
+        self.engine_lower.get_dispcnt()
     }
 
     /// Get DISPSTAT7 register value
     pub fn get_dispstat7(&self) -> u16 {
-        self.dispstat7.get()
+        self.display_status_arm7.get()
     }
 
     /// Get DISPSTAT9 register value
     pub fn get_dispstat9(&self) -> u16 {
-        self.dispstat9.get()
+        self.display_status_arm9.get()
     }
 
     /// Set DISPSTAT7 register value
     pub fn set_dispstat7(&mut self, value: u16) {
-        self.dispstat7.set(value);
+        self.display_status_arm7.set(value);
     }
 
     /// Set DISPSTAT9 register value
     pub fn set_dispstat9(&mut self, value: u16) {
-        self.dispstat9.set(value);
+        self.display_status_arm9.set(value);
     }
 
     /// Get VCOUNT register value
     pub fn get_vcount(&self) -> u16 {
-        self.vcount
+        self.vertical_count
     }
 
     /// Get POWCNT1 register value
     pub fn get_powcnt1(&self) -> u16 {
-        self.powcnt1.get()
+        self.power_control_reg.get()
     }
 
     /// Set POWCNT1 register value
     pub fn set_powcnt1(&mut self, value: u16) {
-        self.powcnt1.set(value);
+        self.power_control_reg.set(value);
     }
 
     /// Get VRAM bank configuration A
@@ -543,12 +556,12 @@ impl Gpu {
 
     /// Set upper screen framebuffer
     pub fn set_upper_buffer(&mut self, buffer: Vec<u32>) {
-        *self.upper_framebuffer.lock().unwrap() = buffer;
+        self.engine_upper.set_framebuffer(buffer);
     }
 
     /// Set lower screen framebuffer
     pub fn set_lower_buffer(&mut self, buffer: Vec<u32>) {
-        *self.lower_framebuffer.lock().unwrap() = buffer;
+        self.engine_lower.set_framebuffer(buffer);
     }
 
     // Matrix and 3D rendering operations

@@ -12,8 +12,8 @@ impl Gpu {
         let line = (self.get_vcount() & 0xFF) as i32;
 
         let engine = match is_engine_a {
-            true => &mut self.eng_a,
-            false => &mut self.eng_b,
+            true => &mut self.engine_upper,
+            false => &mut self.engine_lower,
         };
 
         let y1_0 = (engine.win0v >> 8) as i32;
@@ -86,8 +86,8 @@ impl Gpu {
 
         {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
 
             // Load rotation/scaling matrix and offsets
@@ -184,8 +184,8 @@ impl Gpu {
                 if color != 0 {
                     let bg_extended_palette = {
                         let engine = match is_engine_a {
-                            true => &mut self.eng_a,
-                            false => &mut self.eng_b,
+                            true => &mut self.engine_upper,
+                            false => &mut self.engine_lower,
                         };
                         engine.dispcnt.bg_extended_palette
                     };
@@ -199,8 +199,8 @@ impl Gpu {
                         }
                     } else {
                         match is_engine_a {
-                            true => read_palette_value(&self.palette_a, color as u32 * 2),
-                            false => read_palette_value(&self.palette_b, color as u32 * 2),
+                            true => read_palette_value(&self.palette_upper, color as u32 * 2),
+                            false => read_palette_value(&self.palette_lower, color as u32 * 2),
                         }
                     };
 
@@ -212,8 +212,8 @@ impl Gpu {
                     let address = pixel + (self.get_vcount() as usize * PIXELS_PER_LINE);
 
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.framebuffer[address] = true_color;
                     engine.final_bg_priority[pixel] = (engine.bgcnt[index] & 0x3) as u8;
@@ -226,8 +226,8 @@ impl Gpu {
         }
 
         let engine = match is_engine_a {
-            true => &mut self.eng_a,
-            false => &mut self.eng_b,
+            true => &mut self.engine_upper,
+            false => &mut self.engine_lower,
         };
 
         // Update BG internal offsets for next scanline
@@ -243,8 +243,8 @@ impl Gpu {
     /// Draws the backdrop (background color layer).
     pub fn draw_backdrop(&mut self, is_engine_a: bool) {
         let palette = bytes_to_palette(match is_engine_a {
-            true => &self.palette_a,
-            false => &self.palette_b,
+            true => &self.palette_upper,
+            false => &self.palette_lower,
         });
         let c = palette[0];
 
@@ -259,8 +259,8 @@ impl Gpu {
             let color = 0xFF000000 | (r << 16) | (g << 8) | b;
 
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
             engine.framebuffer[base + x] = color;
         }
@@ -271,8 +271,8 @@ impl Gpu {
     /// `index` must be 0..=3.
     pub fn draw_bg_txt(&mut self, index: usize, is_engine_a: bool) {
         let palette = bytes_to_palette(match is_engine_a {
-            true => &self.palette_a,
-            false => &self.palette_b,
+            true => &self.palette_upper,
+            false => &self.palette_lower,
         });
 
         let v_count = self.get_vcount();
@@ -287,8 +287,8 @@ impl Gpu {
 
         {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
 
             x_offset = engine.bghofs[index];
@@ -394,8 +394,8 @@ impl Gpu {
 
             for pixel in 0..PIXELS_PER_LINE {
                 let engine = match is_engine_a {
-                    true => &mut self.eng_a,
-                    false => &mut self.eng_b,
+                    true => &mut self.engine_upper,
+                    false => &mut self.engine_lower,
                 };
 
                 if color != 0 && (engine.window_mask[pixel] & (1 << index)) != 0 {
@@ -483,12 +483,12 @@ impl Gpu {
 
                 let (window_mask_byte, bg_extended_palette) = match is_engine_a {
                     true => (
-                        &self.eng_a.window_mask[pixel],
-                        self.eng_a.dispcnt.bg_extended_palette,
+                        &self.engine_upper.window_mask[pixel],
+                        self.engine_upper.dispcnt.bg_extended_palette,
                     ),
                     false => (
-                        &self.eng_b.window_mask[pixel],
-                        self.eng_a.dispcnt.bg_extended_palette,
+                        &self.engine_lower.window_mask[pixel],
+                        self.engine_upper.dispcnt.bg_extended_palette,
                     ),
                 };
 
@@ -510,8 +510,8 @@ impl Gpu {
                     let b = (((color >> 10) & 0x1F) << 3) as u32;
 
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.framebuffer[pixel + scanline] = 0xFF000000 | (r << 16) | (g << 8) | b;
                     engine.final_bg_priority[pixel] = (engine.bgcnt[index] & 0x3) as u8;
@@ -539,8 +539,8 @@ impl Gpu {
 
         {
             let engine = match is_engine_a {
-                true => &mut self.eng_a,
-                false => &mut self.eng_b,
+                true => &mut self.engine_upper,
+                false => &mut self.engine_lower,
             };
 
             // Add BG-specific Y offset
@@ -585,8 +585,8 @@ impl Gpu {
                     // Convert palette index to RGB
                     let address = (color_index * 2) as u32;
                     let color = match is_engine_a {
-                        true => read_palette_value(&self.palette_a, address),
-                        false => read_palette_value(&self.palette_b, address),
+                        true => read_palette_value(&self.palette_upper, address),
+                        false => read_palette_value(&self.palette_lower, address),
                     };
 
                     let r = ((color & 0x1F) << 3) as u32;
@@ -599,8 +599,8 @@ impl Gpu {
                     let address = i + (v_count as usize * PIXELS_PER_LINE);
 
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.framebuffer[address] = true_color;
                     engine.final_bg_priority[i] = (engine.bgcnt[index] & 0x3) as u8;
@@ -635,8 +635,8 @@ impl Gpu {
                     let address = i + (v_count as usize * PIXELS_PER_LINE);
 
                     let engine = match is_engine_a {
-                        true => &mut self.eng_a,
-                        false => &mut self.eng_b,
+                        true => &mut self.engine_upper,
+                        false => &mut self.engine_lower,
                     };
                     engine.framebuffer[address] = color;
                     engine.final_bg_priority[i] = (engine.bgcnt[index] & 0x3) as u8;

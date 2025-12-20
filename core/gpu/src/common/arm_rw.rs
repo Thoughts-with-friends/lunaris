@@ -1,6 +1,8 @@
 use crate::common::Gpu;
 use mem_const::*;
 
+const OAM_MASK: u32 = 0x7FF;
+
 impl Gpu {
     pub fn read_arm7_u16(&self, address: u32) -> u16 {
         {
@@ -100,7 +102,7 @@ impl Gpu {
         // VRAM D
         if self.vramcnt_d.enabled {
             let start = 0x06000000 + self.vramcnt_d.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_D_SIZE as u32) && self.vramcnt_d.mst == 2 {
+            if addr_in_range(address, start, VRAM_D_SIZE) && self.vramcnt_d.mst == 2 {
                 let idx = (address & VRAM_D_MASK) as usize;
                 self.vram_d[idx] = value;
             }
@@ -116,7 +118,7 @@ impl Gpu {
         let idx = (address & OAM_MASK) as usize;
 
         let lo = self.oam[idx];
-        let hi = self.oam[(idx + 1) & 0x7FF];
+        let hi = self.oam[(idx + 1) & OAM_MASK as usize];
 
         u16::from_le_bytes([lo, hi])
     }
@@ -125,9 +127,9 @@ impl Gpu {
         let idx = (address & OAM_MASK) as usize;
 
         let b0 = self.oam[idx];
-        let b1 = self.oam[(idx + 1) & 0x7FF];
-        let b2 = self.oam[(idx + 2) & 0x7FF];
-        let b3 = self.oam[(idx + 3) & 0x7FF];
+        let b1 = self.oam[(idx + 1) & OAM_MASK as usize];
+        let b2 = self.oam[(idx + 2) & OAM_MASK as usize];
+        let b3 = self.oam[(idx + 3) & OAM_MASK as usize];
 
         u32::from_le_bytes([b0, b1, b2, b3])
     }
@@ -136,7 +138,7 @@ impl Gpu {
         let idx = (address & OAM_MASK) as usize;
 
         let lo = self.oam[idx];
-        let hi = self.oam[(idx + 1) & 0x7FF];
+        let hi = self.oam[(idx + 1) & OAM_MASK as usize];
 
         i16::from_le_bytes([lo, hi])
     }

@@ -178,15 +178,6 @@ impl PowCnt2Reg {
     }
 }
 
-/// Scheduler event entry for timing-based events
-#[derive(Debug, Clone)]
-pub struct SchedulerEvent {
-    /// Event identifier (GPU event, DMA event, etc.)
-    pub event_id: u32,
-    /// Timestamp when event should fire
-    pub timestamp: u64,
-}
-
 /// Interrupt identifier for different interrupt sources
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interrupt {

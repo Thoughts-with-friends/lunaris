@@ -1,9 +1,9 @@
-/*
-    CorgiDS Copyright PSISP 2017
-    Licensed under the GPLv3
-    See LICENSE.txt for details
-*/
+// CorgiDS Copyright PSISP 2017
+// Licensed under the GPLv3
+// See LICENSE.txt for details
+mod consts;
 
+use mem_const::*;
 use std::collections::VecDeque;
 
 /// GPU 3D Display Control Register
@@ -75,14 +75,20 @@ pub struct GxStatReg {
 }
 
 /// 4x4 Matrix
+/// - C++ `Mtx`
 #[derive(Clone, Default)]
-pub struct Mtx {
+pub struct Matrix {
     pub m: [[i32; 4]; 4],
 }
 
-impl Mtx {
+impl Matrix {
+    #[inline]
+    pub const fn new(m: [[i32; 4]; 4]) -> Self {
+        Self { m }
+    }
+
     /// Set this matrix to another
-    pub fn set(&mut self, other: &Mtx) {
+    pub fn set(&mut self, other: &Matrix) {
         todo!()
     }
 }
@@ -125,67 +131,91 @@ pub struct Gpu3D {
     e: *mut Emulator,
     gpu: *mut Gpu,
     cycles: i32,
+
     disp3dcnt: Disp3DCntReg,
     polygon_attr: PolygonAttrReg,
     teximage_param: TexImageParamReg,
+
     toon_table: [u16; 32],
     pltt_base: u32,
     viewport: ViewportReg,
+
     gxstat: GxStatReg,
     polygon_type: u32,
     clear_depth: u32,
     clear_color: u32,
     flush_mode: i32,
+
     gfxifo: VecDeque<GxCommand>,
     gxpipe: VecDeque<GxCommand>,
+
     cmd_params: [u32; 32],
     param_count: u8,
     cmd_param_count: u8,
     cmd_count: u8,
+
     total_params: u8,
     current_cmd: u32,
     current_poly_attr: PolygonAttrReg,
+
     current_color: u32,
     current_vertex: [i16; 3],
     current_texcoords: [i16; 2],
+
     z_buffer: [[u32; PIXELS_PER_LINE]; SCANLINES],
     trans_poly_ids: [u8; PIXELS_PER_LINE],
+
     swap_buffers: bool,
+
     geo_vert: [Vertex; 6188],
     rend_vert: [Vertex; 6188],
     geo_poly: [Polygon; 2048],
     rend_poly: [Polygon; 2048],
     last_poly_strip: Option<*mut Polygon>,
+
     vertex_list: [Vertex; 10],
     vertex_list_count: i32,
+
     geo_vert_count: i32,
     rend_vert_count: i32,
     geo_poly_count: i32,
     rend_poly_count: i32,
+
     consecutive_polygons: i32,
+
     vtx_16_index: i32,
+
     mtx_mode: u8,
-    projection_mtx: Mtx,
-    vector_mtx: Mtx,
-    modelview_mtx: Mtx,
-    texture_mtx: Mtx,
-    projection_stack: Mtx,
-    texture_stack: Mtx,
-    modelview_stack: [Mtx; 0x20],
-    vector_stack: [Mtx; 0x20],
-    clip_mtx: Mtx,
+
+    projection_mtx: Matrix,
+    vector_mtx: Matrix,
+    modelview_mtx: Matrix,
+    texture_mtx: Matrix,
+
+    projection_stack: Matrix,
+    texture_stack: Matrix,
+
+    modelview_stack: [Matrix; 0x20],
+    vector_stack: [Matrix; 0x20],
+    clip_mtx: Matrix,
     clip_dirty: bool,
     modelview_sp: u8,
+
     emission_color: u16,
     ambient_color: u16,
     diffuse_color: u16,
     specular_color: u16,
+
     light_color: [u16; 4],
     light_direction: [[i16; 3]; 4],
     normal_vector: [i16; 3],
     shine_table: [u8; 128],
     using_shine_table: bool,
+
     vec_test_result: [i16; 3],
+    mult_params: Matrix,
+    /// C++ int
+    mult_params_index: usize,
 }
 
 impl Gpu3D {
@@ -346,7 +376,3 @@ impl Gpu3D {
         todo!()
     }
 }
-
-// Constants to define
-const SCANLINES: usize = 256;
-const PIXELS_PER_LINE: usize = 256;
