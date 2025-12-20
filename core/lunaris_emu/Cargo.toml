@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+audio = { workspace = true }
 free_bios = { workspace = true }
 gpu = { workspace = true }
 mem_const = { workspace = true }
 tracing = { workspace = true, optional = true }
-audio = {workspace = true }
 
 [features]
 default = ["tracing"]
