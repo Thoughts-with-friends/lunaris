@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 free_bios = { workspace = true }
+gpu = { workspace = true }
 mem_const = { workspace = true }
 tracing = { workspace = true, optional = true }
 

@@ -24,6 +24,7 @@ arm9 = { path = "./core/arm9" }
 audio = { path = "./core/audio" }
 cpu = { path = "./core/cpu" }
 free_bios = { path = "./core/free_bios" }
+gpu = { path = "./core/gpu" }
 mem_const = { path = "./core/mem_const" }
 
 

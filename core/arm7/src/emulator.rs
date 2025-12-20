@@ -7,15 +7,35 @@ use crate::cartridge::NDSCart;
 use crate::cp15::CP15;
 use crate::cpu::ARMCPU;
 use crate::dma::NDS_DMA;
-use crate::gpu::GPU;
 use crate::ipc::{IpcFifo, IpcSync};
 use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
 use crate::spu::SPU;
 use crate::timers::NDSTiming;
 use crate::wifi::WiFi;
+use gpu::common::Gpu;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+
+#[derive(Default)]
+pub struct Config {
+    pub arm7_bios_path: String,
+    pub arm9_bios_path: String,
+    pub firmware_path: String,
+    pub savelist_path: String,
+    /// Enable direct boot
+    pub direct_boot_enabled: bool,
+    /// Pause emulator when window is unfocused
+    pub pause_when_unfocused: bool,
+    /// Background enable flags
+    pub bg_enable: [bool; 4],
+    pub frameskip: i32,
+    /// Enable frame limiter
+    pub enable_framelimiter: bool,
+    /// Use HLE BIOS
+    pub hle_bios: bool,
+    /// Test mode
+    pub test: bool,
+}
 
 /// Button input register for standard DS buttons
 #[derive(Debug, Clone, Copy, Default)]
@@ -260,6 +280,9 @@ impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS9_SIZE> {
 /// Core Nintendo DS emulator system
 /// Manages dual ARM CPUs, memory, and all peripheral devices
 pub struct Emulator {
+    /// Configuration
+    pub config: Config,
+
     pub cycle_count: u64,
     pub arm7: ARMCPU,
     pub arm9: ARMCPU,
@@ -267,7 +290,7 @@ pub struct Emulator {
     pub arm9_cp15: CP15,
     pub cart: NDSCart,
     pub dma: NDS_DMA,
-    pub gpu: GPU,
+    pub gpu: Gpu,
     pub rtc: RealTimeClock,
     pub spi: SPIBus,
     pub spu: SPU,
@@ -375,7 +398,7 @@ impl Emulator {
             arm9_cp15: CP15::new(),
             cart: NDSCart::new(),
             dma: NDS_DMA::new(),
-            gpu: GPU::new(),
+            gpu: Gpu::new(),
             rtc: RealTimeClock::new(),
             spi: SPIBus::new(),
             spu: SPU::new(),
@@ -440,6 +463,8 @@ impl Emulator {
             int7_reg_ime: 0,
 
             scheduled_events: VecDeque::new(),
+
+            config: Config::default(), // TODO: Load from file or parameters
         }
     }
 

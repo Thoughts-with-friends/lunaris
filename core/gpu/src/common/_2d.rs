@@ -5,6 +5,74 @@ impl Gpu {
     // ============================================================
     // Rendering pipeline
     // ============================================================
+    /// Compute window mask for the current scanline.
+    pub fn get_window_mask(&mut self, is_engine_a: bool) {
+        // Determine if the windows are active on this scanline
+        // Note: only the lower 8 bits of VCOUNT are used
+        let line = (self.get_vcount() & 0xFF) as i32;
+
+        let engine = match is_engine_a {
+            true => &mut self.eng_a,
+            false => &mut self.eng_b,
+        };
+
+        let y1_0 = (engine.win0v >> 8) as i32;
+        let y2_0 = (engine.win0v & 0xFF) as i32;
+        let y1_1 = (engine.win1v >> 8) as i32;
+        let y2_1 = (engine.win1v & 0xFF) as i32;
+
+        if line == y1_0 {
+            engine.win0_active = true;
+        } else if line == y2_0 {
+            engine.win0_active = false;
+        }
+
+        if line == y1_1 {
+            engine.win1_active = true;
+        } else if line == y2_1 {
+            engine.win1_active = false;
+        }
+
+        // Reset window mask to outside window
+        let outside = (engine.get_winout() & 0xFF) as u8;
+        for i in 0..PIXELS_PER_LINE {
+            engine.window_mask[i] = outside;
+        }
+
+        if engine.dispcnt.obj_win_display {
+            // TODO: WINOBJ
+        }
+
+        if engine.dispcnt.display_win1 && engine.win1_active {
+            let x1 = (engine.win1h >> 8) as usize;
+            let x2 = (engine.win1h & 0xFF) as usize;
+            let mask = (engine.get_winin() >> 8) as u8;
+
+            for x in x1..x2 {
+                if x < PIXELS_PER_LINE {
+                    engine.window_mask[x] = mask;
+                }
+            }
+        }
+
+        if engine.dispcnt.display_win0 && engine.win0_active {
+            let x1 = (engine.win0h >> 8) as usize;
+            let x2 = (engine.win0h & 0xFF) as usize;
+            let mask = (engine.get_winin() & 0xFF) as u8;
+
+            for x in x1..x2 {
+                if x < PIXELS_PER_LINE {
+                    engine.window_mask[x] = mask;
+                }
+            }
+        }
+    }
+
+    pub fn handle_bldcnt_effects(&mut self) {
+        // Nothing impl in CorgiDS.
+        todo!()
+    }
+
     /// Draws an extended text background (BG2 or BG3) for the current scanline.
     pub fn draw_ext_text(&mut self, index: usize, is_engine_a: bool) {
         let (rot_a, rot_b, rot_c, rot_d): (i16, i16, i16, i16);

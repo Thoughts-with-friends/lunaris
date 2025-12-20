@@ -1,6 +1,6 @@
 use crate::common::{
-    DispStatReg, Gpu, Gpu2DEngine, PowCnt1Reg, VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE,
-    VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE, VRAM_H_SIZE, VRAM_I_SIZE, VramBankCnt,
+    Gpu, VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE, VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE,
+    VRAM_H_SIZE, VRAM_I_SIZE,
 };
 use mem_const::*;
 
@@ -364,5 +364,41 @@ impl Gpu {
             .expect("VRAM_H index+1 out of bounds");
 
         u16::from_le_bytes([lo, hi])
+    }
+
+    /// Read extended OBJ palette A (VRAM F/G).
+    pub fn read_extpal_obja(&self, address: u32) -> u16 {
+        let mut reg: u16 = 0;
+
+        let (f_in_ramge, g_in_range) = (
+            addr_in_range(address, 0, VRAM_F_SIZE as u32 / 2) && self.vramcnt_f.mst == 5,
+            addr_in_range(address, 0, VRAM_G_SIZE as u32 / 2) && self.vramcnt_g.mst == 5,
+        );
+
+        // VRAM F mapping
+        if self.vramcnt_f.enabled && f_in_ramge {
+            let addr = (address & VRAM_F_MASK) as usize;
+            reg |= u16::from_le_bytes([self.vram_f[addr], self.vram_f[addr + 1]]);
+        }
+
+        // VRAM G mapping
+        if self.vramcnt_g.enabled && g_in_range {
+            let addr = (address & VRAM_G_MASK) as usize;
+            reg |= u16::from_le_bytes([self.vram_g[addr], self.vram_g[addr + 1]]);
+        }
+        reg
+    }
+
+    /// Read extended OBJ palette B (VRAM I).
+    pub fn read_extpal_objb(&self, address: u32) -> u16 {
+        let mut reg: u16 = 0;
+        let i_in_range =
+            addr_in_range(address, 0, VRAM_I_SIZE as u32 / 2) && self.vramcnt_i.mst == 3;
+
+        if self.vramcnt_i.enabled && i_in_range {
+            let addr = (address & VRAM_I_MASK) as usize;
+            reg |= u16::from_le_bytes([self.vram_i[addr], self.vram_i[addr + 1]]);
+        }
+        reg
     }
 }

@@ -200,7 +200,7 @@ impl Gpu3D {
     pub fn render_scanline(
         &mut self,
         framebuffer: &mut [u32],
-        bg_priorities: &[u8; 256],
+        bg_priorities: &[u8],
         bg0_priority: u8,
     ) {
         todo!()

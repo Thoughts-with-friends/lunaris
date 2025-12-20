@@ -303,6 +303,7 @@ impl Gpu {
     }
 }
 
+// TODO: Rename bytes_to_u16_slice()
 pub fn bytes_to_palette(bytes: &[u8]) -> &[u16] {
     assert_eq!(bytes.len() % 2, 0, "u8 vector length must be even");
     unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2) }
@@ -316,6 +317,88 @@ pub fn read_palette_value(bytes: &[u8], address: u32) -> u16 {
 }
 
 impl Gpu {
+    // TODO: id to enum?
+    /// Get VRAM bank by ID.
+    /// # Panics
+    /// Returns empty slice if ID is 0..=3 outside valid range.
+    pub fn get_vram_block(&self, id: i32) -> &[u16] {
+        let bytes = match id {
+            0 => &self.vram_a,
+            1 => &self.vram_b,
+            2 => &self.vram_c,
+            3 => &self.vram_d,
+            _ => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Invalid VRAM bank ID: {id}");
+                panic!("Invalid VRAM bank ID: {id}");
+            }
+        };
+        assert_eq!(bytes.len() % 2, 0, "u8 vector length must be even");
+        unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *mut u16, bytes.len() / 2) }
+    }
+
+    // TODO: id to enum?
+    /// Get VRAM bank by ID.
+    /// # Panics
+    /// Returns empty slice if ID is 0..=3 outside valid range.
+    pub fn get_vram_block_mut(&mut self, id: i32) -> &mut [u16] {
+        let bytes = match id {
+            0 => &mut self.vram_a,
+            1 => &mut self.vram_b,
+            2 => &mut self.vram_c,
+            3 => &mut self.vram_d,
+            _ => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Invalid VRAM bank ID: {id}");
+                panic!("Invalid VRAM bank ID: {id}");
+            }
+        };
+        assert_eq!(bytes.len() % 2, 0, "u8 vector length must be even");
+        unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut u16, bytes.len() / 2) }
+    }
+
+    // TODO: id to enum?
+    /// Get VRAM bank by ID.
+    /// # Panics
+    /// Returns empty slice if ID is 0..=3 outside valid range.
+    pub fn get_movable_vram_block(&mut self, src_id: i32, dest_id: i32) -> (&[u16], &mut [u16]) {
+        let src_bytes = match src_id {
+            0 => &self.vram_a,
+            1 => &self.vram_b,
+            2 => &self.vram_c,
+            3 => &self.vram_d,
+            _ => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Invalid VRAM bank ID: {src_id}");
+                panic!("Invalid VRAM bank ID: {src_id}");
+            }
+        };
+        let dest_bytes = match dest_id {
+            0 => &self.vram_a,
+            1 => &self.vram_b,
+            2 => &self.vram_c,
+            3 => &self.vram_d,
+            _ => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Invalid VRAM bank ID: {dest_id}");
+                panic!("Invalid id VRAM bank ID: {dest_id}");
+            }
+        };
+        assert!(
+            (src_bytes.len() % 2) == 0 && (dest_bytes.len() % 2) == 0,
+            "u8 vector length must be even"
+        );
+        unsafe {
+            (
+                core::slice::from_raw_parts(src_bytes.as_ptr() as *mut u16, src_bytes.len() / 2),
+                core::slice::from_raw_parts_mut(
+                    dest_bytes.as_ptr() as *mut u16,
+                    dest_bytes.len() / 2,
+                ),
+            )
+        }
+    }
+
     pub fn get_dispcnt_a(&self) -> u32 {
         self.eng_a.get_dispcnt()
     }

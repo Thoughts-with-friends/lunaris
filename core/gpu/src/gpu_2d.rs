@@ -277,11 +277,11 @@ impl Gpu2DEngine {
         */
     }
 
-    /// Sets an external framebuffer as the render target.
-    /// C++ code is empty.
-    pub fn set_framebuffer(&mut self, buffer: &mut [u32]) {
-        // framebuffer = buffer;
-    }
+    // Sets an external framebuffer as the render target.
+    // C++ code is empty.
+    // pub fn set_framebuffer(&mut self, buffer: &mut [u32]) {
+    // framebuffer = buffer;
+    // }
 
     // ============================================================
     // Timing
@@ -300,7 +300,7 @@ impl Gpu2DEngine {
     pub fn get_dispcnt(&self) -> u32 {
         let mut reg: u32 = 0;
 
-        reg |= self.dispcnt.bg_mode;
+        reg |= self.dispcnt.bg_mode as u32;
         reg |= (self.dispcnt.bg_3d as u32) << 3;
         reg |= (self.dispcnt.tile_obj_1d as u32) << 4;
         reg |= (self.dispcnt.bitmap_obj_square as u32) << 5;
@@ -404,8 +404,8 @@ impl Gpu2DEngine {
         self.master_bright
     }
 
-    pub fn get_dispcapcnt(&self) -> u32 {
-        if !self.engine_a {
+    pub fn get_dispcapcnt(&self, is_engine_a: bool) -> u32 {
+        if !is_engine_a {
             return 0;
         }
 
@@ -430,7 +430,7 @@ impl Gpu2DEngine {
 
     /// Sets the low 16 bits of DISPCNT.
     pub fn set_disp_cnt_lo(&mut self, halfword: u16) {
-        self.dispcnt.bg_mode = halfword & 0x7;
+        self.dispcnt.bg_mode = (halfword & 0x7) as i32;
         self.dispcnt.bg_3d = (halfword & (1 << 3)) != 0;
         self.dispcnt.tile_obj_1d = (halfword & (1 << 4)) != 0;
         self.dispcnt.bitmap_obj_square = (halfword & (1 << 5)) != 0;
@@ -449,13 +449,13 @@ impl Gpu2DEngine {
     pub fn set_disp_cnt(&mut self, word: u32) {
         self.set_disp_cnt_lo((word & 0xFFFF) as u16);
 
-        self.dispcnt.display_mode = ((word >> 16) & 0x3) as u8;
-        self.dispcnt.vram_block = ((word >> 18) & 0x3) as u8;
-        self.dispcnt.tile_obj_1d_bound = ((word >> 20) & 0x3) as u8;
+        self.dispcnt.display_mode = ((word >> 16) & 0x3) as i32;
+        self.dispcnt.vram_block = ((word >> 18) & 0x3) as i32;
+        self.dispcnt.tile_obj_1d_bound = ((word >> 20) & 0x3) as i32;
         self.dispcnt.bitmap_obj_1d_bound = (word & (1 << 22)) != 0;
         self.dispcnt.hblank_obj_processing = (word & (1 << 23)) != 0;
-        self.dispcnt.char_base = ((word >> 24) & 0x7) as u8;
-        self.dispcnt.screen_base = ((word >> 27) & 0x7) as u8;
+        self.dispcnt.char_base = ((word >> 24) & 0x7) as i32;
+        self.dispcnt.screen_base = ((word >> 27) & 0x7) as i32;
         self.dispcnt.bg_extended_palette = (word & (1 << 30)) != 0;
         self.dispcnt.obj_extended_palette = (word & (1 << 31)) != 0;
     }
@@ -473,45 +473,45 @@ impl Gpu2DEngine {
     }
 
     /// Sets BG2/BG3 affine parameter (PA, PB, PC, PD).
-    pub fn set_bg2p(&mut self, halfword: u16, index: usize) {
+    pub fn set_bg2p(&mut self, halfword: u16, index: usize, vcount: u16) {
         self.bg2p[index] = halfword;
-        if self.gpu.get_vcount() < 192 {
+        if vcount < 192 {
             self.bg2p_internal[index] = halfword;
         }
     }
 
-    pub fn set_bg3p(&mut self, halfword: u16, index: usize) {
+    pub fn set_bg3p(&mut self, halfword: u16, index: usize, vcount: u16) {
         self.bg3p[index] = halfword;
-        if self.gpu.get_vcount() < 192 {
+        if vcount < 192 {
             self.bg3p_internal[index] = halfword;
         }
     }
 
-    pub fn set_bg2x(&mut self, word: u32) {
+    pub fn set_bg2x(&mut self, word: u32, vcount: u16) {
         self.bg2x = word;
-        if self.gpu.get_vcount() < 192 {
-            self.bg2x_internal = word;
+        if vcount < 192 {
+            self.bg2x_internal = word as i32;
         }
     }
 
-    pub fn set_bg2y(&mut self, word: u32) {
+    pub fn set_bg2y(&mut self, word: u32, vcount: u16) {
         self.bg2y = word;
-        if self.gpu.get_vcount() < 192 {
-            self.bg2y_internal = word;
+        if vcount < 192 {
+            self.bg2y_internal = word as i32;
         }
     }
 
-    pub fn set_bg3x(&mut self, word: u32) {
+    pub fn set_bg3x(&mut self, word: u32, vcount: u16) {
         self.bg3x = word;
-        if self.gpu.get_vcount() < 192 {
-            self.bg3x_internal = word;
+        if vcount < 192 {
+            self.bg3x_internal = word as i32;
         }
     }
 
-    pub fn set_bg3y(&mut self, word: u32) {
+    pub fn set_bg3y(&mut self, word: u32, vcount: u16) {
         self.bg3y = word;
-        if self.gpu.get_vcount() < 192 {
-            self.bg3y_internal = word;
+        if vcount < 192 {
+            self.bg3y_internal = word as i32;
         }
     }
 
@@ -567,9 +567,9 @@ impl Gpu2DEngine {
         self.master_bright = halfword;
     }
 
-    pub fn set_dispcapcnt(&mut self, word: u32) {
+    pub fn set_dispcapcnt(&mut self, word: u32, is_engine_a: bool) {
         // if (!engine_A) return;
-        if !self.engine_a {
+        if !is_engine_a {
             return;
         }
 
