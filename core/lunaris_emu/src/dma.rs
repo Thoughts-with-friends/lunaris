@@ -1,3 +1,5 @@
+use gpu::common::SchedulerEvent;
+
 /// Direct Memory Access (DMA) controller for Nintendo DS
 /// Manages high-speed memory transfers between memory regions
 
@@ -265,9 +267,9 @@ impl NDS_DMA {
     }
 
     /// Handle scheduler event
-    pub fn handle_event(&mut self, _event: &crate::emulator::SchedulerEvent) -> Result<(), String> {
+    pub fn handle_event(&mut self, _event: &SchedulerEvent) {
         // Process timing-based DMA triggers
-        Ok(())
+        // Ok(())
     }
 
     /// Check if any DMA channel is active

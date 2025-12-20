@@ -24,7 +24,7 @@ pub struct Disp3DCntReg {
 }
 
 /// Texture Image Parameter Register
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TexImageParamReg {
     pub vram_offset: i32,
     pub repeat_s: bool,
@@ -39,7 +39,7 @@ pub struct TexImageParamReg {
 }
 
 /// Polygon Attribute Register
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct PolygonAttrReg {
     pub light_enable: i32,
     pub polygon_mode: i32,
@@ -94,7 +94,7 @@ impl Matrix {
 }
 
 /// Vertex structure
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Vertex {
     pub coords: [i32; 4],
     pub colors: [i32; 3],
@@ -104,7 +104,7 @@ pub struct Vertex {
 }
 
 /// Polygon structure
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Polygon {
     pub vert_index: u16,
     pub vertices: u8,
@@ -123,104 +123,282 @@ pub struct GxCommand {
     pub param: u32,
 }
 
-pub struct Emulator;
-pub struct Gpu;
-
 /// 3D GPU emulator
 pub struct Gpu3D {
-    e: *mut Emulator,
-    gpu: *mut Gpu,
+    /// Remaining cycles
     cycles: i32,
 
+    /// 3D display control
     disp3dcnt: Disp3DCntReg,
+
+    /// Current polygon attributes
     polygon_attr: PolygonAttrReg,
+
+    /// Texture parameters
     teximage_param: TexImageParamReg,
 
+    /// Toon shading table (32 entries)
     toon_table: [u16; 32],
+
+    /// Texture palette base address
     pltt_base: u32,
+
+    /// Viewport settings
     viewport: ViewportReg,
 
+    /// Geometry engine status
     gxstat: GxStatReg,
+
+    /// Polygon primitive type
     polygon_type: u32,
+
+    /// Z-buffer clear value
     clear_depth: u32,
+
+    /// Color buffer clear value
     clear_color: u32,
+
+    /// FIFO flush mode
     flush_mode: i32,
 
+    /// Command FIFO
     gfxifo: VecDeque<GxCommand>,
+
+    /// Command pipeline
     gxpipe: VecDeque<GxCommand>,
 
-    cmd_params: [u32; 32],
+    /// Command parameters
+    /// - `[u32; 32]`
+    cmd_params: Vec<u32>,
+
+    /// Received parameter count
     param_count: u8,
+
+    /// Expected parameter count
     cmd_param_count: u8,
+
+    /// Processed command count
     cmd_count: u8,
 
+    /// Total parameters
     total_params: u8,
+
+    /// Current command opcode
     current_cmd: u32,
+
+    /// Latched polygon attributes
     current_poly_attr: PolygonAttrReg,
 
+    /// Current vertex color
     current_color: u32,
+
+    /// Current vertex position
     current_vertex: [i16; 3],
+
+    /// Current texture coordinates
     current_texcoords: [i16; 2],
 
-    z_buffer: [[u32; PIXELS_PER_LINE]; SCANLINES],
-    trans_poly_ids: [u8; PIXELS_PER_LINE],
+    /// Depth buffer
+    /// - `[[u32; PIXELS_PER_LINE]; SCANLINES]`
+    z_buffer: Vec<Vec<u32>>,
 
+    /// Transparent polygon IDs
+    /// - `[u8; PIXELS_PER_LINE]`
+    trans_poly_ids: Vec<u8>,
+
+    /// Swap geometry/render buffers
     swap_buffers: bool,
 
-    geo_vert: [Vertex; 6188],
-    rend_vert: [Vertex; 6188],
-    geo_poly: [Polygon; 2048],
-    rend_poly: [Polygon; 2048],
-    last_poly_strip: Option<*mut Polygon>,
+    /// Geometry vertices
+    /// - `[Vertex; 6188]`
+    geo_vert: Vec<Vertex>,
 
-    vertex_list: [Vertex; 10],
+    /// Render vertices
+    /// - `[Vertex; 6188]`
+    rend_vert: Vec<Vertex>,
+
+    /// Geometry polygons
+    /// - `[Polygon; 2048]`
+    geo_poly: Vec<Polygon>,
+
+    /// Render polygons
+    /// - `[Polygon; 2048]`
+    rend_poly: Vec<Polygon>,
+
+    /// Last strip polygon position
+    /// - `Option<*mut Polygon>`
+    last_poly_strip: Option<usize>,
+
+    /// Temporary vertex list
+    /// - `[Vertex; 10]`
+    vertex_list: Vec<Vertex>,
+
+    /// Vertex list size
     vertex_list_count: i32,
 
+    /// Geometry vertex count
     geo_vert_count: i32,
+
+    /// Render vertex count
     rend_vert_count: i32,
+
+    /// Geometry polygon count
     geo_poly_count: i32,
+
+    /// Render polygon count
     rend_poly_count: i32,
 
+    /// Consecutive polygon count
     consecutive_polygons: i32,
 
+    /// 16-bit vertex index
     vtx_16_index: i32,
 
+    /// Current matrix mode
     mtx_mode: u8,
 
+    /// Projection matrix
     projection_mtx: Matrix,
+
+    /// Vector matrix
     vector_mtx: Matrix,
+
+    /// Model-view matrix
     modelview_mtx: Matrix,
+
+    /// Texture matrix
     texture_mtx: Matrix,
 
+    /// Projection stack
     projection_stack: Matrix,
+
+    /// Texture stack
     texture_stack: Matrix,
 
-    modelview_stack: [Matrix; 0x20],
-    vector_stack: [Matrix; 0x20],
+    /// Model-view stack
+    /// - `[Matrix; 0x20]`
+    modelview_stack: Vec<Matrix>,
+
+    /// Vector stack
+    /// - `[Matrix; 0x20]`
+    vector_stack: Vec<Matrix>,
+
+    /// Clip matrix
     clip_mtx: Matrix,
+
+    /// Clip matrix dirty flag
     clip_dirty: bool,
+
+    /// Model-view stack pointer
     modelview_sp: u8,
 
+    /// Emission color
     emission_color: u16,
+
+    /// Ambient color
     ambient_color: u16,
+
+    /// Diffuse color
     diffuse_color: u16,
+
+    /// Specular color
     specular_color: u16,
 
+    /// Light colors
     light_color: [u16; 4],
+
+    /// Light directions
     light_direction: [[i16; 3]; 4],
+
+    /// Normal vector
     normal_vector: [i16; 3],
-    shine_table: [u8; 128],
+
+    /// Shininess table
+    /// - [u8; 128]
+    shine_table: Vec<u8>,
+
+    /// Use shininess table
     using_shine_table: bool,
 
+    /// Vector test result
     vec_test_result: [i16; 3],
+
+    /// Matrix multiply parameters
     mult_params: Matrix,
+
     /// C++ int
+    /// Matrix parameter index
     mult_params_index: usize,
 }
 
 impl Gpu3D {
-    pub fn new(e: *mut Emulator, gpu: *mut Gpu) -> Self {
-        todo!()
+    pub fn new() -> Self {
+        Self {
+            cycles: 100,
+            disp3dcnt: Disp3DCntReg::default(),
+            polygon_attr: PolygonAttrReg::default(),
+            teximage_param: TexImageParamReg::default(),
+            toon_table: [0; 32],
+            pltt_base: 0,
+            viewport: ViewportReg::default(),
+            gxstat: GxStatReg::default(),
+            polygon_type: 0,
+            clear_depth: 0,
+            clear_color: 0,
+            flush_mode: 0,
+            gfxifo: VecDeque::new(),
+            gxpipe: VecDeque::new(),
+            cmd_params: vec![0; 32],
+            param_count: 0,
+            cmd_param_count: 0,
+            cmd_count: 0,
+            total_params: 0,
+            current_cmd: 0,
+            current_poly_attr: PolygonAttrReg::default(),
+            current_color: 0,
+            current_vertex: [0, 0, 0],
+            current_texcoords: [0, 0],
+            z_buffer: vec![vec![0; PIXELS_PER_LINE]; SCANLINES],
+            trans_poly_ids: vec![0; PIXELS_PER_LINE],
+            swap_buffers: false,
+            geo_vert: vec![Vertex::default(); 6188],
+            rend_vert: vec![Vertex::default(); 6188],
+            geo_poly: vec![Polygon::default(); 2048],
+            rend_poly: vec![Polygon::default(); 2048],
+            last_poly_strip: None,
+            vertex_list: vec![Vertex::default(); 10],
+            vertex_list_count: 0,
+            geo_vert_count: 0,
+            rend_vert_count: 0,
+            geo_poly_count: 0,
+            rend_poly_count: 0,
+            consecutive_polygons: 0,
+            vtx_16_index: 0,
+            mtx_mode: 0,
+            projection_mtx: Matrix::default(),
+            vector_mtx: Matrix::default(),
+            modelview_mtx: Matrix::default(),
+            texture_mtx: Matrix::default(),
+            projection_stack: Matrix::default(),
+            texture_stack: Matrix::default(),
+            modelview_stack: vec![Matrix::default(); 0x20],
+            vector_stack: vec![Matrix::default(); 0x20],
+            clip_mtx: Matrix::default(),
+            clip_dirty: false,
+            modelview_sp: 0,
+            emission_color: 0,
+            ambient_color: 0,
+            diffuse_color: 0,
+            specular_color: 0,
+            light_color: [0; 4],
+            light_direction: [[0; 3]; 4],
+            normal_vector: [0; 3],
+            shine_table: vec![0; 128],
+            using_shine_table: false,
+            vec_test_result: [0; 3],
+            mult_params: Matrix::default(),
+            mult_params_index: 0,
+        }
     }
 
     pub fn power_on(&mut self) {
@@ -374,5 +552,21 @@ impl Gpu3D {
 
     pub fn set_gxstat(&mut self, word: u32) {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_initialize_gpu3d() {
+        // Initialize the Gpu3D struct with basic values
+        let gpu = Gpu3D::new();
+
+        // Example: test if initialization works without overflow
+        assert_eq!(gpu.cycles, 100);
+        assert_eq!(gpu.geo_vert.len(), 6188);
+        assert_eq!(gpu.geo_poly.len(), 2048);
     }
 }

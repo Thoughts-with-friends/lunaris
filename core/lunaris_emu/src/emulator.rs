@@ -1,7 +1,12 @@
+//! Core emulator system that manages CPU, memory, and all peripheral devices
+//! Handles the dual-CPU architecture of the Nintendo DS and system timing
+
+use std::collections::VecDeque;
+
+use audio::SPU;
+use gpu::common::{Gpu, SchedulerEvent};
 use mem_const::{BIOS7_SIZE, BIOS9_SIZE};
 
-/// Core emulator system that manages CPU, memory, and all peripheral devices
-/// Handles the dual-CPU architecture of the Nintendo DS and system timing
 use crate::bios::BIOS;
 use crate::cartridge::NDSCart;
 use crate::cp15::CP15;
@@ -10,11 +15,8 @@ use crate::dma::NDS_DMA;
 use crate::ipc::{IpcFifo, IpcSync};
 use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
-use crate::spu::SPU;
 use crate::timers::NDSTiming;
 use crate::wifi::WiFi;
-use gpu::common::Gpu;
-use std::collections::VecDeque;
 
 #[derive(Default)]
 pub struct Config {
@@ -22,17 +24,23 @@ pub struct Config {
     pub arm9_bios_path: String,
     pub firmware_path: String,
     pub savelist_path: String,
+
     /// Enable direct boot
     pub direct_boot_enabled: bool,
+
     /// Pause emulator when window is unfocused
     pub pause_when_unfocused: bool,
+
     /// Background enable flags
     pub bg_enable: [bool; 4],
     pub frameskip: i32,
+
     /// Enable frame limiter
     pub enable_framelimiter: bool,
+
     /// Use HLE BIOS
     pub hle_bios: bool,
+
     /// Test mode
     pub test: bool,
 }
@@ -637,28 +645,28 @@ impl Emulator {
 
     /// Schedule a GPU event
     pub fn add_gpu_event(&mut self, event_id: u32, relative_time: u64) {
-        let timestamp = self.total_timestamp + relative_time;
+        let time_stamp = self.total_timestamp + relative_time;
         self.scheduled_events.push_back(SchedulerEvent {
             event_id,
-            timestamp,
+            time_stamp,
         });
         // Sort events by timestamp
         self.scheduled_events
             .make_contiguous()
-            .sort_by_key(|e| e.timestamp);
+            .sort_by_key(|e| e.time_stamp);
     }
 
     /// Schedule a DMA event
     pub fn add_dma_event(&mut self, event_id: u32, relative_time: u64) {
-        let timestamp = self.total_timestamp + relative_time;
+        let time_stamp = self.total_timestamp + relative_time;
         self.scheduled_events.push_back(SchedulerEvent {
             event_id,
-            timestamp,
+            time_stamp,
         });
         // Sort events by timestamp
         self.scheduled_events
             .make_contiguous()
-            .sort_by_key(|e| e.timestamp);
+            .sort_by_key(|e| e.time_stamp);
     }
 
     /// Recalculate system timestamp based on CPU execution
@@ -939,5 +947,17 @@ impl Emulator {
 impl Default for Emulator {
     fn default() -> Self {
         Self::new()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_initialize_emulator() {
+        // Initialize the Gpu3D struct with basic values
+        let emu = Box::new(Emulator::new());
+        dbg!(emu.biosprot);
+        assert_eq!(emu.biosprot, 0);
     }
 }

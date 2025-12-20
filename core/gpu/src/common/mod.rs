@@ -274,7 +274,7 @@ impl Gpu {
         Gpu {
             engine_upper: Gpu2DEngine::new(),
             engine_lower: Gpu2DEngine::new(),
-            engine_3d: Gpu3D::new(std::ptr::null_mut(), std::ptr::null_mut()),
+            engine_3d: Gpu3D::new(),
 
             frame_complete: false,
             frames_skipped: 0,

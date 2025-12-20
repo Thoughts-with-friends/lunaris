@@ -84,16 +84,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 
 [[package]]
-name = "arm7"
-version = "0.1.0"
-dependencies = [
- "free_bios",
- "gpu",
- "mem_const",
- "tracing",
-]
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -716,6 +706,17 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+
+[[package]]
+name = "lunaris_emu"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "free_bios",
+ "gpu",
+ "mem_const",
+ "tracing",
+]
 
 [[package]]
 name = "malloc_buf"

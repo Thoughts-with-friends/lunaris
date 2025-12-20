@@ -1,5 +1,5 @@
 [package]
-name = "arm7"
+name = "lunaris_emu"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,6 +8,7 @@ free_bios = { workspace = true }
 gpu = { workspace = true }
 mem_const = { workspace = true }
 tracing = { workspace = true, optional = true }
+audio = {workspace = true }
 
 [features]
 default = ["tracing"]
