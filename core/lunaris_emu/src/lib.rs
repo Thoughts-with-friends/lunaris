@@ -11,7 +11,7 @@ mod firmware;
 mod interrupts;
 mod ipc;
 mod read_arm7;
-// mod read_arm9;
+mod read_arm9;
 mod rtc;
 mod spi;
 mod timers;

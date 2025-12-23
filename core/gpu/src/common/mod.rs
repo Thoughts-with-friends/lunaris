@@ -440,6 +440,22 @@ impl Gpu {
         self.display_status_arm9.set(value);
     }
 
+    pub fn get_bghofs_a(&self, index: usize) -> u16 {
+        self.engine_upper.get_bgcnt(index)
+    }
+
+    pub fn get_bgvofs_a(&self, index: usize) -> u16 {
+        self.engine_upper.get_bgvofs(index)
+    }
+
+    pub fn get_bghofs_b(&self, index: usize) -> u16 {
+        self.engine_lower.get_bgcnt(index)
+    }
+
+    pub fn get_bgvofs_b(&self, index: usize) -> u16 {
+        self.engine_lower.get_bgvofs(index)
+    }
+
     /// Get VCOUNT register value
     pub fn get_vcount(&self) -> u16 {
         self.vertical_count
@@ -453,6 +469,18 @@ impl Gpu {
     /// Set POWCNT1 register value
     pub fn set_powcnt1(&mut self, value: u16) {
         self.power_control_reg.set(value);
+    }
+
+    pub fn get_dispcapcnt_a(&self) -> u32 {
+        let is_engine_a = true;
+        self.engine_upper.get_dispcapcnt(is_engine_a)
+    }
+
+    pub fn get_vramstat(&self) -> u8 {
+        let mut reg: u8 = 0;
+        reg = reg | (self.vramcnt_c.enabled && self.vramcnt_c.mst == 2) as u8;
+        reg = reg | ((self.vramcnt_d.enabled && self.vramcnt_d.mst == 2) as u8) << 1;
+        reg
     }
 
     /// Get VRAM bank configuration A

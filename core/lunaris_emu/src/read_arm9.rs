@@ -31,10 +31,18 @@ impl Emulator {
             }
 
             0x04000000 => self.gpu.get_dispcnt_a(),
-            0x04000010 => self.gpu.get_bghofs_a(0) | (self.gpu.get_bgvofs_a(0) << 16),
-            0x04000014 => self.gpu.get_bghofs_a(1) | (self.gpu.get_bgvofs_a(1) << 16),
-            0x04000018 => self.gpu.get_bghofs_a(2) | (self.gpu.get_bgvofs_a(2) << 16),
-            0x0400001C => self.gpu.get_bghofs_a(3) | (self.gpu.get_bgvofs_a(3) << 16),
+            0x04000010 => {
+                self.gpu.get_bghofs_a(0) as u32 | ((self.gpu.get_bgvofs_a(0) as u32) << 16)
+            }
+            0x04000014 => {
+                self.gpu.get_bghofs_a(1) as u32 | ((self.gpu.get_bgvofs_a(1) as u32) << 16)
+            }
+            0x04000018 => {
+                self.gpu.get_bghofs_a(2) as u32 | ((self.gpu.get_bgvofs_a(2) as u32) << 16)
+            }
+            0x0400001C => {
+                self.gpu.get_bghofs_a(3) as u32 | ((self.gpu.get_bgvofs_a(3) as u32) << 16)
+            }
             0x04000064 => self.gpu.get_dispcapcnt(),
             0x040000B0 => self.dma.read_source(0),
             0x040000B8 => self.dma.read_len(0) | (self.dma.read_cnt(0) << 16),
