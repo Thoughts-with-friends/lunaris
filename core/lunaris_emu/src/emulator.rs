@@ -687,20 +687,20 @@ impl Emulator {
 
     // ARM9 Memory Access
 
-    /// ARM9 read 32-bit word
-    pub fn arm9_read_word(&self, address: u32) -> u32 {
-        self.read_word_internal(address)
-    }
+    // /// ARM9 read 32-bit word
+    // pub fn arm9_read_word(&self, address: u32) -> u32 {
+    //     self.read_word_internal(address)
+    // }
 
-    /// ARM9 read 16-bit halfword
-    pub fn arm9_read_halfword(&self, address: u32) -> u16 {
-        self.read_halfword_internal(address)
-    }
+    // /// ARM9 read 16-bit halfword
+    // pub fn arm9_read_halfword(&self, address: u32) -> u16 {
+    //     self.read_halfword_internal(address)
+    // }
 
-    /// ARM9 read 8-bit byte
-    pub fn arm9_read_byte(&self, address: u32) -> u8 {
-        self.read_byte_internal(address)
-    }
+    // /// ARM9 read 8-bit byte
+    // pub fn arm9_read_byte(&self, address: u32) -> u8 {
+    //     self.read_byte_internal(address)
+    // }
 
     /// ARM9 write 32-bit word
     pub fn arm9_write_word(&mut self, address: u32, word: u32) {

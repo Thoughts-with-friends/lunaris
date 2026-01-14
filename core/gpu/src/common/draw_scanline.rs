@@ -1,11 +1,6 @@
 use crate::common::Gpu;
 use mem_const::*;
 
-// let engine = match is_engine_a {
-//     true => &mut self.eng_a,
-//     false => &mut self.eng_b,
-// };
-
 impl Gpu {
     pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8) {
         let engine = match is_engine_a {

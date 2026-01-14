@@ -10,5 +10,9 @@
   },
   "rust-analyzer.cargo.targetDir": true,
   "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.runnables.extraTestBinaryArgs": ["--show-output", "--nocapture"],
+  "rust-analyzer.runnables.extraTestBinaryArgs": [
+    "--show-output",
+    "--nocapture"
+  ],
+  "liveshare.connectionMode": "auto"
 }

@@ -2,9 +2,8 @@
 /// Handles 2D and 3D rendering, VRAM management, and display output
 pub(crate) mod _2d;
 pub(crate) mod arm_rw;
+pub(crate) mod draw_scanline;
 pub(crate) mod draw_sprite;
-pub(crate) mod init;
-pub(crate) mod tmp;
 pub(crate) mod vram_reader;
 use crate::gpu_2d::Gpu2DEngine;
 use crate::gpu_3d::Gpu3D;
@@ -330,6 +329,215 @@ pub fn read_palette_value(bytes: &[u8], address: u32) -> u16 {
 }
 
 impl Gpu {
+    pub fn draw_bg_txt_line(&self, index: i32, engine_a: bool) {}
+    pub fn draw_bg_extended_line(&self, index: i32, engine_a: bool) {}
+    pub fn draw_sprite_line(&self, engine_a: bool) {}
+
+    // moved draw_scanline.rs
+    // pub fn draw_scanline(&self) {}
+
+    /// Get current cycle count
+    pub fn get_cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    pub fn draw_3D_scanline(
+        &self,
+        framebuffer: &[u32],
+        bg_priorities: [u8; 256],
+        bg0_priority: u8,
+    ) {
+    }
+
+    /// Power on GPU
+    pub fn power_on(&mut self) -> Result<(), String> {
+        self.frame_complete = false;
+        self.vertical_count = 0;
+        Ok(())
+    }
+
+    /// Run 3D rendering for specified cycles
+    pub fn run_3D(&self, cycles: u64) {}
+    pub fn handle_event(&self, event: &SchedulerEvent) {}
+
+    /// Get upper screen framebuffer data
+    pub fn get_upper_frame(&self, buffer: &mut [u32]) {
+        let engine = match self.power_control_reg.swap_display {
+            true => &self.engine_upper,
+            false => &self.engine_lower,
+        };
+        engine.get_framebuffer(buffer);
+    }
+
+    /// Get lower screen framebuffer data
+    pub fn get_lower_frame(&self, buffer: &mut [u32]) {
+        let engine = match self.power_control_reg.swap_display {
+            true => &self.engine_lower,
+            false => &self.engine_upper,
+        };
+        engine.get_framebuffer(buffer);
+    }
+
+    /// Mark frame start
+    pub fn start_frame(&mut self) {
+        self.frame_complete = false;
+    }
+
+    /// Mark frame completion
+    pub fn end_frame(&mut self) {
+        self.frame_complete = true;
+    }
+    pub fn check_gxfifo_dma(&self) {}
+    pub fn check_gxfifo_irq(&self) {}
+
+    /// Check if current frame is complete
+    pub fn is_frame_complete(&self) -> bool {
+        self.frame_complete
+    }
+
+    /// Check if display screens are swapped
+    pub fn display_swapped(&self) -> bool {
+        self.power_control_reg.swap_display
+    }
+
+    /// Read from palette A
+    pub fn read_palette_a(&self, address: u32) -> u16 {
+        let address = address as usize;
+        if address + 1 < self.palette_upper.len() {
+            let lo = self.palette_upper[address] as u16;
+            let hi = self.palette_upper[address + 1] as u16;
+            lo | (hi << 8)
+        } else {
+            0
+        }
+    }
+
+    pub fn read_extpal_bga(&self, address: u32) -> u16 {
+        todo!()
+    }
+    // moved vram_reader.rs
+    // pub fn read_extpal_obja(&self, address: u32) -> u16 {
+    //     todo!()
+    // }
+
+    /// Read from palette B
+    pub fn read_palette_b(&self, address: u32) -> u16 {
+        let address = address as usize;
+        if address + 1 < self.palette_lower.len() {
+            let lo = self.palette_lower[address] as u16;
+            let hi = self.palette_lower[address + 1] as u16;
+            lo | (hi << 8)
+        } else {
+            0
+        }
+    }
+    pub fn read_extpal_bgb(&self, address: u32) -> u16 {
+        todo!()
+    }
+    // moved vram_reader.rs
+    // pub fn read_extpal_objb(&self, address: u32) -> u16 {
+    //     todo!()
+    // }
+
+    // ===== Read functions =====
+
+    pub fn read_bga<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn read_bgb<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn read_obja<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn read_objb<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn read_teximage<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn read_texpal<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn read_lcdc<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    // moved arm_rw.rs
+    // pub fn read_oam<T>(&self, address: u32) -> T {
+    //     todo!()
+    // }
+
+    // ===== Write functions =====
+
+    /// Write to palette A
+    pub fn write_palette_a(&mut self, address: u32, value: u16) {
+        let address = address as usize;
+        if address < self.palette_upper.len() {
+            self.palette_upper[address] = (value & 0xFF) as u8;
+        }
+        if address + 1 < self.palette_upper.len() {
+            self.palette_upper[address + 1] = ((value >> 8) & 0xFF) as u8;
+        }
+    }
+
+    /// Write to palette B
+    pub fn write_palette_b(&mut self, address: u32, value: u16) {
+        let address = address as usize;
+        if address < self.palette_lower.len() {
+            self.palette_lower[address] = (value & 0xFF) as u8;
+        }
+        if address + 1 < self.palette_lower.len() {
+            self.palette_lower[address + 1] = ((value >> 8) & 0xFF) as u8;
+        }
+    }
+
+    pub fn write_bga(&mut self, address: u32, halfword: u16) {
+        todo!()
+    }
+
+    pub fn write_bgb(&mut self, address: u32, halfword: u16) {
+        todo!()
+    }
+
+    pub fn write_obja(&mut self, address: u32, halfword: u16) {
+        todo!()
+    }
+
+    pub fn write_objb(&mut self, address: u32, halfword: u16) {
+        todo!()
+    }
+
+    pub fn write_lcdc(&mut self, address: u32, halfword: u16) {
+        todo!()
+    }
+
+    pub fn write_oam(&mut self, address: u32, halfword: u16) {
+        todo!()
+    }
+
+    // ===== ARM7 access =====
+
+    pub fn read_arm7<T>(&self, address: u32) -> T {
+        todo!()
+    }
+
+    pub fn write_arm7<T>(&mut self, address: u32, value: T) {
+        todo!()
+    }
+
+    // ===== Helpers =====
+
+    pub fn get_palette(&mut self, engine_a: bool) -> &mut [u16] {
+        todo!()
+    }
+
     // TODO: id to enum?
     /// Get VRAM bank by ID.
     /// # Panics
@@ -430,18 +638,23 @@ impl Gpu {
         self.display_status_arm9.get()
     }
 
-    /// Set DISPSTAT7 register value
-    pub fn set_dispstat7(&mut self, value: u16) {
-        self.display_status_arm7.set(value);
-    }
-
-    /// Set DISPSTAT9 register value
-    pub fn set_dispstat9(&mut self, value: u16) {
-        self.display_status_arm9.set(value);
-    }
-
-    pub fn get_bghofs_a(&self, index: usize) -> u16 {
+    /// Get BGCNT
+    pub fn get_bgcnt_a(&self, index: usize) -> u16 {
         self.engine_upper.get_bgcnt(index)
+    }
+
+    pub fn get_bgcnt_b(&self, index: usize) -> u16 {
+        self.engine_lower.get_bgcnt(index)
+    }
+
+    /// Get VCOUNT register value
+    pub fn get_vcount(&self) -> u16 {
+        self.vertical_count
+    }
+
+    /// Get BGH
+    pub fn get_bghofs_a(&self, index: usize) -> u16 {
+        self.engine_upper.get_bgvofs(index)
     }
 
     pub fn get_bgvofs_a(&self, index: usize) -> u16 {
@@ -456,21 +669,67 @@ impl Gpu {
         self.engine_lower.get_bgvofs(index)
     }
 
-    /// Get VCOUNT register value
-    pub fn get_vcount(&self) -> u16 {
-        self.vertical_count
+    pub fn get_win0v_a(&self) -> u16 {
+        todo!()
     }
 
-    /// Get POWCNT1 register value
-    pub fn get_powcnt1(&self) -> u16 {
-        self.power_control_reg.get()
+    pub fn get_win1v_a(&self) -> u16 {
+        todo!()
     }
 
-    /// Set POWCNT1 register value
-    pub fn set_powcnt1(&mut self, value: u16) {
-        self.power_control_reg.set(value);
+    pub fn get_win0v_b(&self) -> u16 {
+        todo!()
     }
 
+    pub fn get_win1v_b(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_winin_a(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_winin_b(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_winout_a(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_winout_b(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_bldcnt_a(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_bldcnt_b(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_bldalpha_a(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_bldalpha_b(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_disp3dcnt(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_master_bright_a(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_master_bright_b(&self) -> u16 {
+        todo!()
+    }
+
+    /// Replace uint32_t get_DISPCAPCNT();
     pub fn get_dispcapcnt_a(&self) -> u32 {
         let is_engine_a = true;
         self.engine_upper.get_dispcapcnt(is_engine_a)
@@ -488,21 +747,9 @@ impl Gpu {
         ((self.vramcnt_a.mst & 0x7) as u8) | (if self.vramcnt_a.enabled { 0x80 } else { 0 })
     }
 
-    /// Set VRAM bank configuration A
-    pub fn set_vramcnt_a(&mut self, value: u8) {
-        self.vramcnt_a.mst = (value & 0x7) as u32;
-        self.vramcnt_a.enabled = (value & 0x80) != 0;
-    }
-
     /// Get VRAM bank configuration B
     pub fn get_vramcnt_b(&self) -> u8 {
         ((self.vramcnt_b.mst & 0x7) as u8) | (if self.vramcnt_b.enabled { 0x80 } else { 0 })
-    }
-
-    /// Set VRAM bank configuration B
-    pub fn set_vramcnt_b(&mut self, value: u8) {
-        self.vramcnt_b.mst = (value & 0x7) as u32;
-        self.vramcnt_b.enabled = (value & 0x80) != 0;
     }
 
     /// Get VRAM bank configuration C
@@ -510,21 +757,9 @@ impl Gpu {
         ((self.vramcnt_c.mst & 0x7) as u8) | (if self.vramcnt_c.enabled { 0x80 } else { 0 })
     }
 
-    /// Set VRAM bank configuration C
-    pub fn set_vramcnt_c(&mut self, value: u8) {
-        self.vramcnt_c.mst = (value & 0x7) as u32;
-        self.vramcnt_c.enabled = (value & 0x80) != 0;
-    }
-
     /// Get VRAM bank configuration D
     pub fn get_vramcnt_d(&self) -> u8 {
         ((self.vramcnt_d.mst & 0x7) as u8) | (if self.vramcnt_d.enabled { 0x80 } else { 0 })
-    }
-
-    /// Set VRAM bank configuration D
-    pub fn set_vramcnt_d(&mut self, value: u8) {
-        self.vramcnt_d.mst = (value & 0x7) as u32;
-        self.vramcnt_d.enabled = (value & 0x80) != 0;
     }
 
     /// Get VRAM bank configuration E
@@ -532,21 +767,9 @@ impl Gpu {
         ((self.vramcnt_e.mst & 0x7) as u8) | (if self.vramcnt_e.enabled { 0x80 } else { 0 })
     }
 
-    /// Set VRAM bank configuration E
-    pub fn set_vramcnt_e(&mut self, value: u8) {
-        self.vramcnt_e.mst = (value & 0x7) as u32;
-        self.vramcnt_e.enabled = (value & 0x80) != 0;
-    }
-
     /// Get VRAM bank configuration F
     pub fn get_vramcnt_f(&self) -> u8 {
         ((self.vramcnt_f.mst & 0x7) as u8) | (if self.vramcnt_f.enabled { 0x80 } else { 0 })
-    }
-
-    /// Set VRAM bank configuration F
-    pub fn set_vramcnt_f(&mut self, value: u8) {
-        self.vramcnt_f.mst = (value & 0x7) as u32;
-        self.vramcnt_f.enabled = (value & 0x80) != 0;
     }
 
     /// Get VRAM bank configuration G
@@ -554,21 +777,9 @@ impl Gpu {
         ((self.vramcnt_g.mst & 0x7) as u8) | (if self.vramcnt_g.enabled { 0x80 } else { 0 })
     }
 
-    /// Set VRAM bank configuration G
-    pub fn set_vramcnt_g(&mut self, value: u8) {
-        self.vramcnt_g.mst = (value & 0x7) as u32;
-        self.vramcnt_g.enabled = (value & 0x80) != 0;
-    }
-
     /// Get VRAM bank configuration H
     pub fn get_vramcnt_h(&self) -> u8 {
         ((self.vramcnt_h.mst & 0x7) as u8) | (if self.vramcnt_h.enabled { 0x80 } else { 0 })
-    }
-
-    /// Set VRAM bank configuration H
-    pub fn set_vramcnt_h(&mut self, value: u8) {
-        self.vramcnt_h.mst = (value & 0x7) as u32;
-        self.vramcnt_h.enabled = (value & 0x80) != 0;
     }
 
     /// Get VRAM bank configuration I
@@ -576,10 +787,33 @@ impl Gpu {
         ((self.vramcnt_i.mst & 0x7) as u8) | (if self.vramcnt_i.enabled { 0x80 } else { 0 })
     }
 
-    /// Set VRAM bank configuration I
-    pub fn set_vramcnt_i(&mut self, value: u8) {
-        self.vramcnt_i.mst = (value & 0x7) as u32;
-        self.vramcnt_i.enabled = (value & 0x80) != 0;
+    /// Get POWCNT1 register value
+    pub fn get_powcnt1(&self) -> u16 {
+        self.power_control_reg.get()
+    }
+
+    pub fn get_gxstat(&self) -> u32 {
+        todo!()
+    }
+
+    pub fn get_vert_count(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn get_poly_count(&self) -> u16 {
+        todo!()
+    }
+
+    pub fn read_vec_test(&self, address: u32) -> u16 {
+        todo!()
+    }
+
+    pub fn read_clip_mtx(&self, address: u32) -> u32 {
+        todo!()
+    }
+
+    pub fn read_vec_mtx(&self, address: u32) -> u32 {
+        todo!()
     }
 
     /// Set upper screen framebuffer
@@ -592,11 +826,268 @@ impl Gpu {
         self.engine_lower.set_framebuffer(buffer);
     }
 
-    // Matrix and 3D rendering operations
+    // ===== Setters / Commands =====
+
+    pub fn set_dispcnt_a_lo(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_dispcnt_a(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_dispcnt_b_lo(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_dispcnt_b(&mut self, word: u32) {
+        todo!()
+    }
+
+    /// Set DISPSTAT7 register value
+    pub fn set_dispstat7(&mut self, value: u16) {
+        self.display_status_arm7.set(value);
+    }
+
+    /// Set DISPSTAT9 register value
+    pub fn set_dispstat9(&mut self, value: u16) {
+        self.display_status_arm9.set(value);
+    }
+
+    pub fn set_bgcnt_a(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bgcnt_b(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bghofs_a(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bgvofs_a(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bghofs_b(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bgvofs_b(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bg2p_a(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bg2p_b(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bg3p_a(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bg3p_b(&mut self, halfword: u16, index: i32) {
+        todo!()
+    }
+
+    pub fn set_bg2x_a(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg2y_a(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg3x_a(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg3y_a(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg2x_b(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg2y_b(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg3x_b(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_bg3y_b(&mut self, word: u32) {
+        todo!()
+    }
+
+    pub fn set_win0h_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win1h_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win0v_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win1v_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win0h_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win1h_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win0v_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_win1v_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_winin_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_winin_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_winout_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_winout_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_mosaic_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_mosaic_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_bldcnt_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_bldcnt_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_bldalpha_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_bldalpha_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_bldy_a(&mut self, byte: u8) {
+        todo!()
+    }
+
+    pub fn set_bldy_b(&mut self, byte: u8) {
+        todo!()
+    }
+
+    pub fn set_disp3dcnt(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_master_bright_a(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_master_bright_b(&mut self, halfword: u16) {
+        todo!()
+    }
+
+    pub fn set_dispcapcnt(&mut self, word: u32) {
+        todo!()
+    }
+
+    /// Set VRAM bank configuration A
+    pub fn set_vramcnt_a(&mut self, value: u8) {
+        self.vramcnt_a.mst = (value & 0x7) as u32;
+        self.vramcnt_a.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration B
+    pub fn set_vramcnt_b(&mut self, value: u8) {
+        self.vramcnt_b.mst = (value & 0x7) as u32;
+        self.vramcnt_b.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration C
+    pub fn set_vramcnt_c(&mut self, value: u8) {
+        self.vramcnt_c.mst = (value & 0x7) as u32;
+        self.vramcnt_c.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration D
+    pub fn set_vramcnt_d(&mut self, value: u8) {
+        self.vramcnt_d.mst = (value & 0x7) as u32;
+        self.vramcnt_d.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration E
+    pub fn set_vramcnt_e(&mut self, value: u8) {
+        self.vramcnt_e.mst = (value & 0x7) as u32;
+        self.vramcnt_e.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration F
+    pub fn set_vramcnt_f(&mut self, value: u8) {
+        self.vramcnt_f.mst = (value & 0x7) as u32;
+        self.vramcnt_f.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration G
+    pub fn set_vramcnt_g(&mut self, value: u8) {
+        self.vramcnt_g.mst = (value & 0x7) as u32;
+        self.vramcnt_g.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration H
+    pub fn set_vramcnt_h(&mut self, value: u8) {
+        self.vramcnt_h.mst = (value & 0x7) as u32;
+        self.vramcnt_h.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set VRAM bank configuration I
+    pub fn set_vramcnt_i(&mut self, value: u8) {
+        self.vramcnt_i.mst = (value & 0x7) as u32;
+        self.vramcnt_i.enabled = (value & 0x80) != 0;
+    }
+
+    /// Set POWCNT1 register value
+    pub fn set_powcnt1(&mut self, value: u16) {
+        self.power_control_reg.set(value);
+    }
 
     /// Write to GXFIFO command queue
     pub fn write_gxfifo(&mut self, _word: u32) -> Result<(), String> {
         Ok(())
+    }
+
+    pub fn write_fifo_direct(&mut self, address: u32, word: u32) {
+        todo!()
     }
 
     /// Set clear color
@@ -692,23 +1183,6 @@ impl Gpu {
     /// Set GXSTAT register
     pub fn set_gxstat(&mut self, _word: u32) -> Result<(), String> {
         Ok(())
-    }
-
-    // Helper drawing functions
-
-    /// Draw background in text mode for scanline
-    fn draw_bg_txt_line(&mut self, _index: usize, _engine_a: bool) {
-        // Text mode background rendering
-    }
-
-    /// Draw background in extended mode for scanline
-    fn draw_bg_extended_line(&mut self, _index: usize, _engine_a: bool) {
-        // Extended affine mode background rendering
-    }
-
-    /// Draw sprites for scanline
-    fn draw_sprite_line(&mut self, _engine_a: bool) {
-        // Sprite rendering
     }
 }
 

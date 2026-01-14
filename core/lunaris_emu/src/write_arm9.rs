@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
+use crate::emulator::{Emulator, Interrupt};
+
 impl Emulator {
     /// Writes a 32-bit word to ARM9 memory-mapped address space
     ///
@@ -11,37 +13,35 @@ impl Emulator {
     /// - IPC, FIFO
     /// - Cartridge AUX SPI registers
     pub fn arm9_write_word(&mut self, address: u32, word: u32) {
-        // Main RAM
-        if address >= MAIN_RAM_START && address < SHARED_WRAM_START {
-            let index = (address & MAIN_RAM_MASK) as usize;
-            self.main_ram[index..index + 4].copy_from_slice(&word.to_le_bytes());
-            return;
-        }
-
-        // Shared WRAM
-        if address >= SHARED_WRAM_START && address < IO_REGS_START {
-            let index = match self.wramcnt {
-                0 => (address & 0x7FFF) as usize,            // Entire 32 KB
-                1 => ((address & 0x3FFF) + 0x4000) as usize, // Second half
-                2 => (address & 0x3FFF) as usize,            // First half
-                3 => return,                                 // Undefined memory
-                _ => unreachable!(),
-            };
-            self.shared_wram[index..index + 4].copy_from_slice(&word.to_le_bytes());
-            return;
-        }
-
         // GPU / DMA / IPC / cartridge / I/O registers
         match address {
-            0x0400_0000 => self.gpu.set_DISPCNT_A(word),
-            0x0400_0004 => self.gpu.set_DISPSTAT9((word & 0xFFFF) as u16),
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                // Main RAM
+                let index = (address & MAIN_RAM_MASK) as usize;
+                self.main_ram[index..index + 4].copy_from_slice(&word.to_le_bytes());
+                return;
+            }
+            SHARED_WRAM_START..IO_REGS_START => {
+                // Shared WRAM
+                let index = match self.wramcnt {
+                    0 => (address & 0x7FFF) as usize,            // Entire 32 KB
+                    1 => ((address & 0x3FFF) + 0x4000) as usize, // Second half
+                    2 => (address & 0x3FFF) as usize,            // First half
+                    3 => return,                                 // Undefined memory
+                    _ => unreachable!(),
+                };
+                self.shared_wram[index..index + 4].copy_from_slice(&word.to_le_bytes());
+                return;
+            }
+            0x0400_0000 => self.gpu.set_dispcnt_a(word),
+            0x0400_0004 => self.gpu.set_dispstat9((word & 0xFFFF) as u16),
             0x0400_0008 => {
-                self.gpu.set_BGCNT_A((word & 0xFFFF) as u16, 0);
-                self.gpu.set_BGCNT_A((word >> 16) as u16, 1);
+                self.gpu.set_bgcnt_a((word & 0xFFFF) as u16, 0);
+                self.gpu.set_bgcnt_a((word >> 16) as u16, 1);
             }
             0x0400_000C => {
-                self.gpu.set_BGCNT_A((word & 0xFFFF) as u16, 2);
-                self.gpu.set_BGCNT_A((word >> 16) as u16, 3);
+                self.gpu.set_bgcnt_a((word & 0xFFFF) as u16, 2);
+                self.gpu.set_bgcnt_a((word >> 16) as u16, 3);
             }
             0x0400_000E..=0x0400_0070 => { /* GPU other registers, implement similarly */ }
             0x0400_00B0..=0x0400_00DC => { /* DMA registers, call self.dma.write_* */ }
@@ -53,13 +53,13 @@ impl Emulator {
                 self.ipcsync_nds9.write(word);
                 self.ipcsync_nds7.receive_input(word);
                 if word & (1 << 13) != 0 && self.ipcsync_nds7.irq_enable {
-                    self.request_interrupt7(INTERRUPT::IPCSYNC);
+                    self.request_interrupt7(Interrupt::IPCSYNC);
                 }
             }
             0x0400_0188 => {
                 self.fifo7.write_queue(word);
                 if self.fifo7.request_nempty_irq {
-                    self.request_interrupt7(INTERRUPT::IPC_FIFO_NEMPTY);
+                    self.request_interrupt7(Interrupt::IPC_FIFO_NEMPTY);
                     self.fifo7.request_nempty_irq = false;
                 }
             }
@@ -80,24 +80,24 @@ impl Emulator {
                 self.cart.receive_command(((word >> 8) & 0xFF) as u8, 5);
                 self.cart.receive_command((word & 0xFF) as u8, 4);
             }
-            0x0400_0208 => self.int9_reg.ime = word & 0x1,
-            0x0400_0210 => self.int9_reg.ie = word,
+            0x0400_0208 => self.int9_reg_ime = word & 0x1,
+            0x0400_0210 => self.int9_reg_ie = word,
             0x0400_0214 => {
                 self.int9_reg.if_ &= !word;
                 self.gpu.check_gxfifo_irq();
             }
             0x0400_0240 => {
-                self.gpu.set_VRAMCNT_A((word & 0xFF) as u8);
-                self.gpu.set_VRAMCNT_B(((word >> 8) & 0xFF) as u8);
-                self.gpu.set_VRAMCNT_C(((word >> 16) & 0xFF) as u8);
-                self.gpu.set_VRAMCNT_D((word >> 24) as u8);
+                self.gpu.set_vramcnt_a((word & 0xFF) as u8);
+                self.gpu.set_vramcnt_b(((word >> 8) & 0xFF) as u8);
+                self.gpu.set_vramcnt_c(((word >> 16) & 0xFF) as u8);
+                self.gpu.set_vramcnt_d((word >> 24) as u8);
             }
             0x0400_0290..=0x0400_029C => { /* Division registers, implement start_division */ }
             0x0400_02B8..=0x0400_02BC => { /* Square root registers, implement start_sqrt */ }
-            0x0400_0304 => self.gpu.set_POWCNT1((word & 0xFFFF) as u16),
-            0x0400_0350 => self.gpu.set_CLEAR_COLOR(word),
-            0x0400_0600 => self.gpu.set_GXSTAT(word),
-            0x0400_1000 => self.gpu.set_DISPCNT_B(word),
+            0x0400_0304 => self.gpu.set_powcnt1((word & 0xFFFF) as u16),
+            0x0400_0350 => self.gpu.set_clear_color(word),
+            0x0400_0600 => self.gpu.set_gxstat(word),
+            0x0400_1000 => self.gpu.set_dispcnt_b(word),
             _ => {
                 if (0x0400_0330..0x0400_0340).contains(&address)
                     || (0x0400_0360..0x0400_0380).contains(&address)

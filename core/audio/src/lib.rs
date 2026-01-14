@@ -1,6 +1,5 @@
 /// Sound Processing Unit (SPU) implementation for Nintendo DS
 /// Manages 16 audio channels with mixing and capture capabilities
-
 /// Audio channel control register
 #[derive(Debug, Clone, Copy)]
 pub struct ChannelCntReg {

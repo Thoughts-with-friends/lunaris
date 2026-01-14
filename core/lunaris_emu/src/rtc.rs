@@ -1,6 +1,8 @@
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Real Time Clock (RTC) for Nintendo DS
 /// Manages date, time, and alarm functionality via bit-banged serial protocol
-
 /// Alarm settings
 #[derive(Debug, Clone, Copy)]
 pub struct Alarm {

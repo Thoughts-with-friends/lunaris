@@ -4,7 +4,7 @@ use crate::emulator::{Emulator, Interrupt};
 use mem_const::*;
 
 impl Emulator {
-    pub fn arm9_read_word(&self, address: u32) -> u32 {
+    pub fn arm9_read_word(&mut self, address: u32) -> u32 {
         match address {
             // ARM9 BIOS
             0xFFFF_0000..=0xFFFF_FFFF => {
@@ -43,17 +43,17 @@ impl Emulator {
             0x0400001C => {
                 self.gpu.get_bghofs_a(3) as u32 | ((self.gpu.get_bgvofs_a(3) as u32) << 16)
             }
-            0x04000064 => self.gpu.get_dispcapcnt(),
+            0x04000064 => self.gpu.get_dispcapcnt_a(),
             0x040000B0 => self.dma.read_source(0),
-            0x040000B8 => self.dma.read_len(0) | (self.dma.read_cnt(0) << 16),
-            0x040000C4 => self.dma.read_len(1) | (self.dma.read_cnt(1) << 16),
-            0x040000D0 => self.dma.read_len(2) | (self.dma.read_cnt(2) << 16),
-            0x040000DC => self.dma.read_len(3) | (self.dma.read_cnt(3) << 16),
+            0x040000B8 => self.dma.read_len(0) as u32 | ((self.dma.read_cnt(0) as u32) << 16),
+            0x040000C4 => self.dma.read_len(1) as u32 | ((self.dma.read_cnt(1) as u32) << 16),
+            0x040000D0 => self.dma.read_len(2) as u32 | ((self.dma.read_cnt(2) as u32) << 16),
+            0x040000DC => self.dma.read_len(3) as u32 | ((self.dma.read_cnt(3) as u32) << 16),
             0x040000E0 => self.dma_fill[0],
             0x040000E4 => self.dma_fill[1],
             0x040000E8 => self.dma_fill[2],
             0x040000EC => self.dma_fill[3],
-            0x04000180 => self.ipcsync_nds9.read(),
+            0x04000180 => self.ipcsync_nds9.read().into(),
             0x040001A4 => self.cart.get_romctrl(),
             0x04000208 => self.int9_reg_ime as u32,
             0x04000210 => self.int9_reg_ie,
@@ -71,12 +71,22 @@ impl Emulator {
             0x040002B8 => (self.sqrt_param & 0xFFFF_FFFF) as u32,
             0x040002BC => (self.sqrt_param >> 32) as u32,
             0x04000600 => self.gpu.get_gxstat(),
-            0x04000604 => self.gpu.get_poly_count() | (self.gpu.get_vert_count() << 16),
+            0x04000604 => {
+                self.gpu.get_poly_count() as u32 | ((self.gpu.get_vert_count() as u32) << 16)
+            }
             0x04001000 => self.gpu.get_dispcnt_b(),
-            0x04001010 => self.gpu.get_bghofs_b(0) | (self.gpu.get_bgvofs_b(0) << 16),
-            0x04001014 => self.gpu.get_bghofs_b(1) | (self.gpu.get_bgvofs_b(1) << 16),
-            0x04001018 => self.gpu.get_bghofs_b(2) | (self.gpu.get_bgvofs_b(2) << 16),
-            0x0400101c => self.gpu.get_bghofs_b(3) | (self.gpu.get_bgvofs_b(3) << 16),
+            0x04001010 => {
+                self.gpu.get_bghofs_b(0) as u32 | ((self.gpu.get_bgvofs_b(0) as u32) << 16)
+            }
+            0x04001014 => {
+                self.gpu.get_bghofs_b(1) as u32 | ((self.gpu.get_bgvofs_b(1) as u32) << 16)
+            }
+            0x04001018 => {
+                self.gpu.get_bghofs_b(2) as u32 | ((self.gpu.get_bgvofs_b(2) as u32) << 16)
+            }
+            0x0400101c => {
+                self.gpu.get_bghofs_b(3) as u32 | ((self.gpu.get_bgvofs_b(3) as u32) << 16)
+            }
             0x04004000 | 0x04004008 => 0,
             0x04100000 => {
                 let word = self.fifo7.read_queue();
@@ -87,30 +97,25 @@ impl Emulator {
                 word
             }
             0x04100010 => self.cart.get_output(),
+            PALETTE_START..VRAM_BGA_START => {
+                if (address & 0x7FF) < 0x400 {
+                    let lo = self.gpu.read_palette_a(address) as u32;
+                    let hi = self.gpu.read_palette_a(address + 2) as u32;
+                    lo | (hi << 16)
+                } else {
+                    let lo = self.gpu.read_palette_b(address) as u32;
+                    let hi = self.gpu.read_palette_b(address + 2) as u32;
+                    lo | (hi << 16)
+                }
+            }
+            0x04000640..0x04000680 => self.gpu.read_clip_mtx(address),
+            0x04000680..0x040006A4 => self.gpu.read_vec_mtx(address),
+            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga::<u32>(address),
+            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb::<u32>(address),
+            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc::<u32>(address),
+            OAM_START..GBA_ROM_START => self.gpu.read_oam_u32(address),
             _ => {
-                if address >= PALETTE_START && address < VRAM_BGA_START {
-                    if (address & 0x7FF) < 0x400 {
-                        let lo = self.gpu.read_palette_a(address) as u32;
-                        let hi = self.gpu.read_palette_a(address + 2) as u32;
-                        lo | (hi << 16)
-                    } else {
-                        let lo = self.gpu.read_palette_b(address) as u32;
-                        let hi = self.gpu.read_palette_b(address + 2) as u32;
-                        lo | (hi << 16)
-                    }
-                } else if address >= 0x04000640 && address < 0x04000680 {
-                    self.gpu.read_clip_mtx(address)
-                } else if address >= 0x04000680 && address < 0x040006A4 {
-                    self.gpu.read_vec_mtx(address)
-                } else if address >= VRAM_BGA_START && address < VRAM_BGB_START {
-                    self.gpu.read_bga::<u32>(address)
-                } else if address >= VRAM_BGB_START && address < VRAM_OBJA_START {
-                    self.gpu.read_bgb::<u32>(address)
-                } else if address >= VRAM_LCDC_A && address < VRAM_LCDC_END {
-                    self.gpu.read_lcdc::<u32>(address)
-                } else if address >= OAM_START && address < GBA_ROM_START {
-                    self.gpu.read_OAM::<u32>(address)
-                } else if address >= GBA_ROM_START {
+                if address >= GBA_ROM_START {
                     0xFFFF_FFFF
                 } else {
                     #[cfg(feature = "tracing")]
@@ -132,54 +137,40 @@ impl Emulator {
     /// - I/O registers (GPU, DMA, timers, input, etc.)
     /// - Cartridge SPI and ROM
     pub fn arm9_read_halfword(&self, address: u32) -> u16 {
-        // ARM9 BIOS
-        if address >= 0xFFFF_0000 {
-            let offset = (address - 0xFFFF_0000) as usize;
-            return u16::from_le_bytes(self.arm9_bios[offset..offset + 2].try_into().unwrap());
-        }
-
-        // Main RAM
-        if address >= MAIN_RAM_START && address < SHARED_WRAM_START {
-            let offset = (address & MAIN_RAM_MASK) as usize;
-            return u16::from_le_bytes(self.main_ram[offset..offset + 2].try_into().unwrap());
-        }
-
-        // Shared WRAM
-        if address >= SHARED_WRAM_START && address < IO_REGS_START {
-            let slice = match self.wramcnt {
-                0 => &self.shared_wram[(address & 0x7FFF) as usize..][..2], // Entire 32 KB
-                1 => &self.shared_wram[((address & 0x3FFF) + 0x4000) as usize..][..2], // Second half
-                2 => &self.shared_wram[(address & 0x3FFF) as usize..][..2],            // First half
-                3 => return 0, // Undefined memory
-                _ => unreachable!(),
-            };
-            return u16::from_le_bytes(slice.try_into().unwrap());
-        }
-
-        // Palette memory
-        if address >= PALETTE_START && address < VRAM_BGA_START {
-            if (address & 0x7FF) < 0x400 {
-                return self.gpu.read_palette_a(address);
-            } else {
-                return self.gpu.read_palette_b(address);
-            }
-        }
-
-        // VRAM OBJ A/B
-        if address >= VRAM_OBJA_START && address < VRAM_OBJB_START {
-            return self.gpu.read_obja::<u16>(address);
-        }
-        if address >= VRAM_OBJB_START && address < VRAM_LCDC_A {
-            return self.gpu.read_objb::<u16>(address);
-        }
-
-        // VRAM LCDC
-        if address >= VRAM_LCDC_A && address < VRAM_LCDC_END {
-            return self.gpu.read_lcdc::<u16>(address);
-        }
-
         // I/O registers
         match address {
+            0xFFFF_0000.. => {
+                // ARM9 BIOS
+                let offset = (address - 0xFFFF_0000) as usize;
+                u16::from_le_bytes(self.arm9_bios[offset..offset + 2].try_into().unwrap())
+            }
+            MAIN_RAM_START..SHARED_WRAM_START => {
+                // Main RAM
+                let offset = (address & MAIN_RAM_MASK) as usize;
+                u16::from_le_bytes(self.main_ram[offset..offset + 2].try_into().unwrap())
+            }
+            SHARED_WRAM_START..IO_REGS_START => {
+                // Shared WRAM
+                let slice = match self.wramcnt {
+                    0 => &self.shared_wram[(address & 0x7FFF) as usize..][..2], // Entire 32 KB
+                    1 => &self.shared_wram[((address & 0x3FFF) + 0x4000) as usize..][..2], // Second half
+                    2 => &self.shared_wram[(address & 0x3FFF) as usize..][..2], // First half
+                    3 => return 0,                                              // Undefined memory
+                    _ => unreachable!(),
+                };
+                u16::from_le_bytes(slice.try_into().unwrap())
+            }
+            PALETTE_START..VRAM_BGA_START => {
+                // Palette memory
+                if (address & 0x7FF) < 0x400 {
+                    return self.gpu.read_palette_a(address);
+                } else {
+                    return self.gpu.read_palette_b(address);
+                }
+            }
+            VRAM_OBJA_START..VRAM_OBJB_START => self.gpu.read_obja::<u16>(address), // VRAM OBJ A/B
+            VRAM_OBJB_START..VRAM_LCDC_A => self.gpu.read_objb::<u16>(address),
+            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc::<u16>(address), // VRAM LCDC
             0x0400_0000 => self.gpu.get_dispcnt_a() as u16,
             0x0400_0004 => self.gpu.get_dispstat9(),
             0x0400_0006 => self.gpu.get_vcount(),
@@ -207,15 +198,15 @@ impl Emulator {
             0x0400_0104 => self.timers.read_lo(5),
             0x0400_0108 => self.timers.read_lo(6),
             0x0400_010C => self.timers.read_lo(7),
-            0x0400_0130 => self.key_input.get(),
+            0x0400_0130 => self.key_input.get_value(),
             0x0400_0180 => self.ipcsync_nds9.read(),
-            0x0400_0184 => self.fifo9.read_CNT(),
+            0x0400_0184 => self.fifo9.read_cnt(),
             0x0400_01A0 => self.cart.get_auxspicnt(),
             0x0400_0204 => self.exmemcnt,
             0x0400_0208 => self.int9_reg_ime as u16,
             0x0400_0280 => self.divcnt,
             0x0400_02B0 => self.sqrtcnt,
-            0x0400_0300 => self.postflg9,
+            0x0400_0300 => self.postflg9.into(),
             0x0400_0304 => self.gpu.get_powcnt1(),
             0x0400_0604 => self.gpu.get_poly_count(),
             0x0400_0606 => self.gpu.get_vert_count(),
@@ -231,10 +222,9 @@ impl Emulator {
             0x0400_1050 => self.gpu.get_bldcnt_b(),
             0x0400_1052 => self.gpu.get_bldalpha_b(),
             0x0400_106c => self.gpu.get_master_bright_b(),
+            0x0400_0630..0x0400_0636 => self.gpu.read_vec_test(address),
             _ => {
-                if address >= 0x0400_0630 && address < 0x0400_0636 {
-                    self.gpu.read_vec_test(address)
-                } else if address >= VRAM_BGA_START && address < VRAM_BGB_START {
+                if address >= VRAM_BGA_START && address < VRAM_BGB_START {
                     self.gpu.read_bga::<u16>(address)
                 } else if address >= VRAM_BGB_START && address < VRAM_OBJA_START {
                     self.gpu.read_bgb::<u16>(address)
@@ -259,25 +249,20 @@ impl Emulator {
     /// - Cartridge SPI registers
     /// - Some I/O registers
     pub fn arm9_read_byte(&self, address: u32) -> u8 {
-        // Main RAM
-        if address >= MAIN_RAM_START && address < SHARED_WRAM_START {
-            return self.main_ram[(address & MAIN_RAM_MASK) as usize];
-        }
-
-        // Shared WRAM
-        if address >= SHARED_WRAM_START && address < IO_REGS_START {
-            let value = match self.wramcnt {
-                0 => self.shared_wram[(address & 0x7FFF) as usize], // Entire 32 KB
-                1 => self.shared_wram[((address & 0x3FFF) + 0x4000) as usize], // Second half
-                2 => self.shared_wram[(address & 0x3FFF) as usize], // First half
-                3 => 0,                                             // Undefined memory
-                _ => unreachable!(),
-            };
-            return value;
-        }
-
         // I/O registers
         match address {
+            MAIN_RAM_START..SHARED_WRAM_START => self.main_ram[(address & MAIN_RAM_MASK) as usize], // Main RAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                // Shared WRAM
+                let value = match self.wramcnt {
+                    0 => self.shared_wram[(address & 0x7FFF) as usize], // Entire 32 KB
+                    1 => self.shared_wram[((address & 0x3FFF) + 0x4000) as usize], // Second half
+                    2 => self.shared_wram[(address & 0x3FFF) as usize], // First half
+                    3 => 0,                                             // Undefined memory
+                    _ => unreachable!(),
+                };
+                value
+            }
             0x0400_01a2 => self.cart.read_auxspidata(),
             0x0400_01a8..=0x0400_01af => self.cart.read_command((address & 0x7) as usize),
             0x0400_0208 => self.int9_reg_ime,
@@ -286,39 +271,20 @@ impl Emulator {
             0x0400_0247 => self.wramcnt & 0x3,
             0x0400_0300 => self.postflg9,
             0x0400_4000 => 0,
+            PALETTE_START..VRAM_BGA_START => {
+                if (address & 0x7FF) < 0x400 {
+                    (self.gpu.read_palette_a(address) & 0xFF) as u8
+                } else {
+                    (self.gpu.read_palette_b(address) & 0xFF) as u8
+                }
+            }
+            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga::<u8>(address),
+            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb::<u8>(address),
+            VRAM_LCDC_A..OAM_START => self.gpu.read_lcdc::<u8>(address), // VRAM LCDC
+            OAM_START..GBA_ROM_START => self.gpu.read_oam_u8(address),   // OAM
+            GBA_ROM_START.. => 0xFF,                                     // GBA ROM
             _ => {
                 // Palette memory
-                if address >= PALETTE_START && address < VRAM_BGA_START {
-                    if (address & 0x7FF) < 0x400 {
-                        return (self.gpu.read_palette_a(address) & 0xFF) as u8;
-                    } else {
-                        return (self.gpu.read_palette_b(address) & 0xFF) as u8;
-                    }
-                }
-
-                // VRAM BGA/BGB
-                if address >= VRAM_BGA_START && address < VRAM_BGB_START {
-                    return self.gpu.read_bga::<u8>(address);
-                }
-                if address >= VRAM_BGB_START && address < VRAM_OBJA_START {
-                    return self.gpu.read_bgb::<u8>(address);
-                }
-
-                // VRAM LCDC
-                if address >= VRAM_LCDC_A && address < OAM_START {
-                    return self.gpu.read_lcdc::<u8>(address);
-                }
-
-                // OAM
-                if address >= OAM_START && address < GBA_ROM_START {
-                    return self.gpu.read_oam::<u8>(address);
-                }
-
-                // GBA ROM
-                if address >= GBA_ROM_START {
-                    return 0xFF;
-                }
-
                 #[cfg(feature = "tracing")]
                 tracing::warn!("(9) Unrecognized byte read from ${:08X}", address);
                 0

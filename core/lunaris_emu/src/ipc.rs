@@ -142,23 +142,39 @@ impl IpcFifo {
 
     /// Read from receive queue
     pub fn read_queue(&mut self) -> u32 {
-        if let Some(word) = self.receive_queue.pop_front() {
-            self.recent_word = word;
-            word
-        } else {
-            // Reading from empty queue sets error flag
-            self.error = true;
-            self.recent_word
+        if !self.enabled {
+            return self.recent_word;
+        }
+
+        match self.send_queue.front() {
+            Some(&word) => {
+                self.send_queue.pop_back();
+                if self.send_queue.is_empty() && self.send_empty_irq {
+                    self.request_empty_irq = true;
+                }
+
+                word
+            }
+            None => {
+                self.error = true;
+                self.recent_word
+            }
         }
     }
 
     /// Write to send queue
     pub fn write_queue(&mut self, word: u32) {
-        if self.send_queue.len() < 16 {
-            self.send_queue.push_back(word);
-        } else {
-            // Writing to full queue sets error flag
+        if !self.enabled {
+            return;
+        }
+
+        if self.receive_queue.len() >= 16 {
             self.error = true;
+        } else {
+            if self.receive_queue.is_empty() && self.request_nempty_irq {
+                self.request_nempty_irq = true;
+            }
+            self.receive_queue.push_back(word);
         }
     }
 
