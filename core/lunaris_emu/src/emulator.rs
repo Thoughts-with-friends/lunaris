@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 
 use audio::SPU;
-use gpu::common::{Gpu, SchedulerEvent};
+use gpu::common::{Gpu, gpu_reg::SchedulerEvent};
 use mem_const::{BIOS7_SIZE, BIOS9_SIZE};
 
 use crate::bios::BIOS;
@@ -702,20 +702,20 @@ impl Emulator {
     //     self.read_byte_internal(address)
     // }
 
-    /// ARM9 write 32-bit word
-    pub fn arm9_write_word(&mut self, address: u32, word: u32) {
-        self.write_word_internal(address, word);
-    }
+    // /// ARM9 write 32-bit word
+    // pub fn arm9_write_word(&mut self, address: u32, word: u32) {
+    //     self.write_word_internal(address, word);
+    // }
 
-    /// ARM9 write 16-bit halfword
-    pub fn arm9_write_halfword(&mut self, address: u32, halfword: u16) {
-        self.write_halfword_internal(address, halfword);
-    }
+    // /// ARM9 write 16-bit halfword
+    // pub fn arm9_write_halfword(&mut self, address: u32, halfword: u16) {
+    //     self.write_halfword_internal(address, halfword);
+    // }
 
-    /// ARM9 write 8-bit byte
-    pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
-        self.write_byte_internal(address, byte);
-    }
+    // /// ARM9 write 8-bit byte
+    // pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
+    //     self.write_byte_internal(address, byte);
+    // }
 
     // Cartridge operations
 
@@ -931,7 +931,7 @@ impl Emulator {
     }
 
     /// Start division operation
-    fn start_division(&mut self) {
+    pub fn start_division(&mut self) {
         if self.div_denom != 0 {
             self.div_result = self.div_numer / self.div_denom;
             self.div_remresult = self.div_numer % self.div_denom;
@@ -939,7 +939,7 @@ impl Emulator {
     }
 
     /// Start square root operation
-    fn start_sqrt(&mut self) {
+    pub fn start_sqrt(&mut self) {
         self.sqrt_result = (self.sqrt_param as f64).sqrt() as u32;
     }
 }

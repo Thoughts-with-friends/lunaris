@@ -5,13 +5,12 @@ use mem_const::*;
 
 impl Emulator {
     pub fn arm7_write_word(&mut self, address: u32, word: u32) {
-        // Debug print (kept from original C++)
-        if address == 0x027E0014 {
-            #[cfg(feature = "tracing")]
-            tracing::info!("(7) Write of {:08X} to {:08X}", word, address);
-        }
-
         match address {
+            // Debug print (kept from original C++)
+            0x027E0014 => {
+                #[cfg(feature = "tracing")]
+                tracing::info!("(7) Write of {:08X} to {:08X}", word, address);
+            }
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let off = (address & MAIN_RAM_MASK) as usize;

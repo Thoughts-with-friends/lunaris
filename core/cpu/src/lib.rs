@@ -32,7 +32,7 @@ const fn swi() {}
 
 // arm interpreter function table
 #[rustfmt::skip]
-static arm_table: [InterpreterFunc; 4096] = [
+static ARM_TABLE: [InterpreterFunc; 4096] = [
     data_processing, data_processing, data_processing, data_processing,
     data_processing, data_processing, data_processing, data_processing,
     data_processing, multiply, data_processing, store_halfword,

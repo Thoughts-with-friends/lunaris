@@ -110,7 +110,7 @@ impl SoundCntReg {
     /// Get register value as 16-bit halfword
     pub fn get(&self) -> u16 {
         let mut value = 0u16;
-        value |= ((self.master_volume & 0x7F) as u16);
+        value |= (self.master_volume & 0x7F) as u16;
         value |= ((self.left_output & 0x3) as u16) << 8;
         value |= ((self.right_output & 0x3) as u16) << 10;
         if self.output_ch1_mixer {
@@ -283,13 +283,10 @@ impl SPU {
             return;
         }
 
-        match offset {
-            0..=3 => {
-                let shift = (offset * 8) as u32;
-                self.channels[channel_idx].channel_cnt.volume &= !(0xFF << shift);
-                self.channels[channel_idx].channel_cnt.volume |= ((byte as u32) << shift);
-            }
-            _ => {}
+        if let 0..=3 = offset {
+            let shift = (offset * 8) as u32;
+            self.channels[channel_idx].channel_cnt.volume &= !(0xFF << shift);
+            self.channels[channel_idx].channel_cnt.volume |= (byte as u32) << shift;
         }
     }
 
@@ -333,7 +330,7 @@ impl SPU {
 
         match address & 0xF {
             0 => {
-                self.channels[channel_idx].channel_cnt.volume = (word & 0x7F) as u32;
+                self.channels[channel_idx].channel_cnt.volume = word & 0x7F;
             }
             4 => {
                 self.channels[channel_idx].sound_source = word;
@@ -375,7 +372,7 @@ impl SPU {
 
     /// Set SOUNDCNT high byte
     pub fn set_soundcnt_hi(&mut self, byte: u8) {
-        self.soundcnt.left_output = ((byte >> 0) & 0x3) as u32;
+        self.soundcnt.left_output = (byte & 0x3) as u32;
         self.soundcnt.right_output = ((byte >> 2) & 0x3) as u32;
         self.soundcnt.output_ch1_mixer = (byte & (1 << 4)) != 0;
         self.soundcnt.output_ch3_mixer = (byte & (1 << 5)) != 0;

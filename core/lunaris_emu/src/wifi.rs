@@ -114,10 +114,8 @@ impl WiFi {
     fn bb_read(&mut self, index: usize) {
         // Read from baseband memory at given index
         // Result stored in w_bb_read register
-        match index {
-            _ => {
-                self.w_bb_read = 0;
-            }
+        {
+            self.w_bb_read = 0;
         }
         self.bb_busy = false;
     }
@@ -126,9 +124,7 @@ impl WiFi {
     fn bb_write(&mut self, index: usize) {
         // Write to baseband memory at given index
         // Data from w_bb_write register
-        match index {
-            _ => {}
-        }
+        {}
         self.bb_busy = false;
     }
 

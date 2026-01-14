@@ -18,4 +18,4 @@ mod timers;
 mod touchscreen;
 mod wifi;
 mod write_arm7;
-// mod write_arm9;
+mod write_arm9;

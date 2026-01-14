@@ -163,9 +163,9 @@ impl Emulator {
             PALETTE_START..VRAM_BGA_START => {
                 // Palette memory
                 if (address & 0x7FF) < 0x400 {
-                    return self.gpu.read_palette_a(address);
+                    self.gpu.read_palette_a(address)
                 } else {
-                    return self.gpu.read_palette_b(address);
+                    self.gpu.read_palette_b(address)
                 }
             }
             VRAM_OBJA_START..VRAM_OBJB_START => self.gpu.read_obja::<u16>(address), // VRAM OBJ A/B
@@ -224,9 +224,9 @@ impl Emulator {
             0x0400_106c => self.gpu.get_master_bright_b(),
             0x0400_0630..0x0400_0636 => self.gpu.read_vec_test(address),
             _ => {
-                if address >= VRAM_BGA_START && address < VRAM_BGB_START {
+                if (VRAM_BGA_START..VRAM_BGB_START).contains(&address) {
                     self.gpu.read_bga::<u16>(address)
-                } else if address >= VRAM_BGB_START && address < VRAM_OBJA_START {
+                } else if (VRAM_BGB_START..VRAM_OBJA_START).contains(&address) {
                     self.gpu.read_bgb::<u16>(address)
                 } else if address >= GBA_ROM_START {
                     0xFFFF
@@ -254,14 +254,14 @@ impl Emulator {
             MAIN_RAM_START..SHARED_WRAM_START => self.main_ram[(address & MAIN_RAM_MASK) as usize], // Main RAM
             SHARED_WRAM_START..IO_REGS_START => {
                 // Shared WRAM
-                let value = match self.wramcnt {
+
+                match self.wramcnt {
                     0 => self.shared_wram[(address & 0x7FFF) as usize], // Entire 32 KB
                     1 => self.shared_wram[((address & 0x3FFF) + 0x4000) as usize], // Second half
                     2 => self.shared_wram[(address & 0x3FFF) as usize], // First half
                     3 => 0,                                             // Undefined memory
                     _ => unreachable!(),
-                };
-                value
+                }
             }
             0x0400_01a2 => self.cart.read_auxspidata(),
             0x0400_01a8..=0x0400_01af => self.cart.read_command((address & 0x7) as usize),

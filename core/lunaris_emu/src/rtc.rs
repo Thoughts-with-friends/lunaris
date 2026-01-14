@@ -359,7 +359,7 @@ impl RealTimeClock {
             4 | 6 | 9 | 11 => 30,
             2 => {
                 // Simple leap year check (century rules ignored for simplicity)
-                if (self.year as u32 + 2000) % 4 == 0 {
+                if (self.year as u32 + 2000).is_multiple_of(4) {
                     29
                 } else {
                     28

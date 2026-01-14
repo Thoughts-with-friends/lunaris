@@ -27,7 +27,7 @@ impl IpcSync {
     pub fn read(&self) -> u16 {
         let mut value = 0u16;
         value |= ((self.input & 0xF) as u16) << 8;
-        value |= ((self.output & 0xF) as u16);
+        value |= (self.output & 0xF) as u16;
         if self.irq_enable {
             value |= 1 << 14;
         }

@@ -107,8 +107,8 @@ impl Gpu {
             };
 
             (x_offset, y_offset) = match index {
-                2 => (engine.bg2x_internal as i32, engine.bg2y_internal as i32),
-                _ => (engine.bg3x_internal as i32, engine.bg3y_internal as i32),
+                2 => (engine.bg2x_internal, engine.bg2y_internal),
+                _ => (engine.bg3x_internal, engine.bg3y_internal),
             };
 
             // Determine base addresses for screen and character data
@@ -148,8 +148,8 @@ impl Gpu {
         for pixel in 0..PIXELS_PER_LINE {
             if ((x_offset | y_offset) & overflow_mask as i32) == 0 {
                 // Compute tile offset
-                let mut tile_addr_offset = (((y_offset as u32 & mask) >> 11) << y_factor) as u32;
-                tile_addr_offset += ((x_offset as u32 & mask) >> 11) as u32;
+                let mut tile_addr_offset = ((y_offset as u32 & mask) >> 11) << y_factor;
+                tile_addr_offset += (x_offset as u32 & mask) >> 11;
                 tile_addr_offset <<= 1;
 
                 // Read tile ID

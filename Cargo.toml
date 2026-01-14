@@ -11,7 +11,7 @@ rust-version = "1.91"
 version = "0.1.0"
 
 [workspace]
-members = ["core/lunaris_emu", "core/gpu", "core/audio", "core/cpu", "core/free_bios", "core/mem_const", "gui/desk"]
+members = ["core/lunaris_emu", "core/gpu", "core/audio", "core/cpu", "core/free_bios", "core/mem_const", "gui/desk", "xtask"]
 resolver = "3"
 default-members = ["gui/desk"]
 

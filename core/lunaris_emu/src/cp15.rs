@@ -242,10 +242,10 @@ impl CP15 {
 
     /// Write word to TCM/cache
     pub fn write_word(&mut self, address: u32, word: u32) {
-        self.write_byte(address, (word & 0xFF) as u32);
-        self.write_byte(address + 1, ((word >> 8) & 0xFF) as u32);
-        self.write_byte(address + 2, ((word >> 16) & 0xFF) as u32);
-        self.write_byte(address + 3, ((word >> 24) & 0xFF) as u32);
+        self.write_byte(address, (word & 0xFF));
+        self.write_byte(address + 1, ((word >> 8) & 0xFF));
+        self.write_byte(address + 2, ((word >> 16) & 0xFF));
+        self.write_byte(address + 3, ((word >> 24) & 0xFF));
     }
 
     /// Write halfword to TCM/cache

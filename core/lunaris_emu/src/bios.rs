@@ -34,7 +34,7 @@ impl BIOS {
 
         cpu.set_register(0, quotient as u32);
         cpu.set_register(1, (dividend % divisor) as u32);
-        cpu.set_register(3, quotient.abs() as u32);
+        cpu.set_register(3, quotient.unsigned_abs());
     }
 
     /// Implements BIOS CpuSet memory transfer/fill.
@@ -44,10 +44,8 @@ impl BIOS {
         let mut dest = cpu.get_register(1);
         let flags = cpu.get_register(2);
 
-        if cpu.get_id() != 0 {
-            if source < 0x4000 && dest < 0x4000 {
-                return;
-            }
+        if cpu.get_id() != 0 && source < 0x4000 && dest < 0x4000 {
+            return;
         }
 
         let mut len = flags & 0x1FFFFF;
@@ -84,7 +82,7 @@ impl BIOS {
         let end = addr + len;
 
         while addr < end {
-            crc ^= cpu.read_halfword(addr) as u16;
+            crc ^= cpu.read_halfword(addr);
 
             for i in 0..8 {
                 let carry = (crc & 1) != 0;

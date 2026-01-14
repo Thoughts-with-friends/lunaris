@@ -119,7 +119,7 @@ impl RegRomCtrl {
     /// Get register value as 32-bit word
     pub fn get(&self) -> u32 {
         let mut value = 0u32;
-        value |= (self.key1_gap & 0x3F) << 0;
+        value |= (self.key1_gap & 0x3F);
         if self.key2_data_enabled {
             value |= 1 << 6;
         }
@@ -148,7 +148,7 @@ impl RegRomCtrl {
 
     /// Set register value from 32-bit word
     pub fn set(&mut self, value: u32) {
-        self.key1_gap = (value >> 0) & 0x3F;
+        self.key1_gap = value & 0x3F;
         self.key2_data_enabled = (value & (1 << 6)) != 0;
         self.key2_apply_seed = (value & (1 << 7)) != 0;
         self.key2_gap = (value >> 8) & 0x3F;

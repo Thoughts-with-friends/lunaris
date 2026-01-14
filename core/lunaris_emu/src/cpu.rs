@@ -345,11 +345,7 @@ impl ARMCPU {
 
     /// Get general purpose register value
     pub fn get_register(&self, id: usize) -> u32 {
-        if id < 16 {
-            self.regs[id]
-        } else {
-            0
-        }
+        if id < 16 { self.regs[id] } else { 0 }
     }
 
     /// Get CPSR (Current Program Status Register)
@@ -718,11 +714,7 @@ impl ARMCPU {
             if alter_flags {
                 self.cpsr.carry = sign_bit != 0;
             }
-            if sign_bit != 0 {
-                0xFFFFFFFF
-            } else {
-                0
-            }
+            if sign_bit != 0 { 0xFFFFFFFF } else { 0 }
         } else {
             if alter_flags {
                 self.cpsr.carry = (value & (1 << (shift - 1))) != 0;
