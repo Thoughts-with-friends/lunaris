@@ -56,8 +56,11 @@ impl Default for IpcSync {
 #[derive(Debug, Clone)]
 pub struct IpcFifo {
     /// Queue for sending data to other CPU
+    ///
+    /// - NOTE: ptr
     pub send_queue: VecDeque<u32>,
     /// Queue for receiving data from other CPU
+    /// - NOTE: ptr
     pub receive_queue: VecDeque<u32>,
 
     /// Most recently read data

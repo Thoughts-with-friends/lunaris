@@ -20,7 +20,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..IO_REGS_START => {
-                let offset = match self.wramcnt {
+                let offset = match self.wram_cnt {
                     0 => (address & 0x7FFF) as usize,            // Entire 32 KB
                     1 => ((address & 0x3FFF) + 0x4000) as usize, // Second half
                     2 => (address & 0x3FFF) as usize,            // First half
@@ -53,11 +53,11 @@ impl Emulator {
             0x040000E4 => self.dma_fill[1],
             0x040000E8 => self.dma_fill[2],
             0x040000EC => self.dma_fill[3],
-            0x04000180 => self.ipcsync_nds9.read().into(),
+            0x04000180 => self.ipc_sync_nds9.read().into(),
             0x040001A4 => self.cart.get_romctrl(),
-            0x04000208 => self.int9_reg_ime as u32,
-            0x04000210 => self.int9_reg_ie,
-            0x04000214 => self.int9_reg_if,
+            0x04000208 => self.int9_reg.ime as u32,
+            0x04000210 => self.int9_reg.irq_enable,
+            0x04000214 => self.int9_reg.irq_flags,
             0x04000240 => self.gpu.get_vramcnt_a() as u32,
             0x04000290 => (self.div_numer & 0xFFFF_FFFF) as u32,
             0x04000294 => (self.div_numer >> 32) as u32,
@@ -131,7 +131,7 @@ impl Emulator {
     /// This function handles reads from:
     /// - ARM9 BIOS
     /// - Main RAM
-    /// - Shared WRAM (with WRAMCNT control)
+    /// - Shared WRAM (with WRAM_CNT control)
     /// - Palette memory
     /// - VRAM for OBJ and LCDC
     /// - I/O registers (GPU, DMA, timers, input, etc.)
@@ -151,7 +151,7 @@ impl Emulator {
             }
             SHARED_WRAM_START..IO_REGS_START => {
                 // Shared WRAM
-                let slice = match self.wramcnt {
+                let slice = match self.wram_cnt {
                     0 => &self.shared_wram[(address & 0x7FFF) as usize..][..2], // Entire 32 KB
                     1 => &self.shared_wram[((address & 0x3FFF) + 0x4000) as usize..][..2], // Second half
                     2 => &self.shared_wram[(address & 0x3FFF) as usize..][..2], // First half
@@ -199,11 +199,11 @@ impl Emulator {
             0x0400_0108 => self.timers.read_lo(6),
             0x0400_010C => self.timers.read_lo(7),
             0x0400_0130 => self.key_input.get_value(),
-            0x0400_0180 => self.ipcsync_nds9.read(),
+            0x0400_0180 => self.ipc_sync_nds9.read(),
             0x0400_0184 => self.fifo9.read_cnt(),
             0x0400_01A0 => self.cart.get_auxspicnt(),
-            0x0400_0204 => self.exmemcnt,
-            0x0400_0208 => self.int9_reg_ime as u16,
+            0x0400_0204 => self.ex_mem_cnt,
+            0x0400_0208 => self.int9_reg.ime as u16,
             0x0400_0280 => self.divcnt,
             0x0400_02B0 => self.sqrtcnt,
             0x0400_0300 => self.postflg9.into(),
@@ -243,7 +243,7 @@ impl Emulator {
     ///
     /// Handles reads from:
     /// - Main RAM
-    /// - Shared WRAM (controlled by WRAMCNT)
+    /// - Shared WRAM (controlled by WRAM CNT)
     /// - Palette and VRAM memory
     /// - LCDC, OAM
     /// - Cartridge SPI registers
@@ -255,7 +255,7 @@ impl Emulator {
             SHARED_WRAM_START..IO_REGS_START => {
                 // Shared WRAM
 
-                match self.wramcnt {
+                match self.wram_cnt {
                     0 => self.shared_wram[(address & 0x7FFF) as usize], // Entire 32 KB
                     1 => self.shared_wram[((address & 0x3FFF) + 0x4000) as usize], // Second half
                     2 => self.shared_wram[(address & 0x3FFF) as usize], // First half
@@ -265,10 +265,10 @@ impl Emulator {
             }
             0x0400_01a2 => self.cart.read_auxspidata(),
             0x0400_01a8..=0x0400_01af => self.cart.read_command((address & 0x7) as usize),
-            0x0400_0208 => self.int9_reg_ime,
+            0x0400_0208 => self.int9_reg.ime as u8,
             0x0400_0240 => self.gpu.get_vramcnt_a(),
             0x0400_0241 => self.gpu.get_vramcnt_b(),
-            0x0400_0247 => self.wramcnt & 0x3,
+            0x0400_0247 => self.wram_cnt & 0x3,
             0x0400_0300 => self.postflg9,
             0x0400_4000 => 0,
             PALETTE_START..VRAM_BGA_START => {

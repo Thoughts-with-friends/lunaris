@@ -5,13 +5,16 @@ use std::collections::VecDeque;
 
 use audio::SPU;
 use gpu::common::{Gpu, gpu_reg::SchedulerEvent};
-use mem_const::{BIOS7_SIZE, BIOS9_SIZE};
+use mem_const::*;
+use snafu::ResultExt as _;
 
 use crate::bios::BIOS;
 use crate::cartridge::NDSCart;
 use crate::cp15::CP15;
 use crate::cpu::ARMCPU;
 use crate::dma::NDS_DMA;
+use crate::error::{EmuError, FailedReadFileSnafu};
+use crate::interrupts::InterruptRegs;
 use crate::ipc::{IpcFifo, IpcSync};
 use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
@@ -117,8 +120,8 @@ impl KeyInputReg {
 pub struct ExtKeyInReg {
     pub button_x: bool,
     pub button_y: bool,
-    pub pen: bool,
-    pub hinge: bool,
+    pub pen_down: bool,
+    pub hinge_closed: bool,
 }
 
 impl ExtKeyInReg {
@@ -131,10 +134,10 @@ impl ExtKeyInReg {
         if self.button_y {
             value |= 0x0002;
         }
-        if self.pen {
+        if self.pen_down {
             value |= 0x0004;
         }
-        if self.hinge {
+        if self.hinge_closed {
             value |= 0x0008;
         }
         value
@@ -144,8 +147,8 @@ impl ExtKeyInReg {
     pub fn set_value(&mut self, value: u16) {
         self.button_x = (value & 0x0001) != 0;
         self.button_y = (value & 0x0002) != 0;
-        self.pen = (value & 0x0004) != 0;
-        self.hinge = (value & 0x0008) != 0;
+        self.pen_down = (value & 0x0004) != 0;
+        self.hinge_closed = (value & 0x0008) != 0;
     }
 }
 
@@ -220,6 +223,15 @@ pub enum BiosMem<const BIOS_SIZE: usize> {
     Const(&'static [u8; BIOS_SIZE]),
 }
 
+impl<const BIOS_SIZE: usize> BiosMem<BIOS_SIZE> {
+    pub fn get(&self, range: core::ops::Range<usize>) -> Option<&[u8]> {
+        match self {
+            Self::User(items) => items.get(range),
+            Self::Const(items) => items.get(range),
+        }
+    }
+}
+
 impl Default for BiosMem<BIOS7_SIZE> {
     fn default() -> Self {
         BiosMem::Const(&free_bios::arm7::BIOS_ARM7_BIN)
@@ -279,7 +291,7 @@ impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS9_SIZE> {
 /// Core Nintendo DS emulator system
 /// Manages dual ARM CPUs, memory, and all peripheral devices
 pub struct Emulator {
-    /// Configuration
+    /// Config
     pub config: Config,
 
     pub cycle_count: u64,
@@ -306,30 +318,47 @@ pub struct Emulator {
     pub arm9_bios: BiosMem<BIOS9_SIZE>,
     pub arm7_bios: BiosMem<BIOS7_SIZE>,
 
-    /// VRAM for graphics (used by GPU)
-    pub vram: Vec<u8>,
-    /// VRAM palette memory
-    pub palette_ram: Vec<u8>,
-    /// OAM (Object Attribute Memory)
-    pub oam: Vec<u8>,
+    /// Scheduling
+    pub system_timestamp: u64,
+    pub next_event_time: u64,
+    pub gpu_event: SchedulerEvent,
+    pub dma_event: SchedulerEvent,
+
+    /// IPC and FIFO
+    pub ipc_sync_nds9: IpcSync,
+    pub ipc_sync_nds7: IpcSync,
+    pub fifo7: IpcFifo,
+    pub fifo9: IpcFifo,
+
+    pub fifo7_queue: VecDeque<u32>, // std::queue<uint32_t>
+    pub fifo9_queue: VecDeque<u32>, // std::queue<uint32_t>
+    pub aux_spi_cnt: u16,
+
+    pub int7_reg: InterruptRegs,
+    pub int9_reg: InterruptRegs,
 
     /// Input state - standard buttons
     pub key_input: KeyInputReg,
     /// Input state - extended buttons
     pub ext_key_in: ExtKeyInReg,
+
     /// Power control register
     pub pow_cnt2: PowCnt2Reg,
 
     /// DMA fill values for each of 4 DMA units
     pub dma_fill: [u32; 4],
     /// Serial I/O control register
-    pub siocnt: u16,
+    /// - 0x04000128
+    pub sio_cnt: u16,
     /// External memory control
-    pub rcnt: u16,
-    pub exmemcnt: u16,
-    pub wramcnt: u8,
+    /// - 0x04000134
+    pub r_cnt: u16,
+    pub ex_mem_cnt: u16,
+    /// - 0x04000247
+    pub wram_cnt: u8,
 
     /// Division engine registers
+    /// - 0x04000280
     pub divcnt: u16,
     pub div_numer: u64,
     pub div_denom: u64,
@@ -342,13 +371,18 @@ pub struct Emulator {
     pub sqrt_param: u64,
 
     /// Power-on flags for debugging/BIOS
+    /// - 0x04000300
     pub postflg7: u8,
     pub postflg9: u8,
 
     /// BIOS protection register
-    pub biosprot: u32,
+    /// - 0x04000308
+    pub bios_prot: u32,
 
-    /// Debug flag for half-step execution
+    /// wait counter
+    pub wait_cnt: u16,
+
+    /// Debugging purposes
     pub hstep_even: bool,
 
     /// Current instruction cycle counter
@@ -360,161 +394,187 @@ pub struct Emulator {
     pub last_arm9_timestamp: u64,
     /// Last ARM7 execution timestamp
     pub last_arm7_timestamp: u64,
-
-    /// ARM9 interrupt enable register
-    pub int9_reg_ie: u32,
-    /// ARM9 interrupt request/flag register
-    pub int9_reg_if: u32,
-    /// ARM9 interrupt master enable
-    pub int9_reg_ime: u8,
-
-    /// ARM7 interrupt enable register
-    pub int7_reg_ie: u32,
-    /// ARM7 interrupt request/flag register
-    pub int7_reg_if: u32,
-    /// ARM7 interrupt master enable
-    pub int7_reg_ime: u8,
-
-    /// Scheduled events in priority order
-    pub scheduled_events: VecDeque<SchedulerEvent>,
-
-    /// IPC synchronization objects
-    pub ipcsync_nds9: IpcSync,
-    pub ipcsync_nds7: IpcSync,
-
-    /// FIFO
-    pub fifo7: IpcFifo,
-    pub fifo9: IpcFifo,
 }
 
 impl Emulator {
     /// Create a new emulator instance with default values
     pub fn new() -> Self {
         Emulator {
-            arm9: ARMCPU::new(0), // FIXME?
-            arm7: ARMCPU::new(1), // FIXME?
-            bios: BIOS::new(),
-            arm9_cp15: CP15::new(),
-            cart: NDSCart::new(),
-            dma: NDS_DMA::new(),
-            gpu: Gpu::new(),
-            rtc: RealTimeClock::new(),
-            spi: SPIBus::new(),
-            spu: SPU::new(),
-            timers: NDSTiming::new(),
-            wifi: WiFi::new(),
-
-            main_ram: vec![0u8; 4 * 1024 * 1024], // 4MB
-            shared_wram: vec![0u8; 32 * 1024],    // 32KB
-            arm7_wram: vec![0u8; 64 * 1024],      // 64KB
-
-            arm7_bios: BiosMem::default(),
-            arm9_bios: BiosMem::default(),
-
-            vram: vec![0u8; 656 * 1024],      // 656KB VRAM
-            palette_ram: vec![0u8; 2 * 1024], // 2KB palette
-            oam: vec![0u8; 2 * 1024],         // 2KB OAM
-
-            key_input: KeyInputReg::default(),
-            ext_key_in: ExtKeyInReg::default(),
-            pow_cnt2: PowCnt2Reg::default(),
-
-            cycle_count: 0,
-            ipcsync_nds7: IpcSync::new(),
-            ipcsync_nds9: IpcSync::new(),
-            fifo7: IpcFifo::new(),
-            fifo9: IpcFifo::new(),
-
-            dma_fill: [0u32; 4],
-            siocnt: 0,
-            rcnt: 0,
-            exmemcnt: 0,
-            wramcnt: 0,
-
-            divcnt: 0,
-            div_numer: 0,
-            div_denom: 0,
-            div_result: 0,
-            div_remresult: 0,
-
-            sqrtcnt: 0,
-            sqrt_result: 0,
-            sqrt_param: 0,
-
-            postflg7: 0,
-            postflg9: 0,
-
-            biosprot: 0,
-
-            hstep_even: false,
-            cycles: 0,
-
-            total_timestamp: 0,
-            last_arm9_timestamp: 0,
-            last_arm7_timestamp: 0,
-
-            int9_reg_ie: 0,
-            int9_reg_if: 0,
-            int9_reg_ime: 0,
-
-            int7_reg_ie: 0,
-            int7_reg_if: 0,
-            int7_reg_ime: 0,
-
-            scheduled_events: VecDeque::new(),
-
-            config: Config::default(), // TODO: Load from file or parameters
+            config: todo!(),
+            cycle_count: todo!(),
+            arm7: todo!(),
+            arm9: todo!(),
+            bios: BIOS,
+            arm9_cp15: todo!(),
+            cart: todo!(),
+            dma: todo!(),
+            gpu: todo!(),
+            rtc: todo!(),
+            spi: todo!(),
+            spu: todo!(),
+            timers: todo!(),
+            wifi: todo!(),
+            main_ram: todo!(),
+            shared_wram: todo!(),
+            arm7_wram: todo!(),
+            arm9_bios: todo!(),
+            arm7_bios: todo!(),
+            system_timestamp: todo!(),
+            next_event_time: todo!(),
+            gpu_event: todo!(),
+            dma_event: todo!(),
+            ipc_sync_nds9: todo!(),
+            ipc_sync_nds7: todo!(),
+            fifo7: todo!(),
+            fifo9: todo!(),
+            fifo7_queue: todo!(),
+            fifo9_queue: todo!(),
+            aux_spi_cnt: todo!(),
+            int7_reg: todo!(),
+            int9_reg: todo!(),
+            key_input: todo!(),
+            ext_key_in: todo!(),
+            pow_cnt2: todo!(),
+            dma_fill: todo!(),
+            sio_cnt: todo!(),
+            r_cnt: todo!(),
+            ex_mem_cnt: todo!(),
+            wram_cnt: todo!(),
+            divcnt: todo!(),
+            div_numer: todo!(),
+            div_denom: todo!(),
+            div_result: todo!(),
+            div_remresult: todo!(),
+            sqrtcnt: todo!(),
+            sqrt_result: todo!(),
+            sqrt_param: todo!(),
+            postflg7: todo!(),
+            postflg9: todo!(),
+            bios_prot: todo!(),
+            wait_cnt: todo!(),
+            hstep_even: todo!(),
+            cycles: todo!(),
+            total_timestamp: todo!(),
+            last_arm9_timestamp: todo!(),
+            last_arm7_timestamp: todo!(),
         }
     }
 
-    /// Initialize the emulator system
-    pub fn init(&mut self) -> Result<(), String> {
-        // Initialize components - add CPU, GPU, DMA, etc. as they are converted
-        Ok(())
-    }
+    /* ===== Internal helpers (private) ===== */
 
-    /// Load system firmware
-    pub fn load_firmware(&mut self) -> Result<(), String> {
-        // Load firmware from file
-        Ok(())
-    }
-
-    /// Load ARM7 BIOS
-    pub fn load_bios7(&mut self, bios: &[u8]) -> Result<(), String> {
-        // Validate and load ARM7 BIOS
-        Ok(())
-    }
-
-    /// Load ARM9 BIOS
-    pub fn load_bios9(&mut self, bios: &[u8]) -> Result<(), String> {
-        // Validate and load ARM9 BIOS
-        Ok(())
-    }
-
-    /// Load save game database
-    pub fn load_save_database(&mut self, _name: &str) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Load game cartridge ROM
-    pub fn load_rom(&mut self, rom_name: &str) -> Result<(), String> {
-        // Load ROM from file and verify
-        Ok(())
-    }
-
-    /// Power on the system
-    pub fn power_on(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Direct boot
+    /// Check FIFO interrupt for ARM7.
     ///
-    /// Perform a direct boot using firmware data.
+    /// NOTE: It is not used in C++ and has no definition.
+    fn check_fifo7_interrupt(&mut self) {
+        unimplemented!("It is not used in C++ and has no definition.");
+    }
+
+    /// Check FIFO interrupt for ARM9.
     ///
-    /// This function is a faithful Rust translation of the original
-    /// C++ `Firmware::direct_boot` implementation.
-    /// It writes firmware-derived values directly into ARM7 memory,
-    /// matching all offsets, sizes, and bit shifts exactly.
+    /// NOTE: It is not used in C++ and has no definition.
+    fn check_fifo9_interrupt(&mut self) {
+        unimplemented!("It is not used in C++ and has no definition.");
+    }
+
+    /// Start hardware division unit.
+    /// Start division operation
+    pub fn start_division(&mut self) {
+        if self.div_denom != 0 {
+            self.div_result = self.div_numer / self.div_denom;
+            self.div_remresult = self.div_numer % self.div_denom;
+        }
+    }
+
+    /// Start hardware square root unit.
+    pub fn start_sqrt(&mut self) {
+        self.sqrt_result = (self.sqrt_param as f64).sqrt() as u32;
+    }
+
+    /* ===== load (public) ===== */
+
+    /// Initialize emulator subsystems.
+    pub fn init(&mut self) -> i32 {
+        // self.arm9.set_cp15(&self.arm9_cp15);
+        // self.fifo7.receive_queue = &self.fifo7_queue;
+        // self.fifo7.send_queue = &self.fifo9_queue;
+
+        // self.fifo9.receive_queue = &self.fifo9_queue;
+        // self.fifo9.send_queue = &self.fifo7_queue;
+        0
+    }
+
+    /// Load firmware from internal source.
+    pub fn load_firmware(&mut self) -> Result<(), EmuError> {
+        let bin =
+            std::fs::read(&self.config.arm9_bios_path).with_context(|_| FailedReadFileSnafu {
+                path: &self.config.arm9_bios_path,
+            })?;
+        self.arm9_bios = BiosMem::User(bin);
+
+        let bin =
+            std::fs::read(&self.config.arm7_bios_path).with_context(|_| FailedReadFileSnafu {
+                path: &self.config.arm9_bios_path,
+            })?;
+        self.arm7_bios = BiosMem::User(bin);
+
+        self.spi.init(&self.config.firmware_path)
+    }
+
+    /// Load GBA BIOS.
+    pub fn load_bios_gba(&mut self, bios: &[u8]) {
+        unimplemented!("It is used in v2.");
+    }
+
+    /// Load ARM7 BIOS.
+    pub fn load_bios7(&mut self, bios: &[u8]) {
+        unimplemented!("It is not used in C++ and has no definition.");
+    }
+
+    /// Load ARM9 BIOS.
+    pub fn load_bios9(&mut self, bios: &[u8]) {
+        unimplemented!("It is not used in C++ and has no definition.");
+    }
+
+    /// Load firmware image.
+    pub fn load_firmware_image(&mut self, firmware: &[u8]) {
+        unimplemented!();
+    }
+
+    /// Load Slot-2 cartridge data.
+    pub fn load_slot2(&mut self, data: &[u8]) {
+        unimplemented!();
+    }
+
+    /// Load save database by name.
+    pub fn load_save_database(&mut self, name: &str) {
+        unimplemented!();
+    }
+
+    /// Load a ROM file.
+    pub fn load_rom(&mut self, rom_name: &str) -> i32 {
+        unimplemented!();
+    }
+
+    /* ===== mark (public) ===== */
+
+    /// Mark an address as ARM instruction.
+    pub fn mark_as_arm(&mut self, address: u32) {
+        unimplemented!();
+    }
+
+    /// Mark an address as THUMB instruction.
+    pub fn mark_as_thumb(&mut self, address: u32) {
+        unimplemented!();
+    }
+
+    /* ===== power and run (public) ===== */
+
+    /// Power on the system.
+    pub fn power_on(&mut self) {
+        unimplemented!();
+    }
+
+    /// Perform a direct boot sequence.
     pub fn direct_boot(&mut self) {
         // Write zero to boot flag
         self.arm7_write_word(0x027FF864, 0);
@@ -555,202 +615,209 @@ impl Emulator {
         }
     }
 
-    /// Debug mode
-    pub fn debug(&mut self) -> Result<(), String> {
-        Ok(())
+    /// Run emulator in debug mode.
+    pub fn debug(&mut self) {
+        unimplemented!();
     }
 
-    /// Run one frame of emulation
-    pub fn run(&mut self) -> Result<(), String> {
-        Ok(())
+    /// Run the emulator main loop.
+    pub fn run(&mut self) {
+        unimplemented!();
     }
 
-    /// Check if CPU has pending interrupt
+    /// Run emulator in GBA mode.
+    pub fn run_gba(&mut self) {
+        unimplemented!();
+    }
+
+    /// Check whether a CPU is requesting an interrupt.
     pub fn requesting_interrupt(&self, cpu_id: u32) -> bool {
-        if cpu_id == 7 {
-            (self.int7_reg_ie & self.int7_reg_if) != 0 && self.int7_reg_ime != 0
-        } else {
-            (self.int9_reg_ie & self.int9_reg_if) != 0 && self.int9_reg_ime != 0
+        match cpu_id {
+            0 => {
+                (self.int9_reg.irq_enable & self.int9_reg.irq_flags) != 0 && self.int9_reg.ime != 0
+            }
+            _ => {
+                (self.int7_reg.irq_enable & self.int7_reg.irq_flags) != 0 && self.int7_reg.ime != 0
+            }
         }
     }
 
-    /// Write to SPI data register (ARM7)
-    pub fn write_spidata7(&mut self, byte: u8) {
-        if self.spi.write_spidata(byte) {
-            self.requesting_interrupt(7);
-        }
+    /* ===== GBA (public) ===== */
+
+    /// Check if emulator is currently in GBA mode.
+    pub fn is_gba(&self) -> bool {
+        unimplemented!();
     }
 
-    /// Get current system timestamp
+    /// Start GBA mode.
+    pub fn start_gba_mode(&mut self, throw_exception: bool) {
+        unimplemented!();
+    }
+
+    /// Get current system timestamp.
     pub fn get_timestamp(&self) -> u64 {
         self.total_timestamp
     }
 
-    /// Get upper screen frame buffer
+    /* ===== get frame(public) ===== */
+
+    /// Copy upper screen framebuffer.
     pub fn get_upper_frame(&self) -> Vec<u32> {
         // Return upper screen pixel data
         vec![0u32; 256 * 192]
     }
 
-    /// Get lower screen frame buffer
+    /// Copy lower screen framebuffer.
     pub fn get_lower_frame(&self) -> Vec<u32> {
         // Return lower screen pixel data
         vec![0u32; 256 * 192]
     }
 
-    /// Set upper screen buffer
-    pub fn set_upper_screen(&mut self, _buffer: &[u32]) -> Result<(), String> {
-        Ok(())
+    /// Set upper screen framebuffer.
+    pub fn set_upper_screen(&mut self, buffer: &[u32]) {
+        unimplemented!();
     }
 
-    /// Set lower screen buffer
-    pub fn set_lower_screen(&mut self, _buffer: &[u32]) -> Result<(), String> {
-        Ok(())
+    /// Set lower screen framebuffer.
+    pub fn set_lower_screen(&mut self, buffer: &[u32]) {
+        unimplemented!();
     }
 
-    /// Check if current frame is complete
+    /* frame, display and dma ===== (public) ===== */
+
+    /// Check if a frame has completed.
     pub fn frame_complete(&self) -> bool {
-        false // Will be implemented with GPU
+        unimplemented!();
     }
 
-    /// Check if display has been swapped
+    /// Check if screens are swapped.
     pub fn display_swapped(&self) -> bool {
-        false // Will be implemented with GPU
+        unimplemented!();
     }
 
-    /// Check if any DMA transfer is active
-    pub fn dma_active(&self) -> bool {
-        false // Will be implemented with DMA
+    /// Check if DMA is active for a CPU.
+    pub fn dma_active(&self, cpu_id: i32) -> bool {
+        unimplemented!();
     }
 
-    /// Request HBLANK DMA transfer
-    pub fn hblank_dma_request(&mut self) -> Result<(), String> {
-        Ok(())
+    /* DMA ===== (public) ===== */
+
+    /// Request HBLANK DMA.
+    pub fn hblank_dma_request(&mut self) {
+        unimplemented!();
     }
 
-    /// Request game cartridge DMA transfer
-    pub fn gamecart_dma_request(&mut self) -> Result<(), String> {
-        Ok(())
+    /// Request game cartridge DMA.
+    pub fn gamecart_dma_request(&mut self) {
+        unimplemented!();
     }
 
-    /// Request GXFIFO DMA transfer
-    pub fn gxfifo_dma_request(&mut self) -> Result<(), String> {
-        Ok(())
+    /// Request GX FIFO DMA.
+    pub fn gxfifo_dma_request(&mut self) {
+        unimplemented!();
     }
 
-    /// Check and process GXFIFO DMA
-    pub fn check_gxfifo_dma(&mut self) -> Result<(), String> {
-        Ok(())
+    /// Check GX FIFO DMA status.
+    pub fn check_gxfifo_dma(&mut self) {
+        self.gpu.check_gxfifo_dma();
     }
 
-    /// Schedule a GPU event
-    pub fn add_gpu_event(&mut self, event_id: u32, relative_time: u64) {
-        let time_stamp = self.total_timestamp + relative_time;
-        self.scheduled_events.push_back(SchedulerEvent {
-            event_id,
-            time_stamp,
-        });
-        // Sort events by timestamp
-        self.scheduled_events
-            .make_contiguous()
-            .sort_by_key(|e| e.time_stamp);
+    /* ===== add and sys stamp (public) ===== */
+
+    /// Add a GPU event.
+    pub fn add_gpu_event(&mut self, event_id: i32, relative_time: u64) {
+        self.gpu_event.id = event_id;
+        self.gpu_event.activation_time = self.system_timestamp + relative_time;
+
+        if self.gpu_event.activation_time < self.next_event_time {
+            self.next_event_time = self.gpu_event.activation_time;
+        }
     }
 
-    /// Schedule a DMA event
-    pub fn add_dma_event(&mut self, event_id: u32, relative_time: u64) {
-        let time_stamp = self.total_timestamp + relative_time;
-        self.scheduled_events.push_back(SchedulerEvent {
-            event_id,
-            time_stamp,
-        });
-        // Sort events by timestamp
-        self.scheduled_events
-            .make_contiguous()
-            .sort_by_key(|e| e.time_stamp);
+    /// Add a DMA event.
+    pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
+        self.dma_event.id = event_id;
+        self.dma_event.processing = true;
+        self.dma_event.activation_time = self.system_timestamp + relative_time;
+
+        if self.dma_event.activation_time < self.next_event_time {
+            self.next_event_time = self.dma_event.activation_time;
+        }
     }
 
-    /// Recalculate system timestamp based on CPU execution
+    /// Recalculate system timestamp.
     pub fn calculate_system_timestamp(&mut self) {
-        self.total_timestamp = std::cmp::min(self.last_arm9_timestamp, self.last_arm7_timestamp);
+        let cycles = self.next_event_time - self.system_timestamp;
+        match cycles {
+            0 | 20.. => self.system_timestamp += 20,
+            _ => self.system_timestamp += cycles,
+        }
     }
 
-    /// Handle touchscreen press
-    pub fn touchscreen_press(&mut self, x: i32, y: i32) -> Result<(), String> {
-        // Update touchscreen input registers
-        Ok(())
+    /* ===== touchscreen (public) ===== */
+
+    /// Handle touchscreen press.
+    pub fn touchscreen_press(&mut self, x: i32, y: i32) {
+        self.ext_key_in.pen_down = y != 0xfff;
+        self.spi.touchscreen_press(x, y);
     }
 
-    /// High-level BIOS emulation hook
-    pub fn hle_bios(&mut self, _cpu_id: u32) -> Result<(), String> {
-        Ok(())
+    /// Call high-level BIOS function.
+    pub fn hle_bios(&mut self, cpu_id: i32) -> i32 {
+        match cpu_id {
+            0 => self.bios.swi9(&mut self.arm9),
+            _ => self.bios.swi7(&mut self.arm7),
+        }
     }
 
-    // ARM9 Memory Access
+    /* ===== read and write arm (public) =====
+      - moved read_arm7/read_arm9, write_arm7/write_arm9
+    */
 
-    // /// ARM9 read 32-bit word
-    // pub fn arm9_read_word(&self, address: u32) -> u32 {
-    //     self.read_word_internal(address)
-    // }
+    /* ===== cartrige (public) ===== */
 
-    // /// ARM9 read 16-bit halfword
-    // pub fn arm9_read_halfword(&self, address: u32) -> u16 {
-    //     self.read_halfword_internal(address)
-    // }
-
-    // /// ARM9 read 8-bit byte
-    // pub fn arm9_read_byte(&self, address: u32) -> u8 {
-    //     self.read_byte_internal(address)
-    // }
-
-    // /// ARM9 write 32-bit word
-    // pub fn arm9_write_word(&mut self, address: u32, word: u32) {
-    //     self.write_word_internal(address, word);
-    // }
-
-    // /// ARM9 write 16-bit halfword
-    // pub fn arm9_write_halfword(&mut self, address: u32, halfword: u16) {
-    //     self.write_halfword_internal(address, halfword);
-    // }
-
-    // /// ARM9 write 8-bit byte
-    // pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
-    //     self.write_byte_internal(address, byte);
-    // }
-
-    // Cartridge operations
-
-    /// Copy key buffer from cartridge
-    pub fn cart_copy_keybuffer(&self, _buffer: &mut [u8]) -> Result<(), String> {
-        Ok(())
+    pub fn cart_copy_keybuffer(&self, buffer: &mut [u8]) {
+        if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
+            buffer[..0x1048].copy_from_slice(bios);
+        } else {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("arm7_bios need: 0x30..0x30 + 0x1048");
+        }
     }
 
-    /// Write to cartridge header
-    pub fn cart_write_header(&mut self, _address: u32, _halfword: u16) -> Result<(), String> {
-        Ok(())
+    pub fn cart_write_header(&mut self, address: u32, halfword: u16) {
+        let addr = ((0x027FFE00 + (address & 0x1FF)) & MAIN_RAM_MASK) as usize;
+
+        if addr + 1 < self.main_ram.len() {
+            let bytes = halfword.to_le_bytes();
+            self.main_ram[addr] = bytes[0];
+            self.main_ram[addr + 1] = bytes[1];
+        }
     }
 
-    // Interrupt control
+    /* ===== interrupt (public) ===== */
 
-    /// Request interrupt on ARM7
-    pub fn request_interrupt7(&mut self, _id: Interrupt) {
-        // Set interrupt flag
+    /// Request an interrupt for ARM7.
+    pub fn request_interrupt7(&mut self, id: Interrupt) {
+        self.int7_reg.irq_flags |= 1 << (id as u32);
     }
 
-    /// Request interrupt on ARM9
-    pub fn request_interrupt9(&mut self, _id: Interrupt) {
-        // Set interrupt flag
+    /// Request an interrupt for ARM9.
+    pub fn request_interrupt9(&mut self, id: Interrupt) {
+        self.int9_reg.irq_flags |= 1 << (id as u32);
     }
 
-    // CPU access
+    /// Request a GBA interrupt.
+    pub fn request_interrupt_gba(&mut self, id: i32) {
+        self.int7_reg.irq_flags |= 1 << (id as u32);
+    }
 
-    /// Check if ARM7 has cartridge access rights
+    /// Check if ARM7 has cartridge access rights.
     pub fn arm7_has_cart_rights(&self) -> bool {
-        false
+        todo!()
     }
 
-    // Placeholder for full CPU implementations to be added later
-
-    // Button input methods
+    /* ===== Button input handling (public) ===== */
 
     /// Handle up button press
     pub fn button_up_pressed(&mut self) {
@@ -765,11 +832,6 @@ impl Emulator {
     /// Handle left button press
     pub fn button_left_pressed(&mut self) {
         self.key_input.left = true;
-    }
-
-    /// Handle right button press
-    pub fn button_right_pressed(&mut self) {
-        self.key_input.right = true;
     }
 
     /// Handle start button press
@@ -811,6 +873,13 @@ impl Emulator {
     pub fn button_r_pressed(&mut self) {
         self.key_input.button_r = true;
     }
+
+    /// Handle right button press
+    pub fn button_right_pressed(&mut self) {
+        self.key_input.right = true;
+    }
+
+    /* ===== Button release handling (public) ===== */
 
     /// Handle up button release
     pub fn button_up_released(&mut self) {
@@ -871,77 +940,6 @@ impl Emulator {
     pub fn button_r_released(&mut self) {
         self.key_input.button_r = false;
     }
-
-    // Internal memory access helpers
-
-    fn read_byte_internal(&self, address: u32) -> u8 {
-        match address {
-            0x0000_0000..=0x00FF_FFFF => self.main_ram[address as usize],
-            0x0200_0000..=0x0207_FFFF => self.shared_wram[(address - 0x0200_0000) as usize],
-            0x0300_0000..=0x0300_FFFF => self.arm7_wram[(address - 0x0300_0000) as usize],
-            _ => 0u8, // Default for unmapped regions
-        }
-    }
-
-    fn read_halfword_internal(&self, address: u32) -> u16 {
-        let lo = self.read_byte_internal(address) as u16;
-        let hi = self.read_byte_internal(address + 1) as u16;
-        lo | (hi << 8)
-    }
-
-    fn read_word_internal(&self, address: u32) -> u32 {
-        let lo = self.read_halfword_internal(address) as u32;
-        let hi = self.read_halfword_internal(address + 2) as u32;
-        lo | (hi << 16)
-    }
-
-    fn write_byte_internal(&mut self, address: u32, byte: u8) {
-        match address {
-            0x0000_0000..=0x00FF_FFFF => {
-                self.main_ram[address as usize] = byte;
-            }
-            0x0200_0000..=0x0207_FFFF => {
-                self.shared_wram[(address - 0x0200_0000) as usize] = byte;
-            }
-            0x0300_0000..=0x0300_FFFF => {
-                self.arm7_wram[(address - 0x0300_0000) as usize] = byte;
-            }
-            _ => {} // Ignore writes to unmapped regions
-        }
-    }
-
-    fn write_halfword_internal(&mut self, address: u32, halfword: u16) {
-        self.write_byte_internal(address, (halfword & 0xFF) as u8);
-        self.write_byte_internal(address + 1, ((halfword >> 8) & 0xFF) as u8);
-    }
-
-    fn write_word_internal(&mut self, address: u32, word: u32) {
-        self.write_halfword_internal(address, (word & 0xFFFF) as u16);
-        self.write_halfword_internal(address + 2, ((word >> 16) & 0xFFFF) as u16);
-    }
-
-    /// Check ARM7 FIFO interrupt status
-    fn check_fifo7_interrupt(&mut self) {
-        // Check IPC FIFO receive status for ARM7
-    }
-
-    /// Check ARM9 FIFO interrupt status
-    fn check_fifo9_interrupt(&mut self) {
-        // Check IPC FIFO receive status for ARM9
-    }
-
-    /// Start division operation
-    pub fn start_division(&mut self) {
-        if self.div_denom != 0 {
-            self.div_result = self.div_numer / self.div_denom;
-            self.div_remresult = self.div_numer % self.div_denom;
-        }
-    }
-
-    /// Start square root operation
-    pub fn start_sqrt(&mut self) {
-        self.sqrt_result = (self.sqrt_param as f64).sqrt() as u32;
-    }
 }
 
 impl Default for Emulator {
@@ -951,13 +949,22 @@ impl Default for Emulator {
 }
 #[cfg(test)]
 mod tests {
+    use crate::firmware::Firmware;
+
     use super::*;
 
     #[test]
     fn test_initialize_emulator() {
         // Initialize the Gpu3D struct with basic values
         let emu = Box::new(Emulator::new());
-        dbg!(emu.biosprot);
-        assert_eq!(emu.biosprot, 0);
+        dbg!(emu.bios_prot);
+        assert_eq!(emu.bios_prot, 0);
+    }
+
+    #[test]
+    fn test_emulator() {
+        // Run main emulator
+        let mut emu = Box::new(Emulator::new());
+        emu.run();
     }
 }

@@ -6,8 +6,8 @@ mod cp15;
 mod cpu;
 mod dma;
 mod emulator;
+mod error;
 mod firmware;
-
 mod interrupts;
 mod ipc;
 mod read_arm7;

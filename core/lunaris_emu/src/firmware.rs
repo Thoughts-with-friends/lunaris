@@ -6,6 +6,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::error::{EmuError, FailedReadFileSnafu};
+use snafu::ResultExt as _;
+
 /// Firmware commands
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirmwareCommand {
@@ -75,7 +78,7 @@ impl Firmware {
     /// - Performs user data selection and CRC verification
     /// - Patches several firmware configuration fields
     /// - Recalculates CRCs for user data and header
-    pub fn load_firmware(&mut self, file_name: &str) -> Result<usize, String> {
+    pub fn load_firmware(&mut self, file_name: &str) -> Result<usize, EmuError> {
         // Ensure firmware buffer has the correct size
         if self.raw_firmware.len() != Self::SIZE {
             self.raw_firmware.resize(Self::SIZE, 0);
@@ -92,12 +95,13 @@ impl Firmware {
             let copy_size = fw.len().min(Self::SIZE);
             self.raw_firmware[..copy_size].copy_from_slice(&fw[..copy_size]);
 
-            println!("\nLoaded free firmware");
+            #[cfg(feature = "tracing")]
+            tracing::info!("Loaded free firmware.");
         } else {
             // Read firmware file directly into buffer (no bounds checking, same as C++)
             let mut file = firmware_file.take().unwrap();
             file.read_exact(&mut self.raw_firmware)
-                .map_err(|e| format!("Firmware read failed: {}", e))?;
+                .with_context(|_| FailedReadFileSnafu { path: file_name })?;
         }
 
         // Initial user data base address

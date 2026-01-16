@@ -14,5 +14,8 @@
     "--show-output",
     "--nocapture"
   ],
-  "liveshare.connectionMode": "auto"
+  "liveshare.connectionMode": "auto",
+  "rust-analyzer.imports.granularity.group": "module",
+  "rust-analyzer.imports.prefix": "crate",
+  "rust-analyzer.completion.autoimport.enable": true
 }

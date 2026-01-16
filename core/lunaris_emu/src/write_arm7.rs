@@ -19,7 +19,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wramcnt {
+                let off = match self.wram_cnt {
                     0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
                     1 => address & 0x3FFF,            // First half
                     2 => (address & 0x3FFF) + 0x4000, // Second half
@@ -75,11 +75,11 @@ impl Emulator {
             0x04000128 => {} // write ignored
 
             0x04000180 => {
-                self.ipcsync_nds7.write(word as u16);
-                self.ipcsync_nds9.receive_input(word as u16);
+                self.ipc_sync_nds7.write(word as u16);
+                self.ipc_sync_nds9.receive_input(word as u16);
 
                 // IPCSYNC interrupt
-                if (word & (1 << 13)) != 0 && self.ipcsync_nds9.irq_enable {
+                if (word & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
                     self.request_interrupt9(Interrupt::IPCSYNC)
                 }
             }
@@ -96,12 +96,12 @@ impl Emulator {
             0x040001B0 => self.cart.set_lo_key2_seed0(word),
             0x040001B4 => self.cart.set_lo_key2_seed1(word),
 
-            0x04000208 => self.int7_reg_ime = (word & 1) as u8,
-            0x04000210 => self.int7_reg_ie = word,
-            0x04000214 => self.int7_reg_if &= !word,
+            0x04000208 => self.int7_reg.ime = (word & 0x1) as u32,
+            0x04000210 => self.int7_reg.irq_enable = word,
+            0x04000214 => self.int7_reg.irq_flags &= !word,
 
             0x04000218 => {} // ignore
-            0x04000308 => self.biosprot = word & !1,
+            0x04000308 => self.bios_prot = word & !1,
 
             0x04000500 => self.spu.set_soundcnt((word & 0xFFFF) as u16),
             0x04000510 => {}
@@ -135,7 +135,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wramcnt {
+                let off = match self.wram_cnt {
                     0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
                     1 => address & 0x3FFF,            // First half
                     2 => (address & 0x3FFF) + 0x4000, // Second half
@@ -169,17 +169,17 @@ impl Emulator {
             0x0400010C => self.timers.write_lo(halfword, 3),
             0x0400010E => self.timers.write_hi(halfword, 3),
 
-            0x04000128 => self.siocnt = halfword,
-            0x04000134 => self.rcnt = halfword,
+            0x04000128 => self.sio_cnt = halfword,
+            0x04000134 => self.r_cnt = halfword,
 
             0x04000138 => self.rtc.write(halfword, false),
 
             0x04000180 => {
-                self.ipcsync_nds7.write(halfword);
-                self.ipcsync_nds9.receive_input(halfword);
+                self.ipc_sync_nds7.write(halfword);
+                self.ipc_sync_nds9.receive_input(halfword);
 
                 // Trigger IPCSYNC interrupt if enabled
-                if (halfword & (1 << 13)) != 0 && self.ipcsync_nds9.irq_enable {
+                if (halfword & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
                     self.request_interrupt9(Interrupt::IPCSYNC)
                 }
             }
@@ -220,7 +220,7 @@ impl Emulator {
 
             0x04000206 => {} // WIFIWAITCNT TODO
 
-            0x04000208 => self.int7_reg_ime = (halfword & 1) as u8,
+            0x04000208 => self.int7_reg.ime = (halfword & 0x1) as u32,
 
             0x04000300 => self.postflg7 = (halfword & 1) as u8,
             0x04000304 => self.pow_cnt2.set_value(halfword),
@@ -279,7 +279,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wramcnt {
+                let off = match self.wram_cnt {
                     0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
                     1 => address & 0x3FFF,            // First half
                     2 => (address & 0x3FFF) + 0x4000, // Second half
@@ -306,9 +306,9 @@ impl Emulator {
                 }
             }
 
-            0x04000208 => self.int7_reg_ime = byte & 1,
+            0x04000208 => self.int7_reg.ime = (byte & 0x1) as u32,
 
-            0x04000300 => self.postflg7 = byte & 1,
+            0x04000300 => self.postflg7 = byte & 0x1,
 
             0x04000301 => {
                 match byte {

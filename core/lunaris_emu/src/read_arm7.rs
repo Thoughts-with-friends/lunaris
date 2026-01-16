@@ -16,7 +16,7 @@ impl Emulator {
                 u32::from_le_bytes(self.main_ram[off..off + 4].try_into().unwrap())
             }
             SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wramcnt {
+                let off = match self.wram_cnt {
                     0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
                     1 => address & 0x3FFF,            // First half
                     2 => (address & 0x3FFF) + 0x4000, // Second half
@@ -27,12 +27,12 @@ impl Emulator {
             }
 
             0x04000120 => 0,
-            0x04000180 => self.ipcsync_nds7.read().into(),
+            0x04000180 => self.ipc_sync_nds7.read().into(),
             0x040001A4 => self.cart.get_romctrl(),
             0x040001C0 => (self.spi.get_spicnt() as u32) | (self.spi.read_spidata() as u32) << 16,
-            0x04000208 => self.int7_reg_ime as u32,
-            0x04000210 => self.int7_reg_ie,
-            0x04000214 => self.int7_reg_if,
+            0x04000208 => self.int7_reg.ime,
+            0x04000210 => self.int7_reg.irq_enable,
+            0x04000214 => self.int7_reg.irq_flags,
             0x04100000 => {
                 let word: u32 = self.fifo9.read_queue();
                 if self.fifo9.request_empty_irq {
@@ -45,7 +45,7 @@ impl Emulator {
 
             ..0x4000 => {
                 let arm7_pc = self.arm7.get_pc();
-                if arm7_pc > 0x4000 || (address < self.biosprot && arm7_pc > self.biosprot) {
+                if arm7_pc > 0x4000 || (address < self.bios_prot && arm7_pc > self.bios_prot) {
                     return 0xFFFF_FFFF;
                 }
 
@@ -74,7 +74,7 @@ impl Emulator {
                 if pc > 0x4000 {
                     return 0xFFFF;
                 }
-                if address < self.biosprot && pc > self.biosprot {
+                if address < self.bios_prot && pc > self.bios_prot {
                     return 0xFFFF;
                 }
 
@@ -91,7 +91,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wramcnt {
+                let off = match self.wram_cnt {
                     0 => address & ARM7_WRAM_MASK,
                     1 => address & 0x3FFF,
                     2 => (address & 0x3FFF) + 0x4000,
@@ -126,13 +126,13 @@ impl Emulator {
             0x0400010C => self.timers.read_lo(3),
             0x0400010E => self.timers.read_hi(3),
 
-            0x04000128 => self.siocnt,
+            0x04000128 => self.sio_cnt,
             0x04000130 => self.key_input.get_value(),
-            0x04000134 => self.rcnt,
+            0x04000134 => self.r_cnt,
             0x04000136 => self.ext_key_in.get_value(),
             0x04000138 => self.rtc.read(),
 
-            0x04000180 => self.ipcsync_nds7.read(),
+            0x04000180 => self.ipc_sync_nds7.read(),
             0x04000184 => self.fifo7.read_cnt(),
 
             0x040001A0 => self.cart.get_auxspicnt(),
@@ -141,7 +141,7 @@ impl Emulator {
             0x040001C0 => self.spi.get_spicnt(),
             0x040001C2 => self.spi.read_spidata().into(),
 
-            0x04000208 => self.int7_reg_ime.into(),
+            0x04000208 => self.int7_reg.ime as u16,
             0x04000300 => self.postflg7.into(),
             0x04000304 => self.pow_cnt2.get_value(),
             0x04000500 => self.spu.get_soundcnt(),
@@ -192,7 +192,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wramcnt {
+                let off = match self.wram_cnt {
                     0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
                     1 => address & 0x3FFF,            // First half
                     2 => (address & 0x3FFF) + 0x4000, // Second half
@@ -208,7 +208,7 @@ impl Emulator {
             0x040001C2 => self.spi.read_spidata(),
             0x04000218 => 0, // DSi IE2
             0x0400021C => 0, // DSi IF2
-            0x04000241 => self.wramcnt & 0x3,
+            0x04000241 => self.wram_cnt & 0x3,
             0x04000300 => self.postflg7,
             0x04000501 => (self.spu.get_soundcnt() >> 8) as u8,
             0x04000508 => self.spu.get_sndcap0(),
@@ -219,7 +219,7 @@ impl Emulator {
                 let pc = self.arm7.get_pc();
 
                 // BIOS protection checks
-                if pc > 0x4000 || address < self.biosprot && pc > self.biosprot {
+                if pc > 0x4000 || address < self.bios_prot && pc > self.bios_prot {
                     return 0xFF;
                 }
 

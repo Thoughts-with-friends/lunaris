@@ -1,10 +1,9 @@
 /// Scheduler event entry for timing-based events
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SchedulerEvent {
-    /// Event identifier (GPU event, DMA event, etc.)
-    pub event_id: u32,
-    /// Timestamp when event should fire
-    pub time_stamp: u64,
+    pub id: i32,
+    pub processing: bool,
+    pub activation_time: u64,
 }
 
 /// Display status register for screen state

@@ -8,7 +8,7 @@ impl Emulator {
     ///
     /// Handles writes to:
     /// - Main RAM
-    /// - Shared WRAM (controlled by WRAMCNT)
+    /// - Shared WRAM (controlled by WRAM CNT)
     /// - GPU registers (BG, WIN, BLDCNT, etc.)
     /// - DMA registers
     /// - IPC, FIFO
@@ -23,7 +23,7 @@ impl Emulator {
             }
             SHARED_WRAM_START..IO_REGS_START => {
                 // Shared WRAM
-                let index = match self.wramcnt {
+                let index = match self.wram_cnt {
                     0 => (address & 0x7FFF) as usize,            // Entire 32 KB
                     1 => ((address & 0x3FFF) + 0x4000) as usize, // Second half
                     2 => (address & 0x3FFF) as usize,            // First half
@@ -49,9 +49,9 @@ impl Emulator {
                 self.dma_fill[i] = word;
             }
             0x0400_0180 => {
-                self.ipcsync_nds9.write(word as u16);
-                self.ipcsync_nds7.receive_input(word as u16);
-                if word & (1 << 13) != 0 && self.ipcsync_nds7.irq_enable {
+                self.ipc_sync_nds9.write(word as u16);
+                self.ipc_sync_nds7.receive_input(word as u16);
+                if word & (1 << 13) != 0 && self.ipc_sync_nds7.irq_enable {
                     self.request_interrupt7(Interrupt::IPCSYNC);
                 }
             }
@@ -79,10 +79,10 @@ impl Emulator {
                 self.cart.receive_command(((word >> 8) & 0xFF) as u8, 5);
                 self.cart.receive_command((word & 0xFF) as u8, 4);
             }
-            0x0400_0208 => self.int9_reg_ime = (word & 0x1) as u8,
-            0x0400_0210 => self.int9_reg_ie = word,
+            0x0400_0208 => self.int9_reg.ime = (word & 0x1) as u32,
+            0x0400_0210 => self.int9_reg.irq_enable = word,
             0x0400_0214 => {
-                self.int9_reg_if &= !word;
+                self.int9_reg.irq_flags &= !word;
                 self.gpu.check_gxfifo_irq();
             }
             0x0400_0240 => {
@@ -203,7 +203,7 @@ impl Emulator {
 
             // Shared WRAM
             SHARED_WRAM_START..IO_REGS_START => {
-                match self.wramcnt {
+                match self.wram_cnt {
                     0 => {
                         let idx = (address & 0x7FFF) as usize;
                         self.shared_wram[idx..idx + 2].copy_from_slice(&halfword.to_le_bytes());
@@ -267,9 +267,9 @@ impl Emulator {
             0x0400010C => self.timers.write_lo(halfword, 7),
             0x0400010E => self.timers.write_hi(halfword, 7),
             0x04000180 => {
-                self.ipcsync_nds9.write(halfword);
-                self.ipcsync_nds7.receive_input(halfword);
-                if (halfword & (1 << 13) != 0) && self.ipcsync_nds7.irq_enable {
+                self.ipc_sync_nds9.write(halfword);
+                self.ipc_sync_nds7.receive_input(halfword);
+                if (halfword & (1 << 13) != 0) && self.ipc_sync_nds7.irq_enable {
                     self.request_interrupt7(Interrupt::IPCSYNC);
                 }
             }
@@ -285,8 +285,8 @@ impl Emulator {
                 }
             }
             0x040001A0 => self.cart.set_auxspicnt(halfword),
-            0x04000204 => self.exmemcnt = halfword,
-            0x04000208 => self.int9_reg_ime = (halfword & 0x1) as u8,
+            0x04000204 => self.ex_mem_cnt = halfword,
+            0x04000208 => self.int9_reg.ime = (halfword & 0x1) as u32,
             0x04000248 => {
                 self.gpu.set_vramcnt_h(halfword as u8);
                 self.gpu.set_vramcnt_i((halfword >> 8) as u8);
@@ -384,7 +384,7 @@ impl Emulator {
                 self.cart
                     .receive_command(byte, (address - 0x040001A8) as usize);
             }
-            0x04000208 => self.int9_reg_ime = byte & 0x1,
+            0x04000208 => self.int9_reg.ime = (byte & 0x1) as u32,
             0x04000240 => self.gpu.set_vramcnt_a(byte),
             0x04000241 => self.gpu.set_vramcnt_b(byte),
             0x04000242 => self.gpu.set_vramcnt_c(byte),
@@ -392,7 +392,7 @@ impl Emulator {
             0x04000244 => self.gpu.set_vramcnt_e(byte),
             0x04000245 => self.gpu.set_vramcnt_f(byte),
             0x04000246 => self.gpu.set_vramcnt_g(byte),
-            0x04000247 => self.wramcnt = byte & 0x3,
+            0x04000247 => self.wram_cnt = byte & 0x3,
             0x04000248 => self.gpu.set_vramcnt_h(byte),
             0x04000249 => self.gpu.set_vramcnt_i(byte),
             0x0400104C => self.gpu.set_mosaic_b(byte as u16),
