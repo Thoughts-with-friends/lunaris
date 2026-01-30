@@ -1,4 +1,4 @@
-use crate::common::{
+use crate::gpu_root::{
     Gpu, VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE, VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE,
     VRAM_H_SIZE, VRAM_I_SIZE,
 };

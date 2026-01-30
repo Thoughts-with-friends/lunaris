@@ -1,4 +1,4 @@
-use crate::common::Gpu;
+use crate::gpu_root::Gpu;
 use mem_const::*;
 
 impl Gpu {

@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 
 use audio::SPU;
-use gpu::common::{Gpu, gpu_reg::SchedulerEvent};
+use gpu::gpu_root::{Gpu, gpu_reg::SchedulerEvent};
 use mem_const::*;
 use snafu::ResultExt as _;
 

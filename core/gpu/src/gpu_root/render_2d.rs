@@ -1,4 +1,12 @@
-use crate::common::{Gpu, bytes_to_palette, read_palette_value};
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! gpueng.cpp
+//!
+//! See: https://github.com/PSI-Rockin/CorgiDS/blob/0040fccf587ae04c041db562ced4c07f3d937594/src/gpueng.cpp#L363
+//!
+//! CorgiDS was calling GPU methods in Engine2D, but this caused a circular reference.
+//! To avoid this, we've implemented the method in the parent here.
+use crate::gpu_root::{Gpu, bytes_to_palette, read_palette_value};
 use mem_const::*;
 
 impl Gpu {

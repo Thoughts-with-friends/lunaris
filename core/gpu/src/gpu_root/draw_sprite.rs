@@ -1,4 +1,8 @@
-use crate::common::{Gpu, read_palette_value};
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! gpu.hpp
+//!
+use crate::gpu_root::{Gpu, read_palette_value};
 use mem_const::*;
 
 impl Gpu {

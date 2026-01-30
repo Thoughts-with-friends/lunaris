@@ -1,4 +1,8 @@
-use crate::common::Gpu;
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! gpu.hpp
+//!
+use crate::gpu_root::Gpu;
 use mem_const::*;
 
 const OAM_MASK: u32 = 0x7FF;

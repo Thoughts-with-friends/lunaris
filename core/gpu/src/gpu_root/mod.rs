@@ -1,15 +1,15 @@
 /// Graphics Processing Unit (GPU) implementation for Nintendo DS
 /// Handles 2D and 3D rendering, VRAM management, and display output
-pub(crate) mod _2d;
 pub(crate) mod arm_rw;
 pub(crate) mod draw_scanline;
 pub(crate) mod draw_sprite;
 pub mod gpu_reg;
+pub(crate) mod render_2d;
 pub(crate) mod vram_reader;
 
-use crate::common::gpu_reg::{DispStatReg, PowerCtrlReg, SchedulerEvent, VramBankCfg};
 use crate::gpu_2d::Gpu2DEngine;
 use crate::gpu_3d::Gpu3D;
+use crate::gpu_root::gpu_reg::{DispStatReg, PowerCtrlReg, SchedulerEvent, VramBankCfg};
 
 /// VRAM memory constants
 pub const VRAM_A_SIZE: usize = 128 * 1024; // 128KB

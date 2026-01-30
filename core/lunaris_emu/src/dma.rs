@@ -1,6 +1,6 @@
 //! Direct Memory Access (DMA) controller for Nintendo DS
 //! Manages high-speed memory transfers between memory regions
-use gpu::common::gpu_reg::SchedulerEvent;
+use gpu::gpu_root::gpu_reg::SchedulerEvent;
 
 /// DMA control register
 #[derive(Debug, Clone, Copy)]
