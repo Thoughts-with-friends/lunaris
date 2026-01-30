@@ -60,21 +60,25 @@ cargo build --release
 
 ## Todo List
 
-- [x] **Phase 0**: FreeBIOS Development
-- [ ] **Phase 1**: Foundation Setup (Memory, Constants)
-- [ ] **Phase 2**: CPU Core Implementation
-- [ ] **Phase 3**: Memory / I/O Management
-- [ ] **Phase 4**: GPU Infrastructure
-- [ ] **Phase 5**: BIOS / ROM Loading
-- [ ] **Phase 6**: UI / Threading
-- [ ] **Phase 7**: Audio System
-- [ ] **Phase 8**: Interrupt System
-- [ ] **Phase 9**: Instruction Set Completion (ARM9)
-- [ ] **Phase 10**: ARM7 Implementation
-- [ ] **Phase 11**: 3D Graphics
-- [ ] **Phase 12**: Save Data System
-- [ ] **Phase 13**: WiFi / Networking
-- [ ] **Phase 14**: Optimization / Debugging
+- [x] **Phase 0 (100%)**: FreeBIOS Development
+- [ ] **Phase 1 ( 70%)**: Foundation Setup (Memory, Constants)
+- [ ] **Phase 2 ( 70%)**: CPU Core Implementation
+- [ ] **Phase 3 ( 70%)**: Memory / I/O Management
+- [ ] **Phase 4 ( 70%)**: GPU Infrastructure
+- [ ] **Phase 5 ( 0%)**: BIOS / ROM Loading
+- [ ] **Phase 6 ( 0%)**: UI / Threading
+- [ ] **Phase 7 ( 40%)**: Audio System
+- [ ] **Phase 8 ( 70%)**: Interrupt System
+- [ ] **Phase 9 ( 70%)**: Instruction Set Completion (ARM9)
+- [ ] **Phase 10 ( 70%)**: ARM7 Implementation
+- [ ] **Phase 11 ( 10%)**: 3D Graphics
+- [ ] **Phase 12 ( 0%)**: Save Data System
+- [ ] **Phase 13 ( 80%)**: WiFi / Networking
+- [ ] **Phase 14 ( 0%)**: Optimization / Debugging
+
+## CI Tests
+
+- [Lunaris CI](https://github.com/Thoughts-with-friends/lunaris/actions)
 
 ## References
 
