@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-mod arm_cpu;
+pub mod arm_cpu;
 mod arm_table;
 mod cpu_instructions;
 mod instruction_table;

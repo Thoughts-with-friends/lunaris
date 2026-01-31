@@ -1,4 +1,8 @@
-use crate::gpu_3d::Matrix;
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! gpu3d.hpp
+//!
+use crate::gpu_3d::structs::Matrix;
 
 // Constants to define
 const SCANLINES: usize = 256;

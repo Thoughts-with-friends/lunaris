@@ -1,5 +1,5 @@
 [package]
-name = "free_bios"
+name = "lunaris_ds_free_bios"
 authors.workspace = true
 categories.workspace = true
 description.workspace = true

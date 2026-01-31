@@ -8,7 +8,7 @@ pub(crate) mod render_2d;
 pub(crate) mod vram_reader;
 
 use crate::gpu_2d::Gpu2DEngine;
-use crate::gpu_3d::Gpu3D;
+use crate::gpu_3d::structs::Gpu3D;
 use crate::gpu_root::gpu_reg::{DispStatReg, PowerCtrlReg, SchedulerEvent, VramBankCfg};
 
 /// VRAM memory constants
@@ -24,6 +24,7 @@ pub const VRAM_I_SIZE: usize = 16 * 1024; // 16KB
 
 /// Graphics Processing Unit
 /// Manages 2D and 3D rendering for both screens
+#[derive(Debug)]
 pub struct Gpu {
     /// 2D Engine upper screen
     engine_upper: Gpu2DEngine,
@@ -80,6 +81,12 @@ pub struct Gpu {
 
     /// Power control register
     power_control_reg: PowerCtrlReg,
+}
+
+impl Default for Gpu {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Gpu {
@@ -979,11 +986,5 @@ impl Gpu {
 
     pub fn set_gxstat(&mut self, word: u32) {
         todo!()
-    }
-}
-
-impl Default for Gpu {
-    fn default() -> Self {
-        Self::new()
     }
 }

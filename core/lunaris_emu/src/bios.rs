@@ -1,19 +1,20 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::cpu::ARMCPU;
+use lunaris_ds_cpu::arm_cpu::ArmCpu;
 
 /// BIOS emulation for CorgiDS.
-pub struct BIOS;
+#[derive(Debug, Default)]
+pub struct Bios;
 
-impl BIOS {
+impl Bios {
     /// Creates a new BIOS instance.
     pub fn new() -> Self {
-        BIOS
+        Bios
     }
 
     /// Retrieves the SWI opcode using the ARM CPU's LR logic.
     /// The handler compensates based on ARM vs THUMB mode.
-    fn get_opcode(&self, cpu: &mut ARMCPU) -> u8 {
+    fn get_opcode(&self, cpu: &mut ArmCpu) -> u8 {
         let mut lr = cpu.get_pc();
         if cpu.get_cpsr().thumb_on {
             lr -= 2;
@@ -26,7 +27,7 @@ impl BIOS {
 
     /// Implements the BIOS signed division routine.
     /// r0 = quotient, r1 = remainder, r3 = |quotient|
-    fn div(&self, cpu: &mut ARMCPU) {
+    fn div(&self, cpu: &mut ArmCpu) {
         let dividend = cpu.get_register(0) as i32;
         let divisor = cpu.get_register(1) as i32;
 
@@ -39,7 +40,7 @@ impl BIOS {
 
     /// Implements BIOS CpuSet memory transfer/fill.
     /// Behaviour follows ARM9/ARM7 NDS semantics.
-    fn cpu_set(&self, cpu: &mut ARMCPU) {
+    fn cpu_set(&self, cpu: &mut ArmCpu) {
         let mut source = cpu.get_register(0);
         let mut dest = cpu.get_register(1);
         let flags = cpu.get_register(2);
@@ -71,7 +72,7 @@ impl BIOS {
     }
 
     /// Calculates CRC16 over a sequence of halfwords.
-    fn get_crc16(&self, cpu: &mut ARMCPU) {
+    fn get_crc16(&self, cpu: &mut ArmCpu) {
         let crcs: [u16; 8] = [
             0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001,
         ];
@@ -99,7 +100,7 @@ impl BIOS {
     }
 
     /// Executes SWI 7 (ARM7 BIOS).
-    pub fn swi7(&self, arm7: &mut ARMCPU) -> i32 {
+    pub fn swi7(&self, arm7: &mut ArmCpu) -> i32 {
         let opcode = self.get_opcode(arm7);
         match opcode {
             0x03 => arm7.add_internal_cycles((arm7.get_register(0) * 4) as i32),
@@ -115,7 +116,7 @@ impl BIOS {
     }
 
     /// Executes SWI 9 (ARM9 BIOS).
-    pub fn swi9(&self, arm9: &mut ARMCPU) -> i32 {
+    pub fn swi9(&self, arm9: &mut ArmCpu) -> i32 {
         let opcode = self.get_opcode(arm9);
         match opcode {
             0x03 => arm9.add_internal_cycles((arm9.get_register(0) * 2) as i32),

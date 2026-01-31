@@ -103,6 +103,7 @@ impl Default for TimerReg {
 
 /// NDS Timing and Timer system
 /// Manages 8 timers total (4 for ARM9, 4 for ARM7)
+#[derive(Debug)]
 pub struct NDSTiming {
     /// Emulator reference
     emulator_ptr: *mut crate::emulator::Emulator,

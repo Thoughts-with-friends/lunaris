@@ -1,306 +1,50 @@
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! emulator.hpp
+//!
 //! Core emulator system that manages CPU, memory, and all peripheral devices
 //! Handles the dual-CPU architecture of the Nintendo DS and system timing
+pub mod emu_config;
+mod read_arm7;
+mod read_arm9;
+mod write_arm7;
+mod write_arm9;
 
+use snafu::ResultExt as _;
 use std::collections::VecDeque;
 
-use audio::SPU;
-use gpu::gpu_root::{Gpu, gpu_reg::SchedulerEvent};
-use mem_const::*;
-use snafu::ResultExt as _;
+use lunaris_ds_audio::SPU;
+use lunaris_ds_cpu::arm_cpu::ArmCpu;
+use lunaris_ds_gpu::gpu_root::{Gpu, gpu_reg::SchedulerEvent};
+use lunaris_ds_mem_const::*;
 
-use crate::bios::BIOS;
+use crate::bios::Bios;
 use crate::cartridge::NDSCart;
-use crate::cp15::CP15;
-use crate::cpu::ARMCPU;
-use crate::dma::NDS_DMA;
+use crate::cp15::Cp15;
+use crate::dma::NDSDma;
 use crate::error::{EmuError, FailedReadFileSnafu};
-use crate::interrupts::InterruptRegs;
+use crate::interrupts::{Interrupt, InterruptRegs};
 use crate::ipc::{IpcFifo, IpcSync};
 use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
 use crate::timers::NDSTiming;
 use crate::wifi::WiFi;
-
-#[derive(Default)]
-pub struct Config {
-    pub arm7_bios_path: String,
-    pub arm9_bios_path: String,
-    pub firmware_path: String,
-    pub savelist_path: String,
-
-    /// Enable direct boot
-    pub direct_boot_enabled: bool,
-
-    /// Pause emulator when window is unfocused
-    pub pause_when_unfocused: bool,
-
-    /// Background enable flags
-    pub bg_enable: [bool; 4],
-    pub frameskip: i32,
-
-    /// Enable frame limiter
-    pub enable_framelimiter: bool,
-
-    /// Use HLE BIOS
-    pub hle_bios: bool,
-
-    /// Test mode
-    pub test: bool,
-}
-
-/// Button input register for standard DS buttons
-#[derive(Debug, Clone, Copy, Default)]
-pub struct KeyInputReg {
-    pub button_a: bool,
-    pub button_b: bool,
-    pub select: bool,
-    pub start: bool,
-    pub right: bool,
-    pub left: bool,
-    pub up: bool,
-    pub down: bool,
-    pub button_r: bool,
-    pub button_l: bool,
-}
-
-impl KeyInputReg {
-    /// Get the current key input register value (bit-packed format)
-    pub fn get_value(&self) -> u16 {
-        let mut value = 0u16;
-        if self.button_a {
-            value |= 0x0001;
-        }
-        if self.button_b {
-            value |= 0x0002;
-        }
-        if self.select {
-            value |= 0x0004;
-        }
-        if self.start {
-            value |= 0x0008;
-        }
-        if self.right {
-            value |= 0x0010;
-        }
-        if self.left {
-            value |= 0x0020;
-        }
-        if self.up {
-            value |= 0x0040;
-        }
-        if self.down {
-            value |= 0x0080;
-        }
-        if self.button_r {
-            value |= 0x0100;
-        }
-        if self.button_l {
-            value |= 0x0200;
-        }
-        value
-    }
-
-    /// Set value from bit-packed register format
-    pub fn set_value(&mut self, value: u16) {
-        self.button_a = (value & 0x0001) != 0;
-        self.button_b = (value & 0x0002) != 0;
-        self.select = (value & 0x0004) != 0;
-        self.start = (value & 0x0008) != 0;
-        self.right = (value & 0x0010) != 0;
-        self.left = (value & 0x0020) != 0;
-        self.up = (value & 0x0040) != 0;
-        self.down = (value & 0x0080) != 0;
-        self.button_r = (value & 0x0100) != 0;
-        self.button_l = (value & 0x0200) != 0;
-    }
-}
-
-/// Extended key input register for additional buttons (X, Y, pen, hinge)
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ExtKeyInReg {
-    pub button_x: bool,
-    pub button_y: bool,
-    pub pen_down: bool,
-    pub hinge_closed: bool,
-}
-
-impl ExtKeyInReg {
-    /// Get the extended key input register value
-    pub fn get_value(&self) -> u16 {
-        let mut value = 0u16;
-        if self.button_x {
-            value |= 0x0001;
-        }
-        if self.button_y {
-            value |= 0x0002;
-        }
-        if self.pen_down {
-            value |= 0x0004;
-        }
-        if self.hinge_closed {
-            value |= 0x0008;
-        }
-        value
-    }
-
-    /// Set value from bit-packed register format
-    pub fn set_value(&mut self, value: u16) {
-        self.button_x = (value & 0x0001) != 0;
-        self.button_y = (value & 0x0002) != 0;
-        self.pen_down = (value & 0x0004) != 0;
-        self.hinge_closed = (value & 0x0008) != 0;
-    }
-}
-
-/// Power control register for power management
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PowCnt2Reg {
-    pub speakers: bool,
-    pub wifi: bool,
-    pub led: bool,
-    pub cartridge: bool,
-}
-
-impl PowCnt2Reg {
-    /// Get the power control register value
-    pub fn get_value(&self) -> u16 {
-        let mut value = 0u16;
-        if self.speakers {
-            value |= 0x0001;
-        }
-        if self.wifi {
-            value |= 0x0002;
-        }
-        if self.led {
-            value |= 0x0004;
-        }
-        if self.cartridge {
-            value |= 0x0008;
-        }
-        value
-    }
-
-    /// Set value from bit-packed register format
-    pub fn set_value(&mut self, value: u16) {
-        self.speakers = (value & 0x0001) != 0;
-        self.wifi = (value & 0x0002) != 0;
-        self.led = (value & 0x0004) != 0;
-        self.cartridge = (value & 0x0008) != 0;
-    }
-}
-
-/// Interrupt identifier for different interrupt sources
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Interrupt {
-    VBlank = 0,
-    HBlank = 1,
-    VCounter = 2,
-    Timer0 = 3,
-    Timer1 = 4,
-    Timer2 = 5,
-    Timer3 = 6,
-    SerialComm = 7,
-    DMA0 = 8,
-    DMA1 = 9,
-    DMA2 = 10,
-    DMA3 = 11,
-    Keypad = 12,
-    GBA_SLOT = 13,
-    IPCSYNC = 16,
-    IPC_FIFO_EMPTY,
-    IPC_FIFO_NEMPTY,
-    CART_TRANSFER,
-    CART_IREQ_MC,
-    GEOMETRY_FIFO,
-    UNFOLD_SCREEN,
-    SPI,
-    WIFI,
-}
-
-pub enum BiosMem<const BIOS_SIZE: usize> {
-    /// len: BIOS_SIZE
-    User(Vec<u8>),
-    Const(&'static [u8; BIOS_SIZE]),
-}
-
-impl<const BIOS_SIZE: usize> BiosMem<BIOS_SIZE> {
-    pub fn get(&self, range: core::ops::Range<usize>) -> Option<&[u8]> {
-        match self {
-            Self::User(items) => items.get(range),
-            Self::Const(items) => items.get(range),
-        }
-    }
-}
-
-impl Default for BiosMem<BIOS7_SIZE> {
-    fn default() -> Self {
-        BiosMem::Const(&free_bios::arm7::BIOS_ARM7_BIN)
-    }
-}
-
-impl Default for BiosMem<BIOS9_SIZE> {
-    fn default() -> Self {
-        BiosMem::Const(&free_bios::arm9::BIOS_ARM9_BIN)
-    }
-}
-
-impl core::ops::Index<usize> for BiosMem<BIOS7_SIZE> {
-    type Output = u8;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        match self {
-            BiosMem::User(items) => &items[index],
-            BiosMem::Const(items) => &items[index],
-        }
-    }
-}
-
-impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS7_SIZE> {
-    type Output = [u8];
-
-    fn index(&self, index: core::ops::Range<usize>) -> &Self::Output {
-        match self {
-            BiosMem::User(items) => &items[index],
-            BiosMem::Const(items) => &items[index],
-        }
-    }
-}
-
-impl core::ops::Index<usize> for BiosMem<BIOS9_SIZE> {
-    type Output = u8;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        match self {
-            BiosMem::User(items) => &items[index],
-            BiosMem::Const(items) => &items[index],
-        }
-    }
-}
-
-impl core::ops::Index<core::ops::Range<usize>> for BiosMem<BIOS9_SIZE> {
-    type Output = [u8];
-
-    fn index(&self, index: core::ops::Range<usize>) -> &Self::Output {
-        match self {
-            BiosMem::User(items) => &items[index],
-            BiosMem::Const(items) => &items[index],
-        }
-    }
-}
+use emu_config::{BiosMem, Config, ExtKeyInReg, KeyInputReg, PowCnt2Reg};
 
 /// Core Nintendo DS emulator system
 /// Manages dual ARM CPUs, memory, and all peripheral devices
+#[derive(Debug, Default)]
 pub struct Emulator {
     /// Config
     pub config: Config,
 
     pub cycle_count: u64,
-    pub arm7: ARMCPU,
-    pub arm9: ARMCPU,
-    pub bios: BIOS,
-    pub arm9_cp15: CP15,
+    pub arm7: ArmCpu,
+    pub arm9: ArmCpu,
+    pub bios: Bios,
+    pub arm9_cp15: Cp15,
     pub cart: NDSCart,
-    pub dma: NDS_DMA,
+    pub dma: NDSDma,
     pub gpu: Gpu,
     pub rtc: RealTimeClock,
     pub spi: SPIBus,
@@ -379,9 +123,6 @@ pub struct Emulator {
     /// - 0x04000308
     pub bios_prot: u32,
 
-    /// wait counter
-    pub wait_cnt: u16,
-
     /// Debugging purposes
     pub hstep_even: bool,
 
@@ -400,63 +141,7 @@ impl Emulator {
     /// Create a new emulator instance with default values
     pub fn new() -> Self {
         Emulator {
-            config: todo!(),
-            cycle_count: todo!(),
-            arm7: todo!(),
-            arm9: todo!(),
-            bios: BIOS,
-            arm9_cp15: todo!(),
-            cart: todo!(),
-            dma: todo!(),
-            gpu: todo!(),
-            rtc: todo!(),
-            spi: todo!(),
-            spu: todo!(),
-            timers: todo!(),
-            wifi: todo!(),
-            main_ram: todo!(),
-            shared_wram: todo!(),
-            arm7_wram: todo!(),
-            arm9_bios: todo!(),
-            arm7_bios: todo!(),
-            system_timestamp: todo!(),
-            next_event_time: todo!(),
-            gpu_event: todo!(),
-            dma_event: todo!(),
-            ipc_sync_nds9: todo!(),
-            ipc_sync_nds7: todo!(),
-            fifo7: todo!(),
-            fifo9: todo!(),
-            fifo7_queue: todo!(),
-            fifo9_queue: todo!(),
-            aux_spi_cnt: todo!(),
-            int7_reg: todo!(),
-            int9_reg: todo!(),
-            key_input: todo!(),
-            ext_key_in: todo!(),
-            pow_cnt2: todo!(),
-            dma_fill: todo!(),
-            sio_cnt: todo!(),
-            r_cnt: todo!(),
-            ex_mem_cnt: todo!(),
-            wram_cnt: todo!(),
-            divcnt: todo!(),
-            div_numer: todo!(),
-            div_denom: todo!(),
-            div_result: todo!(),
-            div_remresult: todo!(),
-            sqrtcnt: todo!(),
-            sqrt_result: todo!(),
-            sqrt_param: todo!(),
-            postflg7: todo!(),
-            postflg9: todo!(),
-            bios_prot: todo!(),
-            wait_cnt: todo!(),
-            hstep_even: todo!(),
-            cycles: todo!(),
-            total_timestamp: todo!(),
-            last_arm9_timestamp: todo!(),
-            last_arm7_timestamp: todo!(),
+            ..Default::default()
         }
     }
 
@@ -942,11 +627,6 @@ impl Emulator {
     }
 }
 
-impl Default for Emulator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 #[cfg(test)]
 mod tests {
     use crate::firmware::Firmware;

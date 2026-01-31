@@ -1,6 +1,6 @@
 //! Direct Memory Access (DMA) controller for Nintendo DS
 //! Manages high-speed memory transfers between memory regions
-use gpu::gpu_root::gpu_reg::SchedulerEvent;
+use lunaris_ds_gpu::gpu_root::gpu_reg::SchedulerEvent;
 
 /// DMA control register
 #[derive(Debug, Clone, Copy)]
@@ -127,10 +127,8 @@ impl Default for DmaChannel {
 
 /// DMA Controller
 /// Manages up to 8 DMA channels (4 ARM9, 4 ARM7) for fast memory transfers
-pub struct NDS_DMA {
-    /// Emulator reference
-    emulator_ptr: *mut crate::emulator::Emulator,
-
+#[derive(Debug, Default)]
+pub struct NDSDma {
     /// DMA channels (0-7: 0-3 are ARM9, 4-7 are ARM7)
     dmas: [DmaChannel; 8],
 
@@ -143,7 +141,7 @@ pub struct NDS_DMA {
     active_dmas: u8,
 }
 
-impl NDS_DMA {
+impl NDSDma {
     /// Create new DMA controller
     pub fn new() -> Self {
         let mut dmas = [DmaChannel::new(0, false); 8];
@@ -154,8 +152,7 @@ impl NDS_DMA {
             dmas[i] = DmaChannel::new(i as u32, is_arm9);
         }
 
-        NDS_DMA {
-            emulator_ptr: std::ptr::null_mut(),
+        NDSDma {
             dmas,
             active_dma7: None,
             active_dma9: None,
@@ -383,11 +380,5 @@ impl NDS_DMA {
             }
         }
         Ok(())
-    }
-}
-
-impl Default for NDS_DMA {
-    fn default() -> Self {
-        Self::new()
     }
 }

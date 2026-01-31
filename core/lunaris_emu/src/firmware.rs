@@ -1,18 +1,15 @@
 /// Nintendo DS Firmware controller
 /// Handles firmware data loading, CRC verification, and SPI data transfer
-use std::{
-    fs::File,
-    io::Read as _,
-    sync::{Arc, Mutex},
-};
+use std::{fs::File, io::Read as _};
 
 use crate::error::{EmuError, FailedReadFileSnafu};
 use snafu::ResultExt as _;
 
 /// Firmware commands
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum FirmwareCommand {
     /// No command
+    #[default]
     None = 0,
     /// Read status register
     ReadStatusReg = 1,
@@ -34,10 +31,8 @@ impl FirmwareCommand {
 
 /// Nintendo DS Firmware
 /// Stores firmware data and manages SPI communication
+#[derive(Debug)]
 pub struct Firmware {
-    /// Emulator reference
-    emulator: Option<Arc<Mutex<crate::emulator::Emulator>>>,
-
     /// Firmware data (262 KB)
     pub(crate) raw_firmware: Vec<u8>,
     /// Status register
@@ -60,7 +55,6 @@ impl Firmware {
     /// Create new Firmware controller
     pub fn new() -> Self {
         Firmware {
-            emulator: None,
             raw_firmware: vec![0u8; Self::SIZE],
             status_reg: 0,
             user_data: 0,
@@ -89,7 +83,7 @@ impl Firmware {
 
         if firmware_file.is_none() {
             // Load default firmware if file open fails
-            let fw = free_bios::firmware::FIRMWARE_DS;
+            let fw = lunaris_ds_free_bios::firmware::FIRMWARE_DS;
 
             // Copy default firmware into buffer
             let copy_size = fw.len().min(Self::SIZE);

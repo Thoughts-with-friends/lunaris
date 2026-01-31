@@ -3,6 +3,7 @@
 /// This struct emulates the Nintendo DS touchscreen SPI device.
 /// It faithfully reproduces the behavior of the original C++
 /// implementation from CorgiDS.
+#[derive(Debug, Default)]
 pub struct TouchScreen {
     // Control byte written by SPI
     control_byte: u8,

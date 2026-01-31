@@ -1,5 +1,5 @@
 [package]
-name = "mem_const"
+name = "lunaris_ds_mem_const"
 authors.workspace = true
 categories.workspace = true
 description.workspace = true

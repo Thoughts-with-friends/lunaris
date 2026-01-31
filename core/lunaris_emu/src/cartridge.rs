@@ -237,6 +237,7 @@ impl Default for RegAuxSpiCnt {
 
 /// Game Cartridge Controller
 /// Manages ROM data, encryption/decryption, and cartridge interface
+#[derive(Debug)]
 pub struct NDSCart {
     /// Emulator reference
     emulator_ptr: *mut crate::emulator::Emulator,

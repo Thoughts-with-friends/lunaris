@@ -3,17 +3,48 @@
 //! cpuinsters.hpp
 //!
 use crate::arm_cpu::ArmCpu;
+use crate::arm_table;
 use crate::instruction_table::{ARMInstr, ThumbInstr};
-
-/// Function pointer type for ARM/Thumb instruction interpreters
-pub type InterpreterFunc = fn(cpu: &mut ArmCpu, instruction: u32);
-
-/// ARM interpreter function table with 4096 entries
-pub static ARM_TABLE: [InterpreterFunc; 4096] = [undefined; 4096];
 
 /// Interprets an ARM instruction
 pub fn arm_interpret(cpu: &mut ArmCpu) {
-    todo!()
+    let instruction: u32 = cpu.get_current_instr();
+    let condition: u32 = (instruction & 0xF000_0000) >> 28;
+
+    // In ARM, PC reads as current + 8
+    let pc: u32 = cpu.get_pc().wrapping_sub(8);
+
+    let cpu_id = cpu.get_id();
+
+    // if cpu_id <= 0 && Config::test {
+    //     if cpu_id <= 0 {
+    //         print!("(9A)");
+    //     } else {
+    //         print!("(7A)");
+    //     }
+
+    //     print!("[$%08X] {{$%08X}} - ", pc, instruction);
+
+    //     let disasm = Disassembler::disasm_arm(cpu, instruction, pc);
+    //     print!(" {}", disasm);
+    //     println!();
+    // }
+
+    // Build opcode
+    let op: u32 = ((instruction >> 4) & 0xF) | ((instruction >> 16) & 0xFF0);
+
+    // Special BLX handling
+    match condition == 15 && (instruction & 0xFE00_0000) == 0xFA00_0000 && cpu_id <= 0 {
+        true => {
+            blx(cpu, instruction);
+        }
+        false => {
+            if cpu.check_condition(condition as i32) {
+                // Assuming arm_table is indexed by u32 and stores fn(&mut Cpu, u32)
+                arm_table::ARM_TABLE[op as usize](cpu, instruction);
+            }
+        }
+    }
 }
 
 /// Interprets a Thumb instruction

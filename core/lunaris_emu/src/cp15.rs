@@ -2,7 +2,7 @@
 /// Manages ARM9 memory protection unit, caches, TCM, and control registers
 use std::sync::{Arc, Mutex};
 
-use crate::cpu::ARMCPU;
+use lunaris_ds_cpu::arm_cpu::ArmCpu;
 
 /// CP15 Control Register
 #[derive(Debug, Clone, Copy)]
@@ -112,12 +112,12 @@ impl Default for ControlReg {
 
 /// ARM9 Coprocessor 15 System Control
 /// Manages instruction/data TCM, caches, and memory control
-pub struct CP15 {
-    /// Emulator reference
-    emulator: Option<Arc<Mutex<crate::emulator::Emulator>>>,
-    /// ARM9 CPU reference
-    arm9: Option<Arc<Mutex<ARMCPU>>>,
-
+#[derive(Debug)]
+pub struct Cp15 {
+    // /// Emulator reference
+    // emulator: Option<Arc<Mutex<crate::emulator::Emulator>>>,
+    // /// ARM9 CPU reference
+    // arm9: Option<Arc<Mutex<ARMCPU>>>,
     /// Control register
     control: ControlReg,
 
@@ -144,12 +144,16 @@ pub struct CP15 {
     icache: Vec<u8>,
 }
 
-impl CP15 {
+impl Default for Cp15 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Cp15 {
     /// Create new CP15 controller
     pub fn new() -> Self {
-        CP15 {
-            emulator: None,
-            arm9: None,
+        Cp15 {
             control: ControlReg::new(),
             itcm_data: 0,
             dtcm_data: 0,
@@ -172,8 +176,9 @@ impl CP15 {
     }
 
     /// Link CP15 with ARM9 CPU
-    pub fn link_with_cpu(&mut self, _arm9: Arc<Mutex<ARMCPU>>) {
-        self.arm9 = Some(_arm9);
+    pub fn link_with_cpu(&mut self, _arm9: Arc<Mutex<ArmCpu>>) {
+        // self.arm9 = Some(_arm9);
+        todo!()
     }
 
     /// Get instruction TCM size
@@ -339,11 +344,5 @@ impl CP15 {
     /// Invalidate data cache
     pub fn invalidate_dcache(&mut self) {
         self.dcache.fill(0);
-    }
-}
-
-impl Default for CP15 {
-    fn default() -> Self {
-        Self::new()
     }
 }

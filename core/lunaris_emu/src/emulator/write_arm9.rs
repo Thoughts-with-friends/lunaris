@@ -1,7 +1,9 @@
+use crate::interrupts::Interrupt;
+
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::emulator::{Emulator, Interrupt};
-use mem_const::*;
+use super::Emulator;
+use lunaris_ds_mem_const::*;
 
 impl Emulator {
     /// Writes a 32-bit word to ARM9 memory-mapped address space
@@ -52,13 +54,13 @@ impl Emulator {
                 self.ipc_sync_nds9.write(word as u16);
                 self.ipc_sync_nds7.receive_input(word as u16);
                 if word & (1 << 13) != 0 && self.ipc_sync_nds7.irq_enable {
-                    self.request_interrupt7(Interrupt::IPCSYNC);
+                    self.request_interrupt7(Interrupt::IpcSync);
                 }
             }
             0x0400_0188 => {
                 self.fifo7.write_queue(word);
                 if self.fifo7.request_nempty_irq {
-                    self.request_interrupt7(Interrupt::IPC_FIFO_NEMPTY);
+                    self.request_interrupt7(Interrupt::IpcFifoNempty);
                     self.fifo7.request_nempty_irq = false;
                 }
             }
@@ -270,17 +272,17 @@ impl Emulator {
                 self.ipc_sync_nds9.write(halfword);
                 self.ipc_sync_nds7.receive_input(halfword);
                 if (halfword & (1 << 13) != 0) && self.ipc_sync_nds7.irq_enable {
-                    self.request_interrupt7(Interrupt::IPCSYNC);
+                    self.request_interrupt7(Interrupt::IpcSync);
                 }
             }
             0x04000184 => {
                 self.fifo9.write_cnt(halfword);
                 if self.fifo9.request_empty_irq {
-                    self.request_interrupt9(Interrupt::IPC_FIFO_EMPTY);
+                    self.request_interrupt9(Interrupt::IpcFifoEmpty);
                     self.fifo9.request_empty_irq = false;
                 }
                 if self.fifo9.request_nempty_irq {
-                    self.request_interrupt9(Interrupt::IPC_FIFO_NEMPTY);
+                    self.request_interrupt9(Interrupt::IpcFifoNempty);
                     self.fifo9.request_nempty_irq = false;
                 }
             }

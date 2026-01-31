@@ -214,6 +214,7 @@ impl Default for SndCapture {
 
 /// Sound Processing Unit
 /// Manages 16 audio channels with mixing and PCM/ADPCM playback
+#[derive(Debug)]
 pub struct SPU {
     /// 16 audio channels
     channels: [SoundChannel; 16],
@@ -228,6 +229,12 @@ pub struct SPU {
 
     /// Sound bias (sample offset)
     soundbias: u16,
+}
+
+impl Default for SPU {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SPU {
@@ -415,11 +422,5 @@ impl SPU {
         } else {
             None
         }
-    }
-}
-
-impl Default for SPU {
-    fn default() -> Self {
-        Self::new()
     }
 }

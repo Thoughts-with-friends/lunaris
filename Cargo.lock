@@ -117,10 +117,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "audio"
-version = "0.1.0"
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -312,13 +308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpu"
-version = "0.1.0"
-dependencies = [
- "tracing",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,10 +427,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 
 [[package]]
-name = "free_bios"
-version = "0.1.0"
-
-[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -493,14 +478,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
-]
-
-[[package]]
-name = "gpu"
-version = "0.1.0"
-dependencies = [
- "mem_const",
- "tracing",
 ]
 
 [[package]]
@@ -717,16 +694,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
-name = "lunaris_emu"
+name = "lunaris_ds_audio"
+version = "0.1.0"
+
+[[package]]
+name = "lunaris_ds_cpu"
 version = "0.1.0"
 dependencies = [
- "audio",
- "free_bios",
- "gpu",
- "mem_const",
+ "tracing",
+]
+
+[[package]]
+name = "lunaris_ds_emu"
+version = "0.1.0"
+dependencies = [
+ "lunaris_ds_audio",
+ "lunaris_ds_cpu",
+ "lunaris_ds_free_bios",
+ "lunaris_ds_gpu",
+ "lunaris_ds_mem_const",
  "snafu",
  "tracing",
 ]
+
+[[package]]
+name = "lunaris_ds_free_bios"
+version = "0.1.0"
+
+[[package]]
+name = "lunaris_ds_gpu"
+version = "0.1.0"
+dependencies = [
+ "lunaris_ds_mem_const",
+ "tracing",
+]
+
+[[package]]
+name = "lunaris_ds_mem_const"
+version = "0.1.0"
 
 [[package]]
 name = "malloc_buf"
@@ -736,10 +741,6 @@ checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "mem_const"
-version = "0.1.0"
 
 [[package]]
 name = "memchr"

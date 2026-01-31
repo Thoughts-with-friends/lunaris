@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use crate::emulator::{Emulator, Interrupt};
-use mem_const::*;
+use super::Emulator;
+use crate::interrupts::Interrupt;
+use lunaris_ds_mem_const::*;
 
 impl Emulator {
     /// ARM7 read 32-bit word
@@ -36,7 +37,7 @@ impl Emulator {
             0x04100000 => {
                 let word: u32 = self.fifo9.read_queue();
                 if self.fifo9.request_empty_irq {
-                    self.request_interrupt9(Interrupt::IPC_FIFO_EMPTY);
+                    self.request_interrupt9(Interrupt::IpcFifoEmpty);
                     self.fifo9.request_empty_irq = false;
                 }
                 word

@@ -20,13 +20,13 @@ tracing = "0.1.43"
 snafu = "0.8.9"
 
 # workspace members
-arm7 = { path = "./core/arm7" }
-arm9 = { path = "./core/arm9" }
-audio = { path = "./core/audio" }
-cpu = { path = "./core/cpu" }
-free_bios = { path = "./core/free_bios" }
-gpu = { path = "./core/gpu" }
-mem_const = { path = "./core/mem_const" }
+lunaris_ds_arm7 = { path = "./core/arm7" }
+lunaris_ds_arm9 = { path = "./core/arm9" }
+lunaris_ds_audio = { path = "./core/audio" }
+lunaris_ds_cpu = { path = "./core/cpu" }
+lunaris_ds_free_bios = { path = "./core/free_bios" }
+lunaris_ds_gpu = { path = "./core/gpu" }
+lunaris_ds_mem_const = { path = "./core/mem_const" }
 
 
 [workspace.lints.clippy]

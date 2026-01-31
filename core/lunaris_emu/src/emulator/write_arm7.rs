@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::emulator::{Emulator, Interrupt};
-use mem_const::*;
+use super::Emulator;
+use crate::interrupts::Interrupt;
+use lunaris_ds_mem_const::*;
 
 impl Emulator {
     pub fn arm7_write_word(&mut self, address: u32, word: u32) {
@@ -80,14 +81,14 @@ impl Emulator {
 
                 // IPCSYNC interrupt
                 if (word & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
-                    self.request_interrupt9(Interrupt::IPCSYNC)
+                    self.request_interrupt9(Interrupt::IpcSync)
                 }
             }
 
             0x04000188 => {
                 self.fifo9.write_queue(word);
                 if self.fifo9.request_nempty_irq {
-                    self.request_interrupt9(Interrupt::IPC_FIFO_NEMPTY);
+                    self.request_interrupt9(Interrupt::IpcFifoNempty);
                     self.fifo9.request_nempty_irq = false;
                 }
             }
@@ -180,7 +181,7 @@ impl Emulator {
 
                 // Trigger IPCSYNC interrupt if enabled
                 if (halfword & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
-                    self.request_interrupt9(Interrupt::IPCSYNC)
+                    self.request_interrupt9(Interrupt::IpcSync)
                 }
             }
 
@@ -189,13 +190,13 @@ impl Emulator {
 
                 // FIFO empty IRQ
                 if self.fifo7.request_empty_irq {
-                    self.request_interrupt7(Interrupt::IPC_FIFO_EMPTY);
+                    self.request_interrupt7(Interrupt::IpcFifoEmpty);
                     self.fifo7.request_empty_irq = false;
                 }
 
                 // FIFO non-empty IRQ
                 if self.fifo7.request_nempty_irq {
-                    self.request_interrupt7(Interrupt::IPC_FIFO_NEMPTY);
+                    self.request_interrupt7(Interrupt::IpcFifoNempty);
                     self.fifo7.request_nempty_irq = false;
                 }
             }

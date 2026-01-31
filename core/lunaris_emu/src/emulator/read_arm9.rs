@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-use crate::emulator::{Emulator, Interrupt};
-use mem_const::*;
+use super::Emulator;
+use crate::interrupts::Interrupt;
+use lunaris_ds_mem_const::*;
 
 impl Emulator {
     pub fn arm9_read_word(&mut self, address: u32) -> u32 {
@@ -91,7 +92,7 @@ impl Emulator {
             0x04100000 => {
                 let word = self.fifo7.read_queue();
                 if self.fifo7.request_empty_irq {
-                    self.request_interrupt7(Interrupt::IPC_FIFO_EMPTY);
+                    self.request_interrupt7(Interrupt::IpcFifoEmpty);
                     self.fifo7.request_empty_irq = false;
                 }
                 word

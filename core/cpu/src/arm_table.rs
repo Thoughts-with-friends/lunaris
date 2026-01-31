@@ -1,38 +1,91 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-type InterpreterFunc = fn();
+use crate::arm_cpu::ArmCpu;
+
+/// Function pointer type for ARM/Thumb instruction interpreters
+pub type InterpreterFunc = fn(cpu: &mut ArmCpu, instruction: u32);
 
 // dummy fns
-const fn data_processing() {}
-const fn multiply() {}
-const fn store_halfword() {}
-const fn undefined() {}
-const fn store_doubleword() {}
-const fn load_halfword() {}
-const fn load_signed_byte() {}
-const fn load_signed_halfword() {}
-const fn multiply_long() {}
-const fn saturated_op() {}
-const fn signed_halfword_multiply() {}
-const fn swap() {}
-const fn branch_exchange() {}
-const fn blx_reg() {}
-const fn count_leading_zeros() {}
-const fn store_word() {}
-const fn load_word() {}
-const fn store_byte() {}
-const fn load_byte() {}
-const fn store_block() {}
-const fn load_block() {}
-const fn branch() {}
-const fn branch_link() {}
-const fn coprocessor_reg_transfer() {}
-const fn swi() {}
+const fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn multiply(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn store_halfword(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn undefined(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn store_doubleword(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn load_halfword(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn load_signed_byte(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn load_signed_halfword(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn multiply_long(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn swap(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn branch_exchange(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn blx_reg(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn count_leading_zeros(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn store_word(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn load_word(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn store_byte(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn load_byte(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn store_block(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn load_block(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn branch(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn branch_link(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
+const fn swi(cpu: &mut ArmCpu, instruction: u32) {
+    todo!()
+}
 
 /// arm interpreter function table
 #[rustfmt::skip]
-static ARM_TABLE: [InterpreterFunc; 4096] = [
+pub static ARM_TABLE: [InterpreterFunc; 4096] = [
     data_processing, data_processing, data_processing, data_processing,
     data_processing, data_processing, data_processing, data_processing,
     data_processing, multiply, data_processing, store_halfword,

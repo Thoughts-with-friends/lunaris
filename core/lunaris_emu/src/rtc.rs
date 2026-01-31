@@ -33,6 +33,7 @@ impl Default for Alarm {
 
 /// Real Time Clock
 /// Provides date/time tracking and alarm functionality
+#[derive(Debug)]
 pub struct RealTimeClock {
     /// Status register 1
     stat1_reg: u8,

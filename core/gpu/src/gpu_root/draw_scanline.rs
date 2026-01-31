@@ -1,5 +1,5 @@
 use crate::gpu_root::Gpu;
-use mem_const::*;
+use lunaris_ds_mem_const::*;
 
 impl Gpu {
     pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8) {

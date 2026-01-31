@@ -1,4 +1,4 @@
-use mem_const::*;
+use lunaris_ds_mem_const::*;
 
 /// Display Control Register (DISPCNT)
 ///
@@ -140,6 +140,7 @@ pub struct BldCnt {
     pub bd_second_target_pix: bool,
 }
 
+#[derive(Debug, Default)]
 pub struct Gpu2DEngine {
     // Frame buffers
     /// size: 49152(PIXELS_PER_LINE * SCAN_LINES)

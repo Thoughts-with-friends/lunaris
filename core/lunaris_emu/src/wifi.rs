@@ -4,6 +4,7 @@
 /// WiFi Controller
 /// This is a stub implementation for WiFi hardware
 /// Full WiFi emulation is not currently implemented
+#[derive(Debug)]
 pub struct WiFi {
     /// Power control register (0x0236)
     w_power_us: u16,
@@ -24,6 +25,12 @@ pub struct WiFi {
     bb_busy: bool,
     /// RF busy flag
     rf_busy: bool,
+}
+
+impl Default for WiFi {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WiFi {
@@ -142,11 +149,5 @@ impl WiFi {
     /// Power off WiFi hardware
     pub fn power_off(&mut self) -> Result<(), String> {
         Ok(())
-    }
-}
-
-impl Default for WiFi {
-    fn default() -> Self {
-        Self::new()
     }
 }

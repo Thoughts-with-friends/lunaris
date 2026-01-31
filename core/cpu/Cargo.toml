@@ -1,5 +1,5 @@
 [package]
-name = "cpu"
+name = "lunaris_ds_cpu"
 authors.workspace = true
 categories.workspace = true
 description.workspace = true

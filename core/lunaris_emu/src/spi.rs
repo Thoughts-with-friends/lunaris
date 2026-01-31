@@ -79,6 +79,7 @@ impl Default for RegSpiCnt {
 
 /// SPI Bus controller
 /// Manages communication with multiple SPI-attached devices
+#[derive(Debug, Default)]
 pub struct SPIBus {
     /// Emulator reference
     // pub(crate) emulator: EmulatorRef,

@@ -1,3 +1,5 @@
+/// Interrupt identifier for different interrupt sources
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interrupt {
     VBlank,
     HBlank,
@@ -24,6 +26,7 @@ pub enum Interrupt {
     Wifi,
 }
 
+#[derive(Debug, Default)]
 pub struct InterruptRegs {
     pub ime: u32,
     /// - `IE`

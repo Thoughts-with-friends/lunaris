@@ -4,21 +4,48 @@
 //! All behavior is currently unimplemented (`todo!()`).
 
 /// General-purpose register indices
-pub const REG_SP: usize = 13;
-pub const REG_LR: usize = 14;
-pub const REG_PC: usize = 15;
+pub const REG_SP: u32 = 13;
+pub const REG_LR: u32 = 14;
+pub const REG_PC: u32 = 15;
+
+#[inline]
+const fn carry_add(a: u32, b: u32) -> bool {
+    (0xFFFF_FFFF_u32.wrapping_sub(a)) < b
+}
+
+#[inline]
+const fn carry_sub(a: u32, b: u32) -> bool {
+    a >= b
+}
+
+#[inline]
+const fn add_overflow(a: u32, b: u32, result: u32) -> bool {
+    (((a ^ b) & 0x8000_0000) == 0) && (((a ^ result) & 0x8000_0000) != 0)
+}
+
+#[inline]
+const fn sub_overflow(a: u32, b: u32, result: u32) -> bool {
+    (((a ^ b) & 0x8000_0000) != 0) && (((a ^ result) & 0x8000_0000) != 0)
+}
 
 /// ARM processor modes (CPSR.M)
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PsrMode {
+    /// User mode
     #[default]
     User = 0x10,
+    /// FIQ (Fast Interrupt) mode
     Fiq = 0x11,
+    /// IRQ (Interrupt) mode
     Irq = 0x12,
+    /// Supervisor mode
     Supervisor = 0x13,
+    /// Abort mode
     Abort = 0x17,
+    /// Undefined instruction mode
     Undefined = 0x1B,
+    /// System mode
     System = 0x1F,
 }
 
@@ -41,16 +68,25 @@ impl PsrMode {
 /// Program Status Register flags
 #[derive(Copy, Clone, Debug, Default)]
 pub struct PsrFlags {
+    /// Negative flag (result was negative)
     pub negative: bool,
+    /// Zero flag (result was zero)
     pub zero: bool,
+    /// Carry flag (carry out or borrow)
     pub carry: bool,
+    /// Overflow flag (signed arithmetic overflow)
     pub overflow: bool,
+    /// Sticky overflow flag
     pub sticky_overflow: bool,
 
+    /// IRQ interrupt disabled
     pub irq_disabled: bool,
+    /// FIQ interrupt disabled
     pub fiq_disabled: bool,
+    /// Thumb mode enabled
     pub thumb_on: bool,
 
+    /// Current processor mode
     pub mode: PsrMode,
 }
 
@@ -107,18 +143,28 @@ pub struct ArmCpu {
     /// Halt state
     halted: bool,
 
-    /// Banked stack pointers
+    // Banked stack pointers
+    /// Stack pointer for supervisor mode
     sp_svc: u32,
+    /// Stack pointer for IRQ mode
     sp_irq: u32,
+    /// Stack pointer for FIQ mode
     sp_fiq: u32,
+    /// Stack pointer for abort mode
     sp_abt: u32,
+    /// Stack pointer for undefined mode
     sp_und: u32,
 
-    /// Banked link registers
+    // Banked link registers
+    /// Link register for supervisor mode
     lr_svc: u32,
+    /// Link register for IRQ mode
     lr_irq: u32,
+    /// Link register for FIQ mode
     lr_fiq: u32,
+    /// Link register for abort mode
     lr_abt: u32,
+    /// Link register for undefined mode
     lr_und: u32,
 
     /// FIQ banked registers (r8–r12)
@@ -144,9 +190,17 @@ pub struct ArmCpu {
     current_instr: u32,
 
     /// Code waitstates [region][n32/s32/n16/s16]
+    ///
+    /// Organized by memory region and access type
+    /// - Format: [region][access_type]
+    /// - Access types: 0=n32, 1=s32, 2=n16, 3=s16
     code_waitstates: [[i32; 4]; 16],
 
     /// Data waitstates [region][n32/s32/n16/s16]
+    ///
+    /// Organized by memory region and access type
+    /// - Format: [region][access_type]
+    /// - Access types: 0=n32, 1=s32, 2=n16, 3=s16
     data_waitstates: [[i32; 4]; 16],
 }
 
@@ -271,13 +325,20 @@ impl ArmCpu {
     }
 
     /// Reset CPU state
-    pub fn power_on(&mut self) {
-        todo!()
+    pub const fn power_on(&mut self) {
+        self.halted = false;
+        self.timestamp = 0;
+        self.cpsr.thumb_on = false;
+        self.cpsr.mode = PsrMode::Supervisor;
+        self.jp(self.exception_base, true);
     }
 
     /// Boot directly to an entry point
-    pub fn direct_boot(&mut self, entry_point: u32) {
-        todo!()
+    pub const fn direct_boot(&mut self, entry_point: u32) {
+        self.jp(entry_point, true);
+        self.regs[12] = entry_point;
+        self.regs[13] = entry_point;
+        self.cpsr.mode = PsrMode::System;
     }
 
     /// Run continuously
@@ -291,24 +352,65 @@ impl ArmCpu {
     }
 
     /// Jump to address, optionally changing Thumb state
-    pub fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {
-        todo!()
+    pub const fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {
+        self.regs[15] = new_addr;
+
+        self.add_n32_code(new_addr, 1);
+        self.add_s32_code(new_addr, 1);
+
+        if change_thumb_state {
+            self.cpsr.thumb_on = (new_addr & 1) != 0;
+        }
+
+        if self.cpsr.thumb_on {
+            self.regs[15] &= !1;
+            self.regs[15] += 2;
+        } else {
+            self.regs[15] &= !3;
+            self.regs[15] += 4;
+        }
     }
 
     /// Exception handlers
     pub fn handle_undefined(&mut self) {
-        todo!()
+        let value = self.cpsr.get();
+        self.spsr[PsrMode::Undefined as usize].set(value);
+
+        self.lr_und = self.regs[15].wrapping_sub(4);
+        self.update_reg_mode(PsrMode::Undefined);
+        self.cpsr.mode = PsrMode::Undefined;
+        self.cpsr.irq_disabled = true;
+        self.jp(self.exception_base + 0x04, true);
     }
     pub fn handle_irq(&mut self) {
-        todo!()
+        let value = self.cpsr.get();
+        self.spsr[PsrMode::Irq as usize].set(value);
+
+        self.lr_irq = self.regs[15] + if self.cpsr.thumb_on { 2 } else { 0 };
+        self.update_reg_mode(PsrMode::Irq);
+        self.cpsr.mode = PsrMode::Irq;
+        self.cpsr.irq_disabled = true;
+        self.jp(self.exception_base + 0x18, true);
     }
 
     /// Halt execution
-    pub fn halt(&mut self) {
-        todo!()
+    #[inline]
+    pub const fn halt(&mut self) {
+        self.halted = true;
     }
+
     pub fn handle_swi(&mut self) {
-        todo!()
+        let value = self.cpsr.get();
+        self.spsr[PsrMode::Supervisor as usize].set(value);
+
+        let mut lr = self.regs[15];
+        lr -= if self.cpsr.thumb_on { 2 } else { 4 };
+        self.lr_svc = lr;
+
+        self.update_reg_mode(PsrMode::Supervisor);
+        self.cpsr.mode = PsrMode::Supervisor;
+        self.cpsr.irq_disabled = true;
+        self.jp(self.exception_base + 0x08, true);
     }
 
     /// Debug helpers
@@ -318,33 +420,144 @@ impl ArmCpu {
 
     /// Update register banking for a new CPU mode
     pub fn update_reg_mode(&mut self, new_mode: PsrMode) {
-        todo!()
+        if new_mode == self.cpsr.mode {
+            return;
+        }
+
+        match self.cpsr.mode {
+            PsrMode::Irq => {
+                core::mem::swap(&mut self.regs[13], &mut self.sp_irq);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_irq);
+            }
+            PsrMode::Fiq => {
+                for i in 0..5 {
+                    core::mem::swap(&mut self.regs[8 + i], &mut self.fiq_regs[i]);
+                }
+                core::mem::swap(&mut self.regs[13], &mut self.sp_fiq);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_fiq);
+            }
+            PsrMode::Supervisor => {
+                core::mem::swap(&mut self.regs[13], &mut self.sp_svc);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_svc);
+            }
+            PsrMode::Undefined => {
+                core::mem::swap(&mut self.regs[13], &mut self.sp_und);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_und);
+            }
+            PsrMode::User | PsrMode::Abort | PsrMode::System => {}
+        }
+
+        match new_mode {
+            PsrMode::Irq => {
+                core::mem::swap(&mut self.regs[13], &mut self.sp_irq);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_irq);
+            }
+            PsrMode::Fiq => {
+                for i in 0..5 {
+                    core::mem::swap(&mut self.regs[8 + i], &mut self.fiq_regs[i]);
+                }
+                core::mem::swap(&mut self.regs[13], &mut self.sp_fiq);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_fiq);
+            }
+            PsrMode::Supervisor => {
+                core::mem::swap(&mut self.regs[13], &mut self.sp_svc);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_svc);
+            }
+            PsrMode::Undefined => {
+                core::mem::swap(&mut self.regs[13], &mut self.sp_und);
+                core::mem::swap(&mut self.regs[14], &mut self.lr_und);
+            }
+            PsrMode::User | PsrMode::Abort | PsrMode::System => {}
+        }
     }
 
     /// Debug helpers
-    pub fn get_reg_name(id: i32) -> String {
-        todo!()
-    }
-    pub fn get_condition_name(id: i32) -> String {
-        todo!()
+    #[inline]
+    pub const fn get_reg_name(id: i32) -> &'static str {
+        match id {
+            0 => "r0",
+            1 => "r1",
+            2 => "r2",
+            3 => "r3",
+            4 => "r4",
+            5 => "r5",
+            6 => "r6",
+            7 => "r7",
+            8 => "r8",
+            9 => "r9",
+
+            10 => "sl",
+            11 => "fp",
+            12 => "ip",
+            13 => "sp",
+            14 => "lr",
+            15 => "pc",
+            _ => "??",
+        }
     }
 
+    #[inline]
+    pub const fn get_condition_name(id: i32) -> &'static str {
+        match id {
+            0 => "eq",
+            1 => "ne",
+            2 => "cs",
+            3 => "cc",
+            4 => "mi",
+            5 => "pl",
+            6 => "vs",
+            7 => "vc",
+            8 => "hi",
+            9 => "ls",
+            10 => "ge",
+            11 => "lt",
+            12 => "gt",
+            13 => "le",
+            14 => "",
+            _ => "??",
+        }
+    }
+
+    #[inline]
     pub const fn get_id(&self) -> i32 {
-        todo!()
+        self.cpu_id
     }
 
     /// Register access
-    pub const fn get_register(&self, id: usize) -> u32 {
-        self.regs[id]
+    ///
+    /// # Panics
+    /// if id > 15
+    pub const fn get_register(&self, id: i32) -> u32 {
+        self.regs[id as usize]
     }
 
-    pub const fn set_register(&mut self, id: usize, value: u32) {
-        self.regs[id] = value;
+    /// Set value to CPU register.
+    /// # Panics
+    /// if id > 15
+    pub const fn set_register(&mut self, id: i32, value: u32) {
+        self.regs[id as usize] = value;
     }
 
     /// Condition code evaluation
-    pub fn check_condition(&self, condition: i32) -> bool {
-        todo!()
+    pub const fn check_condition(&self, condition: i32) -> bool {
+        match condition {
+            0x0 => self.cpsr.zero,
+            0x1 => !self.cpsr.zero,
+            0x2 => self.cpsr.carry,
+            0x3 => !self.cpsr.carry,
+            0x4 => self.cpsr.negative,
+            0x5 => !self.cpsr.negative,
+            0x6 => self.cpsr.overflow,
+            0x7 => !self.cpsr.overflow,
+            0x8 => self.cpsr.carry && !self.cpsr.zero,
+            0x9 => !self.cpsr.carry || self.cpsr.zero,
+            0xA => self.cpsr.negative == self.cpsr.overflow,
+            0xB => self.cpsr.negative != self.cpsr.overflow,
+            0xC => !self.cpsr.zero && (self.cpsr.negative == self.cpsr.overflow),
+            0xD => self.cpsr.zero || (self.cpsr.negative != self.cpsr.overflow),
+            0xE => true,
+            _ => false,
+        }
     }
 
     pub fn print_condition(&self, condition: i32) {
@@ -360,7 +573,7 @@ impl ArmCpu {
     }
 
     pub const fn get_pc(&self) -> u32 {
-        self.regs[REG_PC]
+        self.regs[REG_PC as usize]
     }
 
     pub const fn get_current_instr(&self) -> u32 {
@@ -393,30 +606,42 @@ impl ArmCpu {
         todo!()
     }
 
-    //Waitstate bullshit
-    pub fn add_n32_code(&mut self, address: u32, cycles: i32) {
-        todo!()
+    //WaitState bullshit
+    pub const fn add_n32_code(&mut self, address: u32, cycles: i32) {
+        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        self.timestamp += (1 + self.code_waitstates[idx][0]) as u64 * cycles as u64;
     }
-    pub fn add_s32_code(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_s32_code(&mut self, address: u32, cycles: i32) {
+        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        self.timestamp += (1 + self.code_waitstates[idx][1]) as u64 * cycles as u64;
     }
-    pub fn add_n16_code(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_n16_code(&mut self, address: u32, cycles: i32) {
+        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        self.timestamp += (1 + self.code_waitstates[idx][2]) as u64 * cycles as u64;
     }
-    pub fn add_s16_code(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_s16_code(&mut self, address: u32, cycles: i32) {
+        let idx = ((address & 0x0F00_0000) >> 24) as usize;
+        self.timestamp += (1 + self.code_waitstates[idx][3]) as u64 * cycles as u64;
     }
-    pub fn add_n32_data(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_n32_data(&mut self, address: u32, cycles: i32) {
+        let index = ((address & 0x0F000000) >> 24) as usize;
+        let data_waitstates = self.data_waitstates[index][0] as u64;
+        self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
-    pub fn add_s32_data(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_s32_data(&mut self, address: u32, cycles: i32) {
+        let index = ((address & 0x0F000000) >> 24) as usize;
+        let data_waitstates = self.data_waitstates[index][1] as u64;
+        self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
-    pub fn add_n16_data(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_n16_data(&mut self, address: u32, cycles: i32) {
+        let index = ((address & 0x0F000000) >> 24) as usize;
+        let data_waitstates = self.data_waitstates[index][2] as u64;
+        self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
-    pub fn add_s16_data(&mut self, address: u32, cycles: i32) {
-        todo!()
+    pub const fn add_s16_data(&mut self, address: u32, cycles: i32) {
+        let index = ((address & 0x0F000000) >> 24) as usize;
+        let data_waitstates = self.data_waitstates[index][3] as u64;
+        self.timestamp += (1 + data_waitstates) * cycles as u64;
     }
 
     /// Cycle accounting
@@ -429,29 +654,60 @@ impl ArmCpu {
     }
 
     // All data manipulation methods here
-    pub fn andd(&mut self, _dst: i32, _src: i32, _op: i32, _set_cc: bool) {
+    pub const fn andd(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
+        let result = (src & operand) as u32;
+        self.set_register(dst, result);
+
+        if set_condition_codes {
+            self.set_zero_neg_flags(result);
+        }
+    }
+    pub const fn orr(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
+        let result = (src | operand) as u32;
+        self.set_register(dst, result);
+
+        if set_condition_codes {
+            self.set_zero_neg_flags(result);
+        }
+    }
+    /// XOR
+    pub const fn eor(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
+        let result = (src ^ operand) as u32;
+        self.set_register(dst, result);
+
+        if set_condition_codes {
+            self.set_zero_neg_flags(result);
+        }
+    }
+    pub const fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+        let unsigned_result = (src + operand) as u64;
+
+        if dst == REG_PC {
+            if set_condition_codes {
+                #[cfg(feature = "tracing")]
+                tracing::error!("PC: dst and set_condition_codes is unsupported.");
+                return;
+            } else {
+                self.jp((unsigned_result & 0xFFFFFFFF) as u32, true);
+            }
+        } else {
+            self.set_register(dst as i32, (unsigned_result & 0xFFFFFFFF) as u32);
+            if set_condition_codes {
+                self.cmp(src, operand);
+            }
+        }
+    }
+    pub fn sub(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         todo!()
     }
-    pub fn orr(&mut self, _dst: i32, _src: i32, _op: i32, _set_cc: bool) {
+    pub fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         todo!()
     }
-    pub fn eor(&mut self, _dst: i32, _src: i32, _op: i32, _set_cc: bool) {
-        todo!()
-    }
-    pub fn add(&mut self, _dst: u32, _src: u32, _op: u32, _set_cc: bool) {
-        todo!()
-    }
-    pub fn sub(&mut self, _dst: u32, _src: u32, _op: u32, _set_cc: bool) {
-        todo!()
-    }
-    pub fn adc(&mut self, _dst: u32, _src: u32, _op: u32, _set_cc: bool) {
-        todo!()
-    }
-    pub fn sbc(&mut self, _dst: u32, _src: u32, _op: u32, _set_cc: bool) {
+    pub fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         todo!()
     }
 
-    pub fn cmp(&mut self, _x: u32, _y: u32) {
+    pub const fn cmp(&mut self, _x: u32, _y: u32) {
         todo!()
     }
     pub fn cmn(&mut self, _x: u32, _y: u32) {
@@ -464,16 +720,16 @@ impl ArmCpu {
         todo!()
     }
 
-    pub fn mov(&mut self, _dst: u32, _op: u32, _set_flags: bool) {
+    pub fn mov(&mut self, _dst: u32, operand: u32, _set_flags: bool) {
         todo!()
     }
-    pub fn mul(&mut self, _dst: u32, _src: u32, _op: u32, _set_cc: bool) {
+    pub fn mul(&mut self, _dst: u32, _src: u32, operand: u32, _set_cc: bool) {
         todo!()
     }
-    pub fn bic(&mut self, _dst: u32, _src: u32, _op: u32, _set_flags: bool) {
+    pub fn bic(&mut self, _dst: u32, _src: u32, operand: u32, _set_flags: bool) {
         todo!()
     }
-    pub fn mvn(&mut self, _dst: u32, _op: u32, _set_flags: bool) {
+    pub fn mvn(&mut self, _dst: u32, operand: u32, _set_flags: bool) {
         todo!()
     }
 

@@ -3,7 +3,7 @@
 //! gpu.hpp
 //!
 use crate::gpu_root::{Gpu, read_palette_value};
-use mem_const::*;
+use lunaris_ds_mem_const::*;
 
 impl Gpu {
     /// Draws all sprites for the current scanline.

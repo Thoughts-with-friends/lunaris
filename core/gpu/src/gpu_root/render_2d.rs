@@ -7,7 +7,7 @@
 //! CorgiDS was calling GPU methods in Engine2D, but this caused a circular reference.
 //! To avoid this, we've implemented the method in the parent here.
 use crate::gpu_root::{Gpu, bytes_to_palette, read_palette_value};
-use mem_const::*;
+use lunaris_ds_mem_const::*;
 
 impl Gpu {
     // ============================================================
