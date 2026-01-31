@@ -1,0 +1,19 @@
+[package]
+name = "lunaris_ds_emu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tracing = { workspace = true, optional = true }
+snafu = { workspace = true }
+
+# workspace members
+lunaris_ds_audio = { workspace = true }
+lunaris_ds_cpu = { workspace = true }
+lunaris_ds_free_bios = { workspace = true }
+lunaris_ds_gpu = { workspace = true }
+lunaris_ds_mem_const = { workspace = true }
+
+[features]
+default = ["tracing"]
+tracing = ["dep:tracing"]

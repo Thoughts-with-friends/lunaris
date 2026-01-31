@@ -1,0 +1,14 @@
+[package]
+name = "lunaris_ds_gpu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tracing = { workspace = true, optional = true }
+
+# workspace members
+lunaris_ds_mem_const = { workspace = true }
+
+[features]
+default = ["tracing"]
+tracing = ["dep:tracing"]

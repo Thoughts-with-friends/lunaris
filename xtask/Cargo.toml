@@ -1,9 +1,9 @@
 [package]
-name = "lunaris_ds_free_bios"
+name = "xtask"
+edition.workspace = true
 authors.workspace = true
 categories.workspace = true
 description.workspace = true
-edition.workspace = true
 keywords.workspace = true
 license.workspace = true
 readme.workspace = true
@@ -11,4 +11,11 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
+
 [dependencies]
+
+
+[dev-dependencies]
+
+[lints]
+workspace = true

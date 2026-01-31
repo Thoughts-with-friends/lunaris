@@ -10,5 +10,12 @@
   },
   "rust-analyzer.cargo.targetDir": true,
   "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.runnables.extraTestBinaryArgs": ["--show-output", "--nocapture"],
+  "rust-analyzer.runnables.extraTestBinaryArgs": [
+    "--show-output",
+    "--nocapture"
+  ],
+  "liveshare.connectionMode": "auto",
+  "rust-analyzer.imports.granularity.group": "module",
+  "rust-analyzer.imports.prefix": "crate",
+  "rust-analyzer.completion.autoimport.enable": true
 }

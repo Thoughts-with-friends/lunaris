@@ -1,5 +1,5 @@
 [package]
-name = "cpu"
+name = "lunaris_ds_cpu"
 authors.workspace = true
 categories.workspace = true
 description.workspace = true
@@ -12,6 +12,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+tracing = { workspace = true, optional = true }
+
+[features]
+tracing = ["dep:tracing"]
 
 [lints]
 workspace = true
