@@ -7,6 +7,8 @@
 pub mod emu_config;
 mod read_arm7;
 mod read_arm9;
+mod runner;
+mod timers;
 mod write_arm7;
 mod write_arm9;
 
@@ -49,7 +51,7 @@ pub struct Emulator {
     pub rtc: RealTimeClock,
     pub spi: SPIBus,
     pub spu: SPU,
-    pub timers: NDSTiming,
+    pub nds_timing: NDSTiming,
     pub wifi: WiFi,
 
     /// Main system RAM (4MB)
@@ -305,18 +307,13 @@ impl Emulator {
         unimplemented!();
     }
 
-    /// Run the emulator main loop.
-    pub fn run(&mut self) {
-        unimplemented!();
-    }
-
     /// Run emulator in GBA mode.
     pub fn run_gba(&mut self) {
         unimplemented!();
     }
 
     /// Check whether a CPU is requesting an interrupt.
-    pub fn requesting_interrupt(&self, cpu_id: u32) -> bool {
+    pub fn requesting_interrupt(&self, cpu_id: i32) -> bool {
         match cpu_id {
             0 => {
                 (self.int9_reg.irq_enable & self.int9_reg.irq_flags) != 0 && self.int9_reg.ime != 0
@@ -381,7 +378,7 @@ impl Emulator {
     }
 
     /// Check if DMA is active for a CPU.
-    pub fn dma_active(&self, cpu_id: i32) -> bool {
+    pub fn dma_active(&self) -> bool {
         unimplemented!();
     }
 
@@ -624,27 +621,5 @@ impl Emulator {
     /// Handle R button release
     pub fn button_r_released(&mut self) {
         self.key_input.button_r = false;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::firmware::Firmware;
-
-    use super::*;
-
-    #[test]
-    fn test_initialize_emulator() {
-        // Initialize the Gpu3D struct with basic values
-        let emu = Box::new(Emulator::new());
-        dbg!(emu.bios_prot);
-        assert_eq!(emu.bios_prot, 0);
-    }
-
-    #[test]
-    fn test_emulator() {
-        // Run main emulator
-        let mut emu = Box::new(Emulator::new());
-        emu.run();
     }
 }

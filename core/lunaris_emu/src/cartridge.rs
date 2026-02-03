@@ -344,30 +344,25 @@ impl NDSCart {
     }
 
     /// Power on cartridge
-    pub fn power_on(&mut self) -> Result<(), String> {
+    pub fn power_on(&mut self) {
         self.command_id = CartCommand::Empty;
         self.cycles_left = 0;
         self.bytes_left = 0;
-        Ok(())
     }
 
     /// Load save game database
-    pub fn load_database(&mut self, _file_name: &str) -> Result<usize, String> {
-        Ok(0)
+    pub fn load_database(&mut self, _file_name: &str) {
+        todo!()
     }
 
     /// Load ROM from file
-    pub fn load_rom(&mut self, _file_name: &str) -> Result<usize, String> {
-        Ok(0)
+    pub fn load_rom(&mut self, _file_name: &str) {
+        todo!()
     }
 
     /// Check and save dirty save data
-    pub fn save_check(&mut self) -> Result<(), String> {
-        if self.dirty_save {
-            // Write save data to file
-            self.dirty_save = false;
-        }
-        Ok(())
+    pub fn save_check(&mut self) {
+        todo!()
     }
 
     /// Read command byte
@@ -389,8 +384,8 @@ impl NDSCart {
     }
 
     /// Run cartridge for specified cycles
-    pub fn run(&mut self, _cycles: i32) -> Result<(), String> {
-        Ok(())
+    pub fn run(&mut self, _cycles: i32) {
+        todo!()
     }
 
     /// Debug encryption (for testing)

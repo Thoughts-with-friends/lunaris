@@ -135,10 +135,10 @@ impl PsrFlags {
 #[derive(Debug, Default)]
 pub struct ArmCpu {
     /// CPU ID (ARM9 / ARM7 etc.)
-    cpu_id: i32,
+    pub cpu_id: i32,
 
     /// Halt state
-    halted: bool,
+    pub halted: bool,
 
     // Banked stack pointers
     /// Stack pointer for supervisor mode
@@ -168,10 +168,10 @@ pub struct ArmCpu {
     fiq_regs: [u32; 5],
 
     /// General-purpose registers r0–r15
-    regs: [u32; 16],
+    pub regs: [u32; 16],
 
     /// Current Program Status Register
-    cpsr: PsrFlags,
+    pub cpsr: PsrFlags,
 
     /// Saved Program Status Registers (indexed by mode)
     spsr: [PsrFlags; 0x20],
@@ -180,11 +180,11 @@ pub struct ArmCpu {
     exception_base: u32,
 
     /// Cycle timestamp
-    timestamp: u64,
-    last_timestamp: u64,
+    pub timestamp: u64,
+    pub last_timestamp: u64,
 
     /// Currently executing instruction
-    current_instr: u32,
+    pub current_instr: u32,
 
     /// Code waitstates [region][n32/s32/n16/s16]
     ///
@@ -343,10 +343,10 @@ impl ArmCpu {
         todo!()
     }
 
-    /// Execute a single instruction
-    pub fn execute(&mut self) {
-        todo!()
-    }
+    // /// Execute a single instruction(impl Emulator)
+    // pub fn execute(&mut self) {
+    //     todo!()
+    // }
 
     /// Jump to address, optionally changing Thumb state
     pub const fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {

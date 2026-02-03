@@ -3,7 +3,7 @@
 
 pub mod arm_cpu;
 pub mod coprocessor_15;
+pub mod interpreter;
 
 mod arm_table;
 mod instruction_table;
-mod interpreter;

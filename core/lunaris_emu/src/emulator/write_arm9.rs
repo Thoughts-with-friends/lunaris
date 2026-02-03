@@ -260,14 +260,14 @@ impl Emulator {
             0x040000D0 => self.dma.write_len(2, halfword),
             0x040000D2 => self.dma.write_cnt(2, halfword),
             0x040000DE => self.dma.write_cnt(3, halfword),
-            0x04000100 => self.timers.write_lo(halfword, 4),
-            0x04000102 => self.timers.write_hi(halfword, 4),
-            0x04000104 => self.timers.write_lo(halfword, 5),
-            0x04000106 => self.timers.write_hi(halfword, 5),
-            0x04000108 => self.timers.write_lo(halfword, 6),
-            0x0400010A => self.timers.write_hi(halfword, 6),
-            0x0400010C => self.timers.write_lo(halfword, 7),
-            0x0400010E => self.timers.write_hi(halfword, 7),
+            0x04000100 => self.nds_timing.write_lo(halfword, 4),
+            0x04000102 => self.nds_timing.write_hi(halfword, 4),
+            0x04000104 => self.nds_timing.write_lo(halfword, 5),
+            0x04000106 => self.nds_timing.write_hi(halfword, 5),
+            0x04000108 => self.nds_timing.write_lo(halfword, 6),
+            0x0400010A => self.nds_timing.write_hi(halfword, 6),
+            0x0400010C => self.nds_timing.write_lo(halfword, 7),
+            0x0400010E => self.nds_timing.write_hi(halfword, 7),
             0x04000180 => {
                 self.ipc_sync_nds9.write(halfword);
                 self.ipc_sync_nds7.receive_input(halfword);

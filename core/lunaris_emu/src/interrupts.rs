@@ -26,6 +26,37 @@ pub enum Interrupt {
     Wifi,
 }
 
+impl Interrupt {
+    pub fn from_usize(value: usize) -> Option<Self> {
+        Some(match value {
+            0 => Interrupt::VBlank,
+            1 => Interrupt::HBlank,
+            2 => Interrupt::VCountMatch,
+            3 => Interrupt::Timer0,
+            4 => Interrupt::Timer1,
+            5 => Interrupt::Timer2,
+            6 => Interrupt::Timer3,
+            7 => Interrupt::Rtc,
+            8 => Interrupt::Dma0,
+            9 => Interrupt::Dma1,
+            10 => Interrupt::Dma2,
+            11 => Interrupt::Dma3,
+            12 => Interrupt::Keypad,
+            13 => Interrupt::GBASlot,
+            16 => Interrupt::IpcSync,
+            17 => Interrupt::IpcFifoEmpty,
+            18 => Interrupt::IpcFifoNempty,
+            19 => Interrupt::CartTransfer,
+            20 => Interrupt::CartIreqMc,
+            21 => Interrupt::GeometryFifo,
+            22 => Interrupt::UnfoldScreen,
+            23 => Interrupt::Spi,
+            24 => Interrupt::Wifi,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct InterruptRegs {
     pub ime: u32,

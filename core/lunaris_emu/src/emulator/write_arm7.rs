@@ -56,20 +56,20 @@ impl Emulator {
 
             // Timers: LO/HIGH packed in one word
             0x04000100 => {
-                self.timers.write_lo((word & 0xFFFF) as u16, 0);
-                self.timers.write_hi((word >> 16) as u16, 0)
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 0);
+                self.nds_timing.write_hi((word >> 16) as u16, 0)
             }
             0x04000104 => {
-                self.timers.write_lo((word & 0xFFFF) as u16, 1);
-                self.timers.write_hi((word >> 16) as u16, 1)
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 1);
+                self.nds_timing.write_hi((word >> 16) as u16, 1)
             }
             0x04000108 => {
-                self.timers.write_lo((word & 0xFFFF) as u16, 2);
-                self.timers.write_hi((word >> 16) as u16, 2)
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 2);
+                self.nds_timing.write_hi((word >> 16) as u16, 2)
             }
             0x0400010C => {
-                self.timers.write_lo((word & 0xFFFF) as u16, 3);
-                self.timers.write_hi((word >> 16) as u16, 3)
+                self.nds_timing.write_lo((word & 0xFFFF) as u16, 3);
+                self.nds_timing.write_hi((word >> 16) as u16, 3)
             }
 
             0x04000120 => {} // SIODATA32 ignored
@@ -161,14 +161,14 @@ impl Emulator {
             0x040000D2 => self.dma.write_cnt(6, halfword),
             0x040000DE => self.dma.write_cnt(7, halfword),
 
-            0x04000100 => self.timers.write_lo(halfword, 0),
-            0x04000102 => self.timers.write_hi(halfword, 0),
-            0x04000104 => self.timers.write_lo(halfword, 1),
-            0x04000106 => self.timers.write_hi(halfword, 1),
-            0x04000108 => self.timers.write_lo(halfword, 2),
-            0x0400010A => self.timers.write_hi(halfword, 2),
-            0x0400010C => self.timers.write_lo(halfword, 3),
-            0x0400010E => self.timers.write_hi(halfword, 3),
+            0x04000100 => self.nds_timing.write_lo(halfword, 0),
+            0x04000102 => self.nds_timing.write_hi(halfword, 0),
+            0x04000104 => self.nds_timing.write_lo(halfword, 1),
+            0x04000106 => self.nds_timing.write_hi(halfword, 1),
+            0x04000108 => self.nds_timing.write_lo(halfword, 2),
+            0x0400010A => self.nds_timing.write_hi(halfword, 2),
+            0x0400010C => self.nds_timing.write_lo(halfword, 3),
+            0x0400010E => self.nds_timing.write_hi(halfword, 3),
 
             0x04000128 => self.sio_cnt = halfword,
             0x04000134 => self.r_cnt = halfword,
