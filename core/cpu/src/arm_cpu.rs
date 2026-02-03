@@ -791,7 +791,7 @@ impl ArmCpu {
 
     pub const fn mrs(&mut self, instruction: u32) {
         let using_cpsr = (instruction & (1 << 22)) == 0;
-        let dst = ((instruction >> 12) & 0xF) as u32;
+        let dst = (instruction >> 12) & 0xF;
 
         if using_cpsr {
             self.set_register(dst as i32, self.cpsr.get());
