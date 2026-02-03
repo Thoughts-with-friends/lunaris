@@ -56,7 +56,7 @@ impl Emulator {
             0x040000EC => self.dma_fill[3],
             0x04000180 => self.ipc_sync_nds9.read().into(),
             0x040001A4 => self.cart.get_romctrl(),
-            0x04000208 => self.int9_reg.ime as u32,
+            0x04000208 => self.int9_reg.ime,
             0x04000210 => self.int9_reg.irq_enable,
             0x04000214 => self.int9_reg.irq_flags,
             0x04000240 => self.gpu.get_vramcnt_a() as u32,

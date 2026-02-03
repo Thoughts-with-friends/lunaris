@@ -1,7 +1,8 @@
-//! ARM CPU core (skeleton)
+//! ARM CPU core
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! cpuinsters.hpp
 //!
-//! Ported from CorgiDS ARM CPU header.
-//! All behavior is currently unimplemented (`todo!()`).
 
 /// General-purpose register indices
 pub const REG_SP: u32 = 13;
@@ -129,10 +130,6 @@ impl PsrFlags {
         }
     }
 }
-
-/// Forward declarations
-pub struct Emulator;
-pub struct Cp15;
 
 /// ARM CPU core
 #[derive(Debug, Default)]
@@ -320,7 +317,7 @@ impl ArmCpu {
     }
 
     /// Attach a CP15 coprocessor
-    pub fn set_cp15(&mut self, cp15: *mut Cp15) {
+    pub fn set_cp15(&mut self, cp15: ()) {
         todo!()
     }
 

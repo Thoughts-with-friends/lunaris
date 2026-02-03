@@ -15,12 +15,12 @@ use std::collections::VecDeque;
 
 use lunaris_ds_audio::SPU;
 use lunaris_ds_cpu::arm_cpu::ArmCpu;
+use lunaris_ds_cpu::coprocessor_15::Cp15;
 use lunaris_ds_gpu::gpu_root::{Gpu, gpu_reg::SchedulerEvent};
 use lunaris_ds_mem_const::*;
 
 use crate::bios::Bios;
 use crate::cartridge::NDSCart;
-use crate::cp15::Cp15;
 use crate::dma::NDSDma;
 use crate::error::{EmuError, FailedReadFileSnafu};
 use crate::interrupts::{Interrupt, InterruptRegs};

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod bios;
 mod cartridge;
-mod cp15;
 mod dma;
 mod emulator;
 mod error;

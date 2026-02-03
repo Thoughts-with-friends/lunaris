@@ -81,7 +81,7 @@ impl Emulator {
                 self.cart.receive_command(((word >> 8) & 0xFF) as u8, 5);
                 self.cart.receive_command((word & 0xFF) as u8, 4);
             }
-            0x0400_0208 => self.int9_reg.ime = (word & 0x1) as u32,
+            0x0400_0208 => self.int9_reg.ime = (word & 0x1),
             0x0400_0210 => self.int9_reg.irq_enable = word,
             0x0400_0214 => {
                 self.int9_reg.irq_flags &= !word;

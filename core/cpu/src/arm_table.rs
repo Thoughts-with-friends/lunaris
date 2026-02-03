@@ -1,87 +1,12 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-
+//! armtable.cpp
+//!
+use super::interpreter::arm_instruction::*;
 use crate::arm_cpu::ArmCpu;
 
 /// Function pointer type for ARM/Thumb instruction interpreters
 pub type InterpreterFunc = fn(cpu: &mut ArmCpu, instruction: u32);
-
-// dummy fns
-const fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn multiply(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn store_halfword(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn undefined(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn store_doubleword(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn load_halfword(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn load_signed_byte(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn load_signed_halfword(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn multiply_long(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn swap(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn branch_exchange(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn blx_reg(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn count_leading_zeros(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn store_word(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn load_word(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn store_byte(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn load_byte(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn store_block(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn load_block(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn branch(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn branch_link(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
-const fn swi(cpu: &mut ArmCpu, instruction: u32) {
-    todo!()
-}
 
 /// arm interpreter function table
 #[rustfmt::skip]

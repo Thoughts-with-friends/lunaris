@@ -1,8 +1,6 @@
 /// ARM9 Coprocessor 15 (CP15) - System Control Coprocessor
 /// Manages ARM9 memory protection unit, caches, TCM, and control registers
-use std::sync::{Arc, Mutex};
-
-use lunaris_ds_cpu::arm_cpu::ArmCpu;
+use super::arm_cpu::ArmCpu;
 
 /// CP15 Control Register
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +31,7 @@ pub struct ControlReg {
 
 impl ControlReg {
     /// Create new control register with defaults
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         ControlReg {
             mmu_pu_enable: false,
             data_unified_cache_on: false,
@@ -50,8 +48,8 @@ impl ControlReg {
     }
 
     /// Get control register value as 32-bit word
-    pub fn get_values(&self) -> u32 {
-        let mut value = 0u32;
+    pub const fn get_values(&self) -> u32 {
+        let mut value = 0;
         if self.mmu_pu_enable {
             value |= 1 << 0;
         }
@@ -89,7 +87,7 @@ impl ControlReg {
     }
 
     /// Set control register from 32-bit word
-    pub fn set_values(&mut self, reg: u32) {
+    pub const fn set_values(&mut self, reg: u32) {
         self.mmu_pu_enable = (reg & (1 << 0)) != 0;
         self.data_unified_cache_on = (reg & (1 << 2)) != 0;
         self.is_big_endian = (reg & (1 << 7)) != 0;
@@ -114,10 +112,6 @@ impl Default for ControlReg {
 /// Manages instruction/data TCM, caches, and memory control
 #[derive(Debug)]
 pub struct Cp15 {
-    // /// Emulator reference
-    // emulator: Option<Arc<Mutex<crate::emulator::Emulator>>>,
-    // /// ARM9 CPU reference
-    // arm9: Option<Arc<Mutex<ARMCPU>>>,
     /// Control register
     control: ControlReg,
 
@@ -160,15 +154,15 @@ impl Cp15 {
             itcm_size: 0,
             dtcm_base: 0,
             dtcm_size: 0,
-            itcm: vec![0u8; 1024 * 32],
-            dtcm: vec![0u8; 1024 * 16],
-            dcache: vec![0u8; 1024 * 4],
-            icache: vec![0u8; 1024 * 8],
+            itcm: vec![0_u8; 1024 * 32],
+            dtcm: vec![0_u8; 1024 * 16],
+            dcache: vec![0_u8; 1024 * 4],
+            icache: vec![0_u8; 1024 * 8],
         }
     }
 
     /// Power on CP15
-    pub fn power_on(&mut self) {
+    pub const fn power_on(&mut self) {
         self.control = ControlReg::new();
         self.itcm_size = 0;
         self.dtcm_base = 0;
@@ -176,14 +170,14 @@ impl Cp15 {
     }
 
     /// Link CP15 with ARM9 CPU
-    pub fn link_with_cpu(&mut self, _arm9: Arc<Mutex<ArmCpu>>) {
+    pub fn link_with_cpu(&mut self, _arm9: ()) {
         // self.arm9 = Some(_arm9);
         todo!()
     }
 
     /// Get instruction TCM size
     /// Returns size in bytes if enabled, 0 if disabled
-    pub fn get_itcm_size(&self) -> u32 {
+    pub const fn get_itcm_size(&self) -> u32 {
         if self.control.itcm_enable {
             self.itcm_size
         } else {
@@ -192,13 +186,13 @@ impl Cp15 {
     }
 
     /// Get data TCM base address
-    pub fn get_dtcm_base(&self) -> u32 {
+    pub const fn get_dtcm_base(&self) -> u32 {
         self.dtcm_base
     }
 
     /// Get data TCM size
     /// Returns size in bytes if enabled, 0 if disabled
-    pub fn get_dtcm_size(&self) -> u32 {
+    pub const fn get_dtcm_size(&self) -> u32 {
         if self.control.dtcm_enable {
             self.dtcm_size
         } else {
@@ -207,7 +201,7 @@ impl Cp15 {
     }
 
     /// Check if data TCM is write-only
-    pub fn dtcm_write_only(&self) -> bool {
+    pub const fn dtcm_write_only(&self) -> bool {
         self.control.dtcm_write_only
     }
 
@@ -286,7 +280,7 @@ impl Cp15 {
 
     /// MRC instruction - Read from coprocessor
     /// Moves coprocessor register to ARM register
-    pub fn mrc(&self, operation: i32, source_reg: i32, info: i32, operand_reg: i32) -> u32 {
+    pub const fn mrc(&self, operation: i32, source_reg: i32, info: i32, operand_reg: i32) -> u32 {
         match (operation, source_reg, operand_reg) {
             (0, 0, 0) => {
                 // Read control register
@@ -298,7 +292,7 @@ impl Cp15 {
 
     /// MCR instruction - Write to coprocessor
     /// Moves ARM register to coprocessor register
-    pub fn mcr(
+    pub const fn mcr(
         &mut self,
         operation: i32,
         destination_reg: i32,
@@ -327,12 +321,12 @@ impl Cp15 {
     }
 
     /// Get control register
-    pub fn get_control(&self) -> &ControlReg {
+    pub const fn get_control(&self) -> &ControlReg {
         &self.control
     }
 
     /// Get mutable control register
-    pub fn get_control_mut(&mut self) -> &mut ControlReg {
+    pub const fn get_control_mut(&mut self) -> &mut ControlReg {
         &mut self.control
     }
 
