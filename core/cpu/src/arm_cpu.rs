@@ -680,13 +680,12 @@ impl ArmCpu {
         }
     }
     pub const fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let unsigned_result = (src + operand) as u64;
+        let unsigned_result: u64 = (src + operand) as u64;
 
         if dst == REG_PC {
             if set_condition_codes {
                 #[cfg(feature = "tracing")]
                 tracing::error!("PC: dst and set_condition_codes is unsupported.");
-                return;
             } else {
                 self.jp((unsigned_result & 0xFFFFFFFF) as u32, true);
             }
@@ -698,54 +697,172 @@ impl ArmCpu {
         }
     }
     pub fn sub(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        todo!()
+        let unsigned_result: u64 = (src - operand) as u64;
+
+        if dst == REG_PC {
+            if set_condition_codes {
+                let index = self.cpsr.mode as usize;
+                self.update_reg_mode(self.spsr[index].mode);
+                self.cpsr.set(self.spsr[index].get());
+                self.jp((unsigned_result & 0xFFFFFFFF) as u32, false);
+            } else {
+                self.jp((unsigned_result & 0xFFFFFFFF) as u32, true);
+            }
+        } else {
+            self.set_register(dst as i32, (unsigned_result & 0xFFFFFFFF) as u32);
+            if set_condition_codes {
+                self.cmp(src, operand);
+            }
+        }
     }
-    pub fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        todo!()
+    pub const fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+        let carry = if self.cpsr.carry { 1 } else { 0 };
+        self.add(dst, src + carry, operand, set_condition_codes);
+
+        if set_condition_codes {
+            let temp = src + operand;
+            let res = temp + carry;
+            self.cpsr.carry = carry_add(src, operand) | carry_add(temp, carry);
+            self.cpsr.overflow = add_overflow(src, operand, temp) | add_overflow(temp, carry, res);
+        }
     }
-    pub fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        todo!()
+    pub const fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+        let borrow = if self.cpsr.carry { 0 } else { 1 };
+        self.add(dst, src + borrow, operand, set_condition_codes);
+
+        if set_condition_codes {
+            let temp = src + operand;
+            let res = temp - borrow;
+            self.cpsr.carry = carry_sub(src, operand) | carry_sub(temp, borrow);
+            self.cpsr.overflow = sub_overflow(src, operand, temp) | sub_overflow(temp, borrow, res);
+        }
     }
 
-    pub const fn cmp(&mut self, _x: u32, _y: u32) {
-        todo!()
+    pub const fn cmp(&mut self, x: u32, y: u32) {
+        let result = x - y;
+        self.set_zero_neg_flags(result);
+        self.set_cv_sub_flags(x, y, result);
     }
-    pub fn cmn(&mut self, _x: u32, _y: u32) {
-        todo!()
+    pub const fn cmn(&mut self, x: u32, y: u32) {
+        let result = x + y;
+        self.set_zero_neg_flags(result);
+        self.set_cv_add_flags(x, y, result);
     }
-    pub fn tst(&mut self, _x: u32, _y: u32) {
-        todo!()
+    pub const fn tst(&mut self, x: u32, y: u32) {
+        self.set_zero_neg_flags(x & y);
     }
-    pub fn teq(&mut self, _x: u32, _y: u32) {
-        todo!()
-    }
-
-    pub fn mov(&mut self, _dst: u32, operand: u32, _set_flags: bool) {
-        todo!()
-    }
-    pub fn mul(&mut self, _dst: u32, _src: u32, operand: u32, _set_cc: bool) {
-        todo!()
-    }
-    pub fn bic(&mut self, _dst: u32, _src: u32, operand: u32, _set_flags: bool) {
-        todo!()
-    }
-    pub fn mvn(&mut self, _dst: u32, operand: u32, _set_flags: bool) {
-        todo!()
+    pub const fn teq(&mut self, x: u32, y: u32) {
+        self.set_zero_neg_flags(x ^ y);
     }
 
-    pub fn mrs(&mut self, _instr: u32) {
-        todo!()
-    }
-    pub fn msr(&mut self, _instr: u32) {
-        todo!()
-    }
-
-    pub fn set_zero(&mut self, cond: bool) {
-        todo!()
+    pub fn mov(&mut self, dst: u32, operand: u32, alter_flags: bool) {
+        if dst == REG_PC && alter_flags {
+            let index = self.cpsr.mode;
+            self.update_reg_mode(self.spsr[index as usize].mode);
+            self.cpsr.set(self.spsr[index as usize].get());
+            self.jp(operand, true);
+        }
     }
 
-    pub fn set_neg(&mut self, cond: bool) {
-        todo!()
+    pub const fn mul(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+        let result = (src * operand) as u64;
+        let truncated = (result & 0xFFFFFFFF) as u32;
+        self.set_register(dst as i32, truncated);
+
+        if set_condition_codes {
+            self.set_zero_neg_flags(truncated);
+        }
+    }
+
+    pub const fn bic(&mut self, dst: u32, src: u32, operand: u32, alter_flags: bool) {
+        let result = src & !operand;
+        self.set_register(dst as i32, result);
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+        }
+    }
+
+    pub const fn mvn(&mut self, dst: u32, operand: u32, alter_flags: bool) {
+        self.set_register(dst as i32, !operand);
+        if alter_flags {
+            self.set_zero_neg_flags(!operand);
+        }
+    }
+
+    pub const fn mrs(&mut self, instruction: u32) {
+        let using_cpsr = (instruction & (1 << 22)) == 0;
+        let dst = ((instruction >> 12) & 0xF) as u32;
+
+        if using_cpsr {
+            self.set_register(dst as i32, self.cpsr.get());
+        } else {
+            self.set_register(dst as i32, self.spsr[self.cpsr.mode as usize].get());
+        }
+    }
+
+    pub fn msr(&mut self, instruction: u32) {
+        let is_imm = (instruction & (1 << 25)) != 0;
+        let using_cpsr = (instruction & (1 << 22)) == 0;
+        let mode = self.cpsr.mode;
+
+        let mut value = if using_cpsr {
+            self.cpsr.get()
+        } else {
+            self.spsr[mode as usize].get()
+        };
+
+        let source = if is_imm {
+            let s = instruction & 0xFF;
+            let shift = (instruction & 0xF00) >> 7;
+            self.rotr32(s, shift, false)
+        } else {
+            self.get_register((instruction & 0xF) as i32)
+        };
+
+        let mut bitmask: u32 = 0;
+
+        if (instruction & (1 << 19)) != 0 {
+            bitmask |= 0xFF000000;
+        }
+
+        if (instruction & (1 << 16)) != 0 {
+            bitmask |= 0xFF;
+        }
+
+        if self.cpsr.mode == PsrMode::User {
+            bitmask &= 0xFFFFFF00;
+        }
+
+        if using_cpsr {
+            bitmask &= 0xFFFFFFDF;
+        }
+
+        value &= !bitmask;
+        value |= source & bitmask;
+
+        if using_cpsr {
+            if let Some(mode) = PsrMode::from_u32(value & 0x1F) {
+                self.update_reg_mode(mode);
+            } else {
+                #[cfg(feature = "tracing")]
+                tracing::warn!("Invalid PsrMode: new_cpsr = {new_cpsr}");
+            }
+        }
+
+        let psr: &mut PsrFlags = if using_cpsr {
+            &mut self.cpsr
+        } else {
+            &mut self.spsr[mode as usize]
+        };
+        psr.set(value);
+    }
+
+    pub const fn set_zero(&mut self, cond: bool) {
+        self.cpsr.zero = cond;
+    }
+
+    pub const fn set_neg(&mut self, cond: bool) {
+        self.cpsr.negative = cond;
     }
 
     /// Flag helpers
@@ -754,44 +871,132 @@ impl ArmCpu {
         self.cpsr.negative = (value & (1 << 31)) != 0;
     }
 
-    pub fn set_cv_add_flags(&mut self, a: u32, b: u32, result: u32) {
-        todo!()
+    pub const fn set_cv_add_flags(&mut self, a: u32, b: u32, result: u32) {
+        self.cpsr.carry = (0xFFFFFFFF - a) < b;
+        self.cpsr.overflow = add_overflow(a, b, result);
     }
-    pub fn set_cv_sub_flags(&mut self, a: u32, b: u32, result: u32) {
-        todo!()
+
+    pub const fn set_cv_sub_flags(&mut self, a: u32, b: u32, result: u32) {
+        self.cpsr.carry = a >= b;
+        self.cpsr.overflow = sub_overflow(a, b, result);
     }
 
     pub fn spsr_to_cpsr(&mut self) {
-        todo!()
+        let new_cpsr = self.spsr[self.cpsr.mode as usize].get();
+
+        if let Some(mode) = PsrMode::from_u32(new_cpsr & 0x1F) {
+            self.update_reg_mode(mode);
+            self.cpsr.set(new_cpsr);
+        } else {
+            #[cfg(feature = "tracing")]
+            tracing::warn!("Invalid PsrMode: new_cpsr = {new_cpsr}");
+        }
     }
 
     /// Shifts and rotates
-    pub fn lsl(&mut self, _value: u32, _shift: i32, _flags: bool) -> u32 {
-        todo!()
+    pub const fn lsl(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
+        if shift == 0 {
+            if alter_flags {
+                self.set_zero_neg_flags(value);
+            }
+            return value;
+        }
+
+        if shift > 31 {
+            if alter_flags {
+                self.set_zero_neg_flags(0);
+                self.cpsr.carry = (value & (1 << 0)) != 0;
+            }
+            return 0;
+        }
+
+        let result = value << shift;
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+            self.cpsr.carry = (value & (1 << (32 - shift))) != 0;
+        }
+
+        value << shift
     }
     pub fn lsl_32(&mut self, _value: u32, _flags: bool) -> u32 {
         todo!()
     }
 
-    pub fn lsr(&mut self, _value: u32, _shift: i32, _flags: bool) -> u32 {
-        todo!()
+    pub const fn lsr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
+        if shift > 31 {
+            return self.lsr_32(value, alter_flags);
+        }
+        let result = value >> shift;
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+            if shift > 0 {
+                self.cpsr.carry = (value & (1 << (shift - 1))) != 0;
+            }
+        }
+        result
     }
-    pub fn lsr_32(&mut self, _value: u32, _flags: bool) -> u32 {
-        todo!()
+    pub const fn lsr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
+        if alter_flags {
+            self.set_zero_neg_flags(0);
+            self.cpsr.carry = (value & (1 << 31)) != 0;
+        }
+        0
     }
 
-    pub fn asr(&mut self, _value: u32, _shift: i32, _flags: bool) -> u32 {
-        todo!()
-    }
-    pub fn asr_32(&mut self, _value: u32, _flags: bool) -> u32 {
-        todo!()
+    pub const fn asr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
+        if shift > 31 {
+            return self.asr_32(value, alter_flags);
+        }
+        let result = value >> shift;
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+            if shift > 0 {
+                self.cpsr.carry = (value & (1 << (shift - 1))) != 0;
+            }
+        }
+        result
     }
 
-    pub fn rrx(&mut self, _value: u32, _flags: bool) -> u32 {
-        todo!()
+    pub const fn asr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
+        let result = value >> 31;
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+            self.cpsr.carry = (value & (1 << 31)) != 0;
+        }
+        result
     }
 
-    pub fn rotr32(&mut self, n: u32, c: u32, _flags: bool) -> u32 {
-        todo!()
+    pub const fn rrx(&mut self, value: u32, alter_flags: bool) -> u32 {
+        let mut result = value;
+        result >>= 1;
+        if self.cpsr.carry {
+            result |= 1 << 31;
+        } else {
+            result |= 0;
+        };
+
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+            self.cpsr.carry = (value & 0x1) != 0;
+        }
+        result
+    }
+
+    pub const fn rotr32(&mut self, n: u32, mut c: u32, alter_flags: bool) -> u32 {
+        const MASK: u32 = 0x1F;
+
+        if alter_flags && (c > 0) {
+            self.cpsr.carry = (n & (1 << (c - 1))) != 0;
+        };
+        c &= MASK;
+
+        let neg_c = -(c as i32);
+        let result = (n >> c) | (n << (neg_c & MASK as i32));
+
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+        }
+
+        result
     }
 }
