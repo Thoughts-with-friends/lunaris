@@ -16,6 +16,11 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Ensure ./build/ is retained
+      shell: bash
+      run: |
+        mkdir -p ./build/
+
     - name: Compress outputs (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
