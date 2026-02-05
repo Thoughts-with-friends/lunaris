@@ -35,6 +35,25 @@ runs:
         fi
       shell: bash
 
+    - name: Install dependencies (ubuntu only)
+      if: ${{ runner.os == 'ubuntu-latest' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libxdo-dev \
+          libssl-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev
+
+    - name: Rust setup
+      uses: dtolnay/rust-toolchain@stable
+
     - name: Build GUI
       run: npm i && npm run build
       shell: bash
