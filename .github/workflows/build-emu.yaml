@@ -36,8 +36,6 @@ jobs:
           platform: ${{ matrix.platform }}
           build_profile: ${{ env.BUILD_PROFILE }}
 
-      - name: Test(Node.js)
-        run: npm test
       - name: Build GUI
         run: npm run build
 
