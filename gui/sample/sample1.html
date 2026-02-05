@@ -1,0 +1,177 @@
+<!-- Minimal Canvas -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Framebuffer Example</title>
+
+    <style>
+      /* Center the canvas on screen */
+      body {
+        margin: 0;
+        background: #111;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
+
+      /* Container controls the final display size */
+      #container {
+        width: 90vw;
+        height: 90vh;
+      }
+
+      /* Pixel-perfect scaling (important for emulators) */
+      canvas {
+        display: block;
+        image-rendering: pixelated;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <script>
+      (() => {
+        /* ============================================================
+        Framebuffer configuration (Nintendo DS style)
+        ------------------------------------------------------------
+        - Resolution: 256 x 384
+        (Top screen 256x192 + Bottom screen 256x192)
+        - Pixel format: RGBA8 (4 bytes per pixel)
+        ============================================================ */
+
+        const FB_WIDTH = 256;
+        const FB_HEIGHT = 384;
+
+        /* DOM references */
+        const container = document.getElementById("container");
+        const canvas = document.getElementById("canvas");
+
+        /* 2D rendering context */
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          throw new Error("Failed to create 2D rendering context");
+        }
+
+        /* ============================================================
+     Emulated framebuffer
+     ------------------------------------------------------------
+     This array represents the FINAL output of an emulator GPU.
+     Each pixel is:
+       [R, G, B, A] = 4 bytes
+  ============================================================ */
+
+        const framebuffer = new Uint8ClampedArray(FB_WIDTH * FB_HEIGHT * 4);
+
+        /* ImageData is a view that allows Canvas to read RGBA pixels */
+        const imageData = new ImageData(framebuffer, FB_WIDTH, FB_HEIGHT);
+
+        /* Used only to animate the dummy pattern */
+        let frameCounter = 0;
+
+        /* ============================================================
+     Dummy GPU output
+     ------------------------------------------------------------
+     This function simulates what an emulator backend would do:
+     - Write RGBA pixel values into the framebuffer
+     - No Canvas or WebGL calls here
+  ============================================================ */
+        function writeDummyFrame() {
+          for (let y = 0; y < FB_HEIGHT; y++) {
+            for (let x = 0; x < FB_WIDTH; x++) {
+              /* Convert (x, y) to a byte offset */
+              const index = (y * FB_WIDTH + x) * 4;
+
+              /* Split top and bottom screens */
+              const isTopScreen = y < 192;
+
+              if (isTopScreen) {
+                /* Top screen: moving red gradient */
+                framebuffer[index + 0] = (x + frameCounter) & 0xff; // R
+                framebuffer[index + 1] = 40; // G
+                framebuffer[index + 2] = 80; // B
+                framebuffer[index + 3] = 255; // A
+              } else {
+                /* Bottom screen: moving green gradient */
+                framebuffer[index + 0] = 40; // R
+                framebuffer[index + 1] = (y + frameCounter) & 0xff; // G
+                framebuffer[index + 2] = 200; // B
+                framebuffer[index + 3] = 255; // A
+              }
+            }
+          }
+
+          frameCounter++;
+        }
+
+        /* ============================================================
+     Rendering and scaling
+     ------------------------------------------------------------
+     - Resize the canvas to fit the container
+     - Keep the correct aspect ratio
+     - Disable filtering (pixel-accurate scaling)
+  ============================================================ */
+        function render() {
+          const containerWidth = container.clientWidth;
+          const containerHeight = container.clientHeight;
+          const aspectRatio = FB_WIDTH / FB_HEIGHT;
+
+          /* Calculate display size */
+          let displayWidth = Math.min(
+            containerWidth,
+            containerHeight * aspectRatio,
+          );
+          let displayHeight = displayWidth / aspectRatio;
+
+          /* Handle high-DPI displays */
+          const dpr = window.devicePixelRatio || 1;
+
+          canvas.width = Math.floor(displayWidth * dpr);
+          canvas.height = Math.floor(displayHeight * dpr);
+          canvas.style.width = displayWidth + "px";
+          canvas.style.height = displayHeight + "px";
+
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.imageSmoothingEnabled = false;
+
+          /* Simulate emulator GPU output */
+          writeDummyFrame();
+
+          /* Upload framebuffer to Canvas */
+          ctx.putImageData(imageData, 0, 0);
+
+          /* Scale framebuffer to screen */
+          ctx.drawImage(
+            canvas,
+            0,
+            0,
+            FB_WIDTH,
+            FB_HEIGHT,
+            0,
+            0,
+            displayWidth,
+            displayHeight,
+          );
+        }
+
+        /* ============================================================
+     Main loop
+     ------------------------------------------------------------
+     In a real emulator:
+       - Backend produces a frame
+       - UI displays it
+     ============================================================ */
+        function mainLoop() {
+          render();
+          requestAnimationFrame(mainLoop);
+        }
+
+        mainLoop();
+      })();
+    </script>
+  </body>
+</html>

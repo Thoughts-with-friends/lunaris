@@ -1,3 +1,7 @@
 /target
 docs/icon.drawio.svg
 *.bin
+
+.tanstack/
+dist/
+node_modules/

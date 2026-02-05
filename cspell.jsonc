@@ -1,13 +1,13 @@
 {
   "words": [
-    "Lunaris",
+    "clippy",
     "cpsr",
     "hexdump",
-    "regs",
+    "ignorePaths",
     "Lunaris",
     "regs",
     "serde",
+    "tauri",
     "wgpu",
-    "ignorePaths",
   ],
 }

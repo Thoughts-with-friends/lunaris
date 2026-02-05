@@ -11,12 +11,21 @@ rust-version = "1.91"
 version = "0.1.0"
 
 [workspace]
-members = ["core/lunaris_emu", "core/gpu", "core/audio", "core/cpu", "core/free_bios", "core/mem_const", "gui/desk", "xtask"]
+members = [
+  "core/lunaris_emu",
+  "core/gpu",
+  "core/audio",
+  "core/cpu",
+  "core/free_bios",
+  "core/mem_const",
+  "gui/desk",
+  "gui/tauri/src-tauri"
+]
 resolver = "3"
 default-members = ["gui/desk"]
 
 [workspace.dependencies]
-tracing = "0.1.43"
+tracing = "0.1.44"
 snafu = "0.8.9"
 
 # workspace members
