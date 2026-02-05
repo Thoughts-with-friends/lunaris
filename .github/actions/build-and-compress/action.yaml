@@ -49,7 +49,8 @@ runs:
           libxdo-dev \
           libssl-dev \
           libayatana-appindicator3-dev \
-          librsvg2-dev
+          librsvg2-dev \
+          libglib2.0-dev
 
     - name: Rust setup
       uses: dtolnay/rust-toolchain@stable
