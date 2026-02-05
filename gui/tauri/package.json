@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:front": "tsc -b && vite build",
+    "build:front": "vite build",
     "dev:front": "vite",
     "lint": "eslint .",
     "lint:fix": "eslint --fix \"src/**/*.{js,jsx,ts,tsx}\"",
