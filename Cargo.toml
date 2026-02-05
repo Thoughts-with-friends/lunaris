@@ -18,11 +18,10 @@ members = [
   "core/cpu",
   "core/free_bios",
   "core/mem_const",
-  "gui/desk",
   "gui/tauri/src-tauri"
 ]
 resolver = "3"
-default-members = ["gui/desk"]
+default-members = ["gui/tauri/src-tauri"]
 
 [workspace.dependencies]
 tracing = "0.1.44"
