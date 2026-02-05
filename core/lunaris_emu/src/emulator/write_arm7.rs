@@ -97,7 +97,7 @@ impl Emulator {
             0x040001B0 => self.cart.set_lo_key2_seed0(word),
             0x040001B4 => self.cart.set_lo_key2_seed1(word),
 
-            0x04000208 => self.int7_reg.ime = (word & 0x1),
+            0x04000208 => self.int7_reg.ime = word & 0x1,
             0x04000210 => self.int7_reg.irq_enable = word,
             0x04000214 => self.int7_reg.irq_flags &= !word,
 

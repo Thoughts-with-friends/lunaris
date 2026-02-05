@@ -1,6 +1,5 @@
-/// ARM9 Coprocessor 15 (CP15) - System Control Coprocessor
-/// Manages ARM9 memory protection unit, caches, TCM, and control registers
-use super::arm_cpu::ArmCpu;
+//! ARM9 Coprocessor 15 (CP15) - System Control Coprocessor
+//! Manages ARM9 memory protection unit, caches, TCM, and control registers
 
 /// CP15 Control Register
 #[derive(Debug, Clone, Copy)]
@@ -32,7 +31,7 @@ pub struct ControlReg {
 impl ControlReg {
     /// Create new control register with defaults
     pub const fn new() -> Self {
-        ControlReg {
+        Self {
             mmu_pu_enable: false,
             data_unified_cache_on: false,
             is_big_endian: false,
@@ -147,7 +146,7 @@ impl Default for Cp15 {
 impl Cp15 {
     /// Create new CP15 controller
     pub fn new() -> Self {
-        Cp15 {
+        Self {
             control: ControlReg::new(),
             itcm_data: 0,
             dtcm_data: 0,
@@ -280,7 +279,7 @@ impl Cp15 {
 
     /// MRC instruction - Read from coprocessor
     /// Moves coprocessor register to ARM register
-    pub const fn mrc(&self, operation: i32, source_reg: i32, info: i32, operand_reg: i32) -> u32 {
+    pub const fn mrc(&self, operation: i32, source_reg: i32, _info: i32, operand_reg: i32) -> u32 {
         match (operation, source_reg, operand_reg) {
             (0, 0, 0) => {
                 // Read control register
@@ -297,7 +296,7 @@ impl Cp15 {
         operation: i32,
         destination_reg: i32,
         arm_reg_contents: u32,
-        info: i32,
+        _info: i32,
         operand_reg: i32,
     ) {
         match (operation, destination_reg, operand_reg) {
