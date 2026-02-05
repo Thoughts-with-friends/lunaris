@@ -35,6 +35,10 @@ runs:
         fi
       shell: bash
 
+    - name: Build GUI
+      run: npm run build
+      shell: bash
+
     - name: Make outputs dir
       run: mkdir -p ./build
       shell: bash
