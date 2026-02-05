@@ -36,7 +36,7 @@ runs:
       shell: bash
 
     - name: Build GUI
-      run: npm run build
+      run: npm i && npm run build
       shell: bash
 
     - name: Make outputs dir
