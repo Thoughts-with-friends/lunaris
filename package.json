@@ -8,7 +8,7 @@
   "scripts": {
     "build": "rimraf ./gui/tauri/dist && tauri build --no-bundle -- --profile release",
     "build:front": "npm --workspace gui/tauri run build:front",
-    "build:icons": "tauri icon ./gui/tauri/src-tauri/icons/icon.png",
+    "build:icons": "tauri icon ./gui/tauri/src-tauri/icons/icon.svg",
     "dev": "tauri dev",
     "dev:front": "npm --workspace gui/tauri run dev:front",
     "fmt": "prettier --cache --write \"**/*.{yaml,yml}\" --ignore-path ./.gitignore && cargo fmt --all",
