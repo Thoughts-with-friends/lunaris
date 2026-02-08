@@ -170,24 +170,43 @@
     }
   },
   "welcome": {
-    "title": "Welcome to D Merge: HKX Studio",
+    "title": "Welcome to Lunaris: DS Emulator",
     "subtitle": "Select a tool to get started",
     "tools": {
-      "convert": {
-        "title": "Convert",
-        "desc": "HKX ⇄ XML converter for Havok animation data."
+      "open": {
+        "title": "Open new ROM",
+        "desc": "Load a new ROM file on your PC."
       },
-      "patch": {
-        "title": "Patch",
-        "desc": "Nemesis/FNIS compatible patcher for HKX files."
+      "latest": {
+        "title": "latest ROM",
+        "desc": "Load the latest opened ROM."
       },
-      "hkanno": {
-        "title": "HKAnno",
-        "desc": "Annotation editor for HKX/XML structure."
+      "recent": {
+        "title": "Recent ROM",
+        "desc": "Load a recently opened ROM."
       },
       "settings": {
         "title": "Settings",
-        "desc": "Application preferences and configuration."
+        "desc": "Emulator GUI preferences and configuration."
+      }
+    }
+  },
+  "menubar": {
+    "file": {
+      "label": "File",
+      "submenu": {
+        "open": {
+          "label": "Open ROM",
+          "tooltip": "Load a new ROM file on your PC."
+        },
+        "recent": {
+          "label": "Recent ROM",
+          "tooltip": "Load a recently opened ROM."
+        },
+        "quit": {
+          "label": "Quit",
+          "tooltip": "Quit Emulator window."
+        }
       }
     }
   }

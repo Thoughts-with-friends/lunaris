@@ -1,1 +1,1 @@
-export { WelcomePage as Top } from './Top';
+export { Top } from "./Top";

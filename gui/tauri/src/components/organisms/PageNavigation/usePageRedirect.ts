@@ -5,6 +5,7 @@ import { useRouter, useRouterState } from "@tanstack/react-router";
 import { z } from "zod";
 import { PUB_CACHE_OBJ } from "@/lib/storage/cacheKeys";
 import { schemaStorage } from "@/lib/storage/schemaStorage";
+import type { VALID_PATHS } from "./pages";
 
 /**
  * usePageRedirect (TanStack Router)
@@ -14,9 +15,7 @@ import { schemaStorage } from "@/lib/storage/schemaStorage";
  * - Keeping lastPath up to date when user navigates
  * - Returning current selected index for UI
  */
-export const usePageRedirect = <T extends Readonly<[string, ...string[]]>>(
-  validPaths: T,
-) => {
+export const usePageRedirect = (validPaths: typeof VALID_PATHS) => {
   const router = useRouter();
 
   const pathname = useRouterState({

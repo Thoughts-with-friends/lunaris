@@ -5,8 +5,8 @@ import { NOTIFY } from "@/lib/notify";
 import { STORAGE } from "@/lib/storage";
 import { PUB_CACHE_OBJ } from "@/lib/storage/cacheKeys";
 import { schemaStorage } from "@/lib/storage/schemaStorage";
-import dictEnUs from "@/locales/en-US.json";
-import dictJaJp from "@/locales/ja-JP.json";
+import dictEnUs from "../../locales/en-US.json";
+import dictJaJp from "../../locales/ja-JP.json";
 
 /** The keys in RESOURCE are language tags according to the BCP-47 standard.
     - See: https://partnerhub.warnermediagroup.com/metadata/languages */

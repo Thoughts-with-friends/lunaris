@@ -10,29 +10,11 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as PatchRouteImport } from './routes/patch'
-import { Route as HkannoRouteImport } from './routes/hkanno'
-import { Route as ConvertRouteImport } from './routes/convert'
 import { Route as IndexRouteImport } from './routes/index'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PatchRoute = PatchRouteImport.update({
-  id: '/patch',
-  path: '/patch',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HkannoRoute = HkannoRouteImport.update({
-  id: '/hkanno',
-  path: '/hkanno',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConvertRoute = ConvertRouteImport.update({
-  id: '/convert',
-  path: '/convert',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -43,39 +25,27 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/convert': typeof ConvertRoute
-  '/hkanno': typeof HkannoRoute
-  '/patch': typeof PatchRoute
   '/settings': typeof SettingsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/convert': typeof ConvertRoute
-  '/hkanno': typeof HkannoRoute
-  '/patch': typeof PatchRoute
   '/settings': typeof SettingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/convert': typeof ConvertRoute
-  '/hkanno': typeof HkannoRoute
-  '/patch': typeof PatchRoute
   '/settings': typeof SettingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/convert' | '/hkanno' | '/patch' | '/settings'
+  fullPaths: '/' | '/settings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/convert' | '/hkanno' | '/patch' | '/settings'
-  id: '__root__' | '/' | '/convert' | '/hkanno' | '/patch' | '/settings'
+  to: '/' | '/settings'
+  id: '__root__' | '/' | '/settings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ConvertRoute: typeof ConvertRoute
-  HkannoRoute: typeof HkannoRoute
-  PatchRoute: typeof PatchRoute
   SettingsRoute: typeof SettingsRoute
 }
 
@@ -86,27 +56,6 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/patch': {
-      id: '/patch'
-      path: '/patch'
-      fullPath: '/patch'
-      preLoaderRoute: typeof PatchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hkanno': {
-      id: '/hkanno'
-      path: '/hkanno'
-      fullPath: '/hkanno'
-      preLoaderRoute: typeof HkannoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/convert': {
-      id: '/convert'
-      path: '/convert'
-      fullPath: '/convert'
-      preLoaderRoute: typeof ConvertRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -121,9 +70,6 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ConvertRoute: ConvertRoute,
-  HkannoRoute: HkannoRoute,
-  PatchRoute: PatchRoute,
   SettingsRoute: SettingsRoute,
 }
 export const routeTree = rootRouteImport

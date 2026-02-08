@@ -173,21 +173,40 @@
     "title": "Lunaris: DS Emulator へようこそ",
     "subtitle": "使いたいツールを選択してください",
     "tools": {
-      "convert": {
-        "title": "Convert",
-        "desc": "HKX ⇄ XML の Havok アニメーションデータコンバーター"
+      "open": {
+        "title": "ROMを開く",
+        "desc": "新しいROMをPCにロードして、ゲームを開始します。"
       },
-      "patch": {
-        "title": "Patch",
-        "desc": "Nemesis/FNIS 互換の HKX パッチャー"
+      "latest": {
+        "title": "ゲーム再開",
+        "desc": "最後に開いたROMをロードして、ゲームを再開します。"
       },
-      "hkanno": {
-        "title": "HKAnno",
-        "desc": "HKX/XML 構造の注釈編集ツール"
+      "recent": {
+        "title": "最近のROMを開く",
+        "desc": "最近開いたROMをロードして、ゲームを開始します。"
       },
       "settings": {
-        "title": "Settings",
-        "desc": "アプリケーションの設定"
+        "title": "設定",
+        "desc": "エミュレータのGUI設定"
+      }
+    }
+  },
+  "menubar": {
+    "file": {
+      "label": "ファイル",
+      "submenu": {
+        "open": {
+          "label": "ROMを開く",
+          "tooltip": "新しいROMをPCにロードします。"
+        },
+        "recent": {
+          "label": "最近開いたROM",
+          "tooltip": "最後に開いたROMをロードして、ゲームを再開します。"
+        },
+        "quit": {
+          "label": "終了",
+          "tooltip": "エミュレータを終了します"
+        }
       }
     }
   }

@@ -1,0 +1,15 @@
+import react from "@vitejs/plugin-react-swc";
+import tsconfigPaths from "vite-tsconfig-paths";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [react(), tsconfigPaths()],
+  test: {
+    alias: [{ find: "@/", replacement: `${__dirname}/src/` }],
+    globals: true,
+    root: `./src/`,
+    environment: "jsdom",
+    setupFiles: ["./vitest.setup.mts"],
+    reporters: ["default", "hanging-process"],
+  },
+});

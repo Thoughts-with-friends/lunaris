@@ -1,6 +1,5 @@
-import { isTauri } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { electronApi, isElectron } from './electron';
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
  * Since the window turns white while it is being prepared, this process is performed in the background,
@@ -21,7 +20,7 @@ import { electronApi, isElectron } from './electron';
  * ```
  */
 export function showWindow() {
-  if (typeof window !== 'undefined' && isTauri()) {
+  if (typeof window !== "undefined" && isTauri()) {
     getCurrentWindow().show();
   }
 }
@@ -36,10 +35,8 @@ export function showWindow() {
  */
 export async function destroyCurrentWindow(): Promise<void> {
   if (isTauri()) {
-    await getCurrentWindow().destroy();
-  } else if (isElectron()) {
-    await electronApi.destroyWindow();
-  } else {
-    throw new Error('Unsupported platform: neither Tauri nor Electron');
+    return await getCurrentWindow().destroy();
   }
+
+  console.error("Unsupported platform: Non Tauri");
 }
