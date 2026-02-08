@@ -55,26 +55,38 @@ A Nintendo DS emulator - Rust-based
 ## How to Build
 
 ```shell
-cargo build --release
+npm i
+npm run build
 ```
 
 ## Todo List
 
 - [x] **Phase 0 (100%)**: FreeBIOS Development
-- [ ] **Phase 1 ( 70%)**: Foundation Setup (Memory, Constants)
-- [ ] **Phase 2 ( 70%)**: CPU Core Implementation
-- [ ] **Phase 3 ( 70%)**: Memory / I/O Management
+- [x] **Phase 1 (100%)**: Foundation Setup (Memory, Constants)
+- [ ] **Phase 2 ( 90%)**: CPU Core Implementation
+- [ ] **Phase 3 ( 90%)**: Memory / I/O Management
 - [ ] **Phase 4 ( 70%)**: GPU Infrastructure
 - [ ] **Phase 5 ( 0%)**: BIOS / ROM Loading
-- [ ] **Phase 6 ( 0%)**: UI / Threading
+- [ ] **Phase 6 ( 70%)**: UI / Threading
 - [ ] **Phase 7 ( 40%)**: Audio System
-- [ ] **Phase 8 ( 70%)**: Interrupt System
-- [ ] **Phase 9 ( 70%)**: Instruction Set Completion (ARM9)
-- [ ] **Phase 10 ( 70%)**: ARM7 Implementation
+- [ ] **Phase 8 ( 80%)**: Interrupt System
+- [ ] **Phase 9 ( 90%)**: Instruction Set Completion (ARM9)
+- [ ] **Phase 10 ( 90%)**: ARM7 Implementation
 - [ ] **Phase 11 ( 10%)**: 3D Graphics
 - [ ] **Phase 12 ( 0%)**: Save Data System
 - [ ] **Phase 13 ( 80%)**: WiFi / Networking
 - [ ] **Phase 14 ( 0%)**: Optimization / Debugging
+
+## Dependencies
+
+- rust stable = "1.91"
+- Backend: ./core
+  - tracing = "0.1.44"
+  - snafu = "0.8.9"
+
+- Frontend: ./gui/tauri
+  - tauri-build = 2.5.3
+  - ...
 
 ## CI Tests
 
