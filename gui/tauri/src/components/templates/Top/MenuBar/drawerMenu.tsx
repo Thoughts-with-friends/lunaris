@@ -1,9 +1,10 @@
-import type { DrawerMenuItem } from "./DrawerList";
 import InboxIcon from "@mui/icons-material/MoveToInbox";
 import MailIcon from "@mui/icons-material/Mail";
 import { NOTIFY } from "@/lib/notify";
 import { useTranslation } from "@/components/hooks/useTranslation";
 import { destroyCurrentWindow } from "@/services/api/window";
+
+import type { DrawerMenuItem } from "./DrawerList";
 
 export const useDrawerMenu = () => {
   const { t } = useTranslation();
