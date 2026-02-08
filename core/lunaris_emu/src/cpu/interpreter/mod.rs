@@ -5,20 +5,21 @@
 pub mod arm_instruction;
 pub mod thumb_instruction;
 
+use crate::cpu::arm_cpu::CpuType;
+use crate::emulator::Emulator;
+
 use self::arm_instruction::blx;
-use super::arm_cpu::ArmCpu;
 use super::arm_table;
 use super::instruction_table::ARMInstr;
 
 /// Interprets an ARM instruction
-pub fn arm_interpret(cpu: &mut ArmCpu) {
-    let instruction: u32 = cpu.get_current_instr();
+pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
+    let instruction: u32 = emu.get_cpu_mut(cpu_type).get_current_instr();
     let condition: u32 = (instruction & 0xF000_0000) >> 28;
 
     // In ARM, PC reads as current + 8
-    let pc: u32 = cpu.get_pc().wrapping_sub(8);
-
-    let cpu_id = cpu.get_id();
+    let pc: u32 = emu.get_cpu(cpu_type).get_pc().wrapping_sub(8);
+    let cpu_id = emu.get_cpu(cpu_type).get_id();
 
     // if cpu_id <= 0 && Config::test {
     //     if cpu_id <= 0 {
@@ -40,12 +41,12 @@ pub fn arm_interpret(cpu: &mut ArmCpu) {
     // Special BLX handling
     match condition == 15 && (instruction & 0xFE00_0000) == 0xFA00_0000 && cpu_id <= 0 {
         true => {
-            blx(cpu, instruction);
+            blx(emu, cpu_type, instruction);
         }
         false => {
-            if cpu.check_condition(condition as i32) {
+            if emu.get_cpu_mut(cpu_type).check_condition(condition as i32) {
                 // Assuming arm_table is indexed by u32 and stores fn(&mut Cpu, u32)
-                arm_table::ARM_TABLE[op as usize](cpu, instruction);
+                arm_table::ARM_TABLE[op as usize](emu, cpu_type, instruction);
             }
         }
     }

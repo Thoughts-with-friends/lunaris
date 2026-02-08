@@ -3,10 +3,11 @@
 //! armtable.cpp
 //!
 use super::interpreter::arm_instruction::*;
-use crate::cpu::arm_cpu::ArmCpu;
+use crate::cpu::arm_cpu::CpuType;
+use crate::emulator::Emulator;
 
 /// Function pointer type for ARM/Thumb instruction interpreters
-pub type InterpreterFunc = fn(cpu: &mut ArmCpu, instruction: u32);
+pub type InterpreterFunc = fn(emu: &mut Emulator, cpu_type: CpuType, instruction: u32);
 
 /// arm interpreter function table
 #[rustfmt::skip]

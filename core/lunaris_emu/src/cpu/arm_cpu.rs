@@ -131,9 +131,18 @@ impl PsrFlags {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub enum CpuType {
+    #[default]
+    Arm7,
+    Arm9,
+}
+
 /// ARM CPU core
 #[derive(Debug, Default)]
 pub struct ArmCpu {
+    pub cpu_type: CpuType,
+
     /// CPU ID (ARM9 / ARM7 etc.)
     pub cpu_id: i32,
 
@@ -203,7 +212,7 @@ pub struct ArmCpu {
 
 impl ArmCpu {
     /// Create a new ARM CPU
-    pub fn new(cpu_id: i32) -> Self {
+    pub fn new(cpu_id: i32, cpu_type: CpuType) -> Self {
         let mut code_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
         let mut data_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
 
@@ -312,6 +321,7 @@ impl ArmCpu {
             cpu_id,
             data_waitstates,
             exception_base: if cpu_id <= 0 { 0 } else { 0xFFFF0000 },
+            cpu_type,
             ..Default::default()
         }
     }
@@ -588,50 +598,6 @@ impl ArmCpu {
     pub const fn get_cpsr_mut(&mut self) -> &mut PsrFlags {
         &mut self.cpsr
     }
-
-    // -----------------------------------------------
-    /// Memory access (will be deleted later)
-    pub fn read_word(&mut self, address: u32) -> u32 {
-        todo!()
-    }
-    pub fn read_halfword(&mut self, address: u32) -> u16 {
-        todo!()
-    }
-    pub fn read_byte(&mut self, address: u32) -> u8 {
-        todo!()
-    }
-
-    pub fn write_word(&mut self, address: u32, value: u32) {
-        // if (address < itcm_size)
-        // {
-        //     *(uint32_t*)&ITCM[address & ITCM_MASK] = word;
-        // }
-        // else if (address >= dtcm_base && address < (dtcm_base + dtcm_size))
-        // {
-        //     *(uint32_t*)&DTCM[address & DTCM_MASK] = word;
-        // }
-        // else
-        // {
-        //     e->arm9_write_word(address, word);
-
-        // if (!cpu_id)
-        //     e->cpu->
-        //     e->cp15->
-        //     e->write_word(address, word);
-        //
-        // => To
-        //    e->cp15_write_word(address, word);
-        //    e->cpu->read_word();
-        // else
-        //     e->arm7_write_word(address, word)
-    }
-    pub fn write_halfword(&mut self, address: u32, value: u16) {
-        todo!()
-    }
-    pub fn write_byte(&mut self, address: u32, value: u8) {
-        todo!()
-    }
-    // -----------------------------------------------
 
     //WaitState bullshit
     pub const fn add_n32_code(&mut self, address: u32, cycles: i32) {

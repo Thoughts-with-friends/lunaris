@@ -1,3 +1,4 @@
+use crate::cpu::arm_cpu::CpuType;
 use crate::cpu::interpreter::arm_interpret;
 use crate::cpu::interpreter::thumb_instruction::thumb_interpret;
 
@@ -6,21 +7,20 @@ use crate::emulator::Emulator;
 impl Emulator {
     /// Run the emulator main loop.
     pub fn run(&mut self) {
-        const IS_ARM7: bool = true;
         self.gpu.start_frame();
 
         while !self.gpu.is_frame_complete() {
             // Handle self.ARM9
             self.calculate_system_timestamp();
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
-                self.execute(!IS_ARM7);
+                self.execute(CpuType::Arm9);
                 self.run_timers9((self.arm9.cycles_ran() >> 1) as i32);
                 self.gpu.run_3D((self.arm9.cycles_ran() >> 1) as u64);
             }
 
             // Now handle ARM7
             while self.arm7.get_timestamp() < self.system_timestamp {
-                self.execute(IS_ARM7);
+                self.execute(CpuType::Arm7);
                 self.run_timers7(self.arm7.cycles_ran() as i32);
             }
 
@@ -38,12 +38,12 @@ impl Emulator {
         self.cart.save_check();
     }
 
-    pub fn execute(&mut self, is_arm7: bool) {
+    pub fn execute(&mut self, cpu_type: CpuType) {
         let cpu_id = {
             // ARM7 or ARM9
-            let arm = match is_arm7 {
-                true => &mut self.arm7,
-                false => &mut self.arm9,
+            let arm = match cpu_type {
+                CpuType::Arm7 => &mut self.arm7,
+                CpuType::Arm9 => &mut self.arm9,
             };
 
             arm.last_timestamp = arm.timestamp;
@@ -55,52 +55,58 @@ impl Emulator {
         let timestamp = self.get_timestamp() << (1 - cpu_id);
         let is_interrupt = self.requesting_interrupt(cpu_id);
 
-        // ARM7 or ARM9
-        let arm = match is_arm7 {
-            true => &mut self.arm7,
-            false => &mut self.arm9,
-        };
+        {
+            // ARM7 or ARM9
+            let arm = self.get_cpu_mut(cpu_type);
 
-        if arm.halted || is_dma_active {
-            // Wait until next event
-            arm.timestamp = timestamp;
-            if is_interrupt {
-                arm.halted = false;
-                if !arm.cpsr.irq_disabled && !is_dma_active {
-                    arm.handle_irq();
+            if arm.halted || is_dma_active {
+                // Wait until next event
+                arm.timestamp = timestamp;
+                if is_interrupt {
+                    arm.halted = false;
+                    if !arm.cpsr.irq_disabled && !is_dma_active {
+                        arm.handle_irq();
+                    }
                 }
+                return;
             }
-            return;
         }
 
         // Fetch and execute instruction
-        if arm.cpsr.thumb_on {
-            arm.current_instr = arm.read_halfword(arm.regs[15] - 2) as u32;
-            arm.add_s16_code(arm.regs[15] - 2, 1);
-            arm.regs[15] += 2;
-            thumb_interpret(arm);
+        let thumb_on = self.get_cpu_mut(cpu_type).cpsr.thumb_on;
+        if thumb_on {
+            {
+                let reg_15 = self.get_cpu_mut(cpu_type).regs[15];
+                let value = self.read_halfword(reg_15 - 2, cpu_type) as u32;
+                let arm = self.get_cpu_mut(cpu_type);
+
+                arm.current_instr = value;
+                arm.add_s16_code(reg_15 - 2, 1);
+                arm.regs[15] += 2;
+            }
+            thumb_interpret(self, cpu_type);
         } else {
-            arm.current_instr = arm.read_word(arm.regs[15] - 4);
-            arm.add_s32_code(arm.regs[15] - 4, 1);
-            arm.regs[15] += 4;
-            arm_interpret(arm);
+            {
+                let reg_15 = self.get_cpu_mut(cpu_type).regs[15];
+                let value = self.read_word(reg_15 - 4, cpu_type) as u32;
+                let arm = self.get_cpu_mut(cpu_type);
+
+                arm.current_instr = value;
+                arm.add_s32_code(arm.regs[15] - 4, 1);
+                arm.regs[15] += 4;
+            }
+            arm_interpret(self, cpu_type);
         }
 
-        // interpreter(&mut Emu);
-        //   -> arm.read_dram(&mut Emu.dram)
-        //
-        // interpreter(&mut Emu)
-        //
-        // impl Engine for Emu {
-        //    fn get_cpu_mut(&mut self) -> &mut ArmCpu;
-        //    fn read_halfword(&mut self) -> u32;
-        // }
-        // interpreter(emu: &mut impl Engine)
-        //    -> emu.get_halfword(&mut self) -> u32
-        //
-        // arm -> Emu -> interpreter
-
-        if is_interrupt && !arm.cpsr.irq_disabled {
+        let irq_disabled = match cpu_type {
+            CpuType::Arm7 => self.arm7.cpsr.irq_disabled,
+            CpuType::Arm9 => self.arm9.cpsr.irq_disabled,
+        };
+        if is_interrupt && !irq_disabled {
+            let arm = match cpu_type {
+                CpuType::Arm7 => &mut self.arm7,
+                CpuType::Arm9 => &mut self.arm9,
+            };
             arm.handle_irq();
         }
     }

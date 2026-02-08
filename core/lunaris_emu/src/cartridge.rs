@@ -1,5 +1,5 @@
-/// Game Cartridge controller for Nintendo DS
-/// Handles ROM loading, encryption/decryption, and cartridge access
+//! Game Cartridge controller for Nintendo DS
+//! Handles ROM loading, encryption/decryption, and cartridge access
 
 /// Cartridge command types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

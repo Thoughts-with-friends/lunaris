@@ -1,5 +1,6 @@
 #![allow(clippy::missing_const_for_fn)]
-use crate::cpu::arm_cpu::{ArmCpu, REG_LR, REG_PC, add_overflow, sub_overflow};
+use crate::cpu::arm_cpu::{CpuType, REG_LR, REG_PC, add_overflow, sub_overflow};
+use crate::emulator::Emulator;
 
 /// Loads or stores a value using a shifted register addressing mode.
 ///
@@ -64,8 +65,10 @@ use crate::cpu::arm_cpu::{ArmCpu, REG_LR, REG_PC, add_overflow, sub_overflow};
 /// ## References
 /// Single Data Transfer — Register Offset
 #[allow(clippy::missing_const_for_fn)]
-pub fn load_store_shift_reg(cpu: &mut ArmCpu, instruction: u32) -> u32 {
-    let mut reg = cpu.get_register((instruction & 0xF) as i32);
+pub fn load_store_shift_reg(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) -> u32 {
+    let mut reg = emu
+        .get_cpu_mut(cpu_type)
+        .get_register((instruction & 0xF) as i32);
 
     let shift_type = (instruction >> 5) & 0x3;
     let mut shift = (instruction >> 7) & 0x1F;
@@ -73,28 +76,28 @@ pub fn load_store_shift_reg(cpu: &mut ArmCpu, instruction: u32) -> u32 {
     match shift_type {
         0 => {
             // Logical shift left
-            reg = cpu.lsl(reg, shift as i32, false);
+            reg = emu.get_cpu_mut(cpu_type).lsl(reg, shift as i32, false);
         }
         1 => {
             // Logical shift right
             if shift == 0 {
                 shift = 32;
             }
-            reg = cpu.lsr(reg, shift as i32, false);
+            reg = emu.get_cpu_mut(cpu_type).lsr(reg, shift as i32, false);
         }
         2 => {
             // Arithmetic shift right
             if shift == 0 {
                 shift = 32;
             }
-            reg = cpu.asr(reg, shift as i32, false);
+            reg = emu.get_cpu_mut(cpu_type).asr(reg, shift as i32, false);
         }
         3 => {
             // Rotate right
             if shift == 0 {
-                reg = cpu.rrx(reg, false);
+                reg = emu.get_cpu_mut(cpu_type).rrx(reg, false);
             } else {
-                reg = cpu.rotr32(reg, shift, false);
+                reg = emu.get_cpu_mut(cpu_type).rotr32(reg, shift, false);
             }
         }
         _ => {
@@ -108,21 +111,21 @@ pub fn load_store_shift_reg(cpu: &mut ArmCpu, instruction: u32) -> u32 {
 }
 
 /// Undefined instruction handler
-pub fn undefined(cpu: &mut ArmCpu, instruction: u32) {
+pub fn undefined(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let _ = instruction;
     #[cfg(feature = "tracing")]
     tracing::warn!("Unrecognized ARM opcode {instruction:08X}");
 
-    cpu.handle_undefined();
+    emu.get_cpu_mut(cpu_type).handle_undefined();
 }
 
 /// Data processing instruction
 #[allow(clippy::missing_const_for_fn)]
-pub fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
+pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let opcode = (instruction >> 21) & 0xF;
 
     let first_operand = ((instruction >> 16) & 0xF) as i32;
-    let first_operand_contents = cpu.get_register(first_operand);
+    let first_operand_contents = emu.get_cpu_mut(cpu_type).get_register(first_operand);
 
     let set_condition_codes = (instruction & (1 << 20)) != 0;
     let destination = (instruction >> 12) & 0xF;
@@ -136,48 +139,49 @@ pub fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
         // Immediate operand (rotated right)
         let imm = instruction & 0xFF;
         let shift = (instruction & 0xF00) >> 7;
-        cpu.rotr32(imm, shift, set_carry)
+        emu.get_cpu_mut(cpu_type).rotr32(imm, shift, set_carry)
     } else {
         let rm = (instruction & 0xF) as i32;
-        let mut value = cpu.get_register(rm);
+        let mut value = emu.get_cpu_mut(cpu_type).get_register(rm);
         let shift_type = (instruction >> 5) & 0x3;
 
         let shift = if (instruction & (1 << 4)) != 0 {
             // Shift by register
             let rs = ((instruction >> 8) & 0xF) as i32;
-            cpu.add_internal_cycles(1);
+            emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
 
             if rm == (REG_PC as i32) {
-                value = cpu.get_pc() + 4;
+                value = emu.get_cpu(cpu_type).get_pc() + 4;
             }
 
-            cpu.get_register(rs)
+            emu.get_cpu_mut(cpu_type).get_register(rs)
         } else {
             // Shift by immediate
             (instruction >> 7) & 0x1F
         } as i32;
 
         match shift_type {
-            0 => cpu.lsl(value, shift, set_carry), // LSL
+            0 => emu.get_cpu_mut(cpu_type).lsl(value, shift, set_carry), // LSL
             1 => {
                 if shift != 0 || (instruction & (1 << 4)) != 0 {
-                    cpu.lsr(value, shift, set_carry)
+                    emu.get_cpu_mut(cpu_type).lsr(value, shift, set_carry)
                 } else {
-                    cpu.lsr_32(value, set_carry)
+                    emu.get_cpu_mut(cpu_type).lsr_32(value, set_carry)
                 }
             }
             2 => {
                 if shift != 0 || (instruction & (1 << 4)) != 0 {
-                    cpu.asr(value, shift, set_carry)
+                    emu.get_cpu_mut(cpu_type).asr(value, shift, set_carry)
                 } else {
-                    cpu.asr_32(value, set_carry)
+                    emu.get_cpu_mut(cpu_type).asr_32(value, set_carry)
                 }
             }
             3 => {
                 if shift == 0 {
-                    cpu.rrx(value, set_carry)
+                    emu.get_cpu_mut(cpu_type).rrx(value, set_carry)
                 } else {
-                    cpu.rotr32(value, shift as u32, set_carry)
+                    emu.get_cpu_mut(cpu_type)
+                        .rotr32(value, shift as u32, set_carry)
                 }
             }
             _ => {
@@ -191,49 +195,49 @@ pub fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
     };
 
     match opcode {
-        0x0 => cpu.andd(
+        0x0 => emu.get_cpu_mut(cpu_type).andd(
             destination as i32,
             first_operand_contents as i32,
             second_operand as i32,
             set_condition_codes,
         ),
-        0x1 => cpu.eor(
+        0x1 => emu.get_cpu_mut(cpu_type).eor(
             destination as i32,
             first_operand_contents as i32,
             second_operand as i32,
             set_condition_codes,
         ),
-        0x2 => cpu.sub(
+        0x2 => emu.get_cpu_mut(cpu_type).sub(
             destination,
             first_operand_contents,
             second_operand,
             set_condition_codes,
         ),
-        0x3 => cpu.sub(
+        0x3 => emu.get_cpu_mut(cpu_type).sub(
             destination,
             second_operand,
             first_operand_contents,
             set_condition_codes,
         ), // RSB
-        0x4 => cpu.add(
+        0x4 => emu.get_cpu_mut(cpu_type).add(
             destination,
             first_operand_contents,
             second_operand,
             set_condition_codes,
         ),
-        0x5 => cpu.adc(
+        0x5 => emu.get_cpu_mut(cpu_type).adc(
             destination,
             first_operand_contents,
             second_operand,
             set_condition_codes,
         ),
-        0x6 => cpu.sbc(
+        0x6 => emu.get_cpu_mut(cpu_type).sbc(
             destination,
             first_operand_contents,
             second_operand,
             set_condition_codes,
         ),
-        0x7 => cpu.sbc(
+        0x7 => emu.get_cpu_mut(cpu_type).sbc(
             destination,
             second_operand,
             first_operand_contents,
@@ -242,47 +246,55 @@ pub fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
 
         0x8 => {
             if set_condition_codes {
-                cpu.tst(first_operand_contents, second_operand);
+                emu.get_cpu_mut(cpu_type)
+                    .tst(first_operand_contents, second_operand);
             } else {
-                cpu.mrs(instruction);
+                emu.get_cpu_mut(cpu_type).mrs(instruction);
             }
         }
         0x9 => {
             if set_condition_codes {
-                cpu.teq(first_operand_contents, second_operand);
+                emu.get_cpu_mut(cpu_type)
+                    .teq(first_operand_contents, second_operand);
             } else {
-                cpu.msr(instruction);
+                emu.get_cpu_mut(cpu_type).msr(instruction);
             }
         }
         0xA => {
             if set_condition_codes {
-                cpu.cmp(first_operand_contents, second_operand);
+                emu.get_cpu_mut(cpu_type)
+                    .cmp(first_operand_contents, second_operand);
             } else {
-                cpu.mrs(instruction);
+                emu.get_cpu_mut(cpu_type).mrs(instruction);
             }
         }
         0xB => {
             if set_condition_codes {
-                cpu.cmn(first_operand_contents, second_operand);
+                emu.get_cpu_mut(cpu_type)
+                    .cmn(first_operand_contents, second_operand);
             } else {
-                cpu.msr(instruction);
+                emu.get_cpu_mut(cpu_type).msr(instruction);
             }
         }
 
-        0xC => cpu.orr(
+        0xC => emu.get_cpu_mut(cpu_type).orr(
             destination as i32,
             first_operand_contents as i32,
             second_operand as i32,
             set_condition_codes,
         ),
-        0xD => cpu.mov(destination, second_operand, set_condition_codes),
-        0xE => cpu.bic(
+        0xD => emu
+            .get_cpu_mut(cpu_type)
+            .mov(destination, second_operand, set_condition_codes),
+        0xE => emu.get_cpu_mut(cpu_type).bic(
             destination,
             first_operand_contents,
             second_operand,
             set_condition_codes,
         ),
-        0xF => cpu.mvn(destination, second_operand, set_condition_codes),
+        0xF => emu
+            .get_cpu_mut(cpu_type)
+            .mvn(destination, second_operand, set_condition_codes),
 
         _ => {
             #[cfg(feature = "tracing")]
@@ -296,22 +308,22 @@ pub fn data_processing(cpu: &mut ArmCpu, instruction: u32) {
 }
 
 /// Counts the leading zeros in a value
-pub fn count_leading_zeros(cpu: &mut ArmCpu, instruction: u32) {
+pub fn count_leading_zeros(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     // CLZ is undefined when ID flag is set
-    if cpu.get_id() <= 0 {
+    if emu.get_cpu(cpu_type).get_id() <= 0 {
         #[cfg(feature = "tracing")]
         tracing::error!("CLZ executed while ID flag set (instr={instruction:#010X})");
 
-        cpu.handle_undefined();
+        emu.get_cpu_mut(cpu_type).handle_undefined();
         return;
     }
 
     let source_reg = (instruction & 0xF) as i32;
     let destination = ((instruction >> 12) & 0xF) as i32;
 
-    // if cpu.can_disassemble() { ... }
+    // if emu.get_cpu_mut(cpu_type).can_disassemble() { ... }
 
-    let mut source = cpu.get_register(source_reg);
+    let mut source = emu.get_cpu_mut(cpu_type).get_register(source_reg);
 
     // Implementation lifted from melonDS (matches original behavior)
     let mut bits: u32 = 0;
@@ -328,17 +340,17 @@ pub fn count_leading_zeros(cpu: &mut ArmCpu, instruction: u32) {
         source |= 1;
     }
 
-    cpu.set_register(destination, bits);
+    emu.get_cpu_mut(cpu_type).set_register(destination, bits);
 }
 
 /// Saturated operation
-pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
+pub fn saturated_op(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     // Saturated ops are undefined when ID flag is set
-    if cpu.get_id() <= 0 {
+    if emu.get_cpu(cpu_type).get_id() <= 0 {
         #[cfg(feature = "tracing")]
         tracing::error!("Saturated op executed while ID flag set (instr={instruction:#010X})");
 
-        cpu.handle_undefined();
+        emu.get_cpu_mut(cpu_type).handle_undefined();
         return;
     }
 
@@ -347,8 +359,8 @@ pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
     let destination = (instruction >> 12) & 0xF;
     let source = (instruction & 0xF) as usize;
 
-    let operand_reg = cpu.get_register(operand as i32);
-    let source_reg = cpu.get_register(source as i32);
+    let operand_reg = emu.get_cpu_mut(cpu_type).get_register(operand as i32);
+    let source_reg = emu.get_cpu_mut(cpu_type).get_register(source as i32);
 
     let mut result: u32;
 
@@ -358,7 +370,7 @@ pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
             result = operand_reg.wrapping_add(source_reg);
 
             if add_overflow(source_reg, operand_reg, result) {
-                cpu.get_cpsr_mut().sticky_overflow = true;
+                emu.get_cpu_mut(cpu_type).get_cpsr_mut().sticky_overflow = true;
 
                 result = if (result & 0x8000_0000) != 0 {
                     0x7FFF_FFFF
@@ -367,7 +379,8 @@ pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
                 };
             }
 
-            cpu.set_register(destination as i32, result);
+            emu.get_cpu_mut(cpu_type)
+                .set_register(destination as i32, result);
         }
 
         0x2 => {
@@ -375,7 +388,7 @@ pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
             result = source_reg.wrapping_sub(operand_reg);
 
             if sub_overflow(source_reg, operand_reg, result) {
-                cpu.get_cpsr_mut().sticky_overflow = true;
+                emu.get_cpu_mut(cpu_type).get_cpsr_mut().sticky_overflow = true;
 
                 result = if (result & 0x8000_0000) != 0 {
                     0x7FFF_FFFF
@@ -384,7 +397,8 @@ pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
                 };
             }
 
-            cpu.set_register(destination as i32, result);
+            emu.get_cpu_mut(cpu_type)
+                .set_register(destination as i32, result);
         }
 
         // QDADD / QDSUB intentionally unimplemented (same as C++)
@@ -397,7 +411,7 @@ pub fn saturated_op(cpu: &mut ArmCpu, instruction: u32) {
 
 /// Multiply instruction
 #[allow(clippy::missing_const_for_fn)]
-pub fn multiply(cpu: &mut ArmCpu, instruction: u32) {
+pub fn multiply(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let accumulate = instruction & (1 << 21);
     let set_condition_codes = instruction & (1 << 20);
     let destination = ((instruction >> 16) & 0xF) as i32;
@@ -405,27 +419,28 @@ pub fn multiply(cpu: &mut ArmCpu, instruction: u32) {
     let second_operand = ((instruction >> 8) & 0xF) as i32;
     let third_operand = ((instruction >> 12) & 0xF) as i32;
 
-    let mut result = cpu.get_register(first_operand) * cpu.get_register(second_operand);
+    let mut result = emu.get_cpu_mut(cpu_type).get_register(first_operand)
+        * emu.get_cpu_mut(cpu_type).get_register(second_operand);
 
     if accumulate != 0 {
-        //if (cpu.can_disassemble())
+        //if (emu.get_cpu_mut(cpu_type).can_disassemble())
         #[cfg(feature = "tracing")]
         tracing::error!("MLA {destination}, {first_operand}, {second_operand}, {third_operand}");
-        result += cpu.get_register(third_operand);
+        result += emu.get_cpu_mut(cpu_type).get_register(third_operand);
     }
-    //else if (cpu.can_disassemble())
+    //else if (emu.get_cpu_mut(cpu_type).can_disassemble())
     #[cfg(feature = "tracing")]
     tracing::error!("MUL {destination}, {first_operand}, {second_operand}");
 
     if set_condition_codes != 0 {
-        cpu.set_zero_neg_flags(result);
+        emu.get_cpu_mut(cpu_type).set_zero_neg_flags(result);
     }
 
-    cpu.set_register(destination, result);
+    emu.get_cpu_mut(cpu_type).set_register(destination, result);
 }
 
 /// Long multiply instruction
-pub const fn multiply_long(cpu: &mut ArmCpu, instruction: u32) {
+pub fn multiply_long(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let is_signed = (instruction & (1 << 22)) != 0;
     let accumulate = (instruction & (1 << 21)) != 0;
     let set_condition_codes = (instruction & (1 << 20)) != 0;
@@ -435,50 +450,54 @@ pub const fn multiply_long(cpu: &mut ArmCpu, instruction: u32) {
     let first_operand = ((instruction >> 8) & 0xF) as i32;
     let second_operand = (instruction & 0xF) as i32;
 
-    let first_operand = cpu.get_register(first_operand);
-    let second_operand = cpu.get_register(second_operand);
+    let first_operand = emu.get_cpu_mut(cpu_type).get_register(first_operand);
+    let second_operand = emu.get_cpu_mut(cpu_type).get_register(second_operand);
 
     if is_signed {
         // Signed long multiply
         let mut result = (first_operand as i32 as i64) * (second_operand as i32 as i64);
 
         if accumulate {
-            let mut big_reg = cpu.get_register(dest_lo) as i64;
-            big_reg |= (cpu.get_register(dest_hi) as i64) << 32;
+            let mut big_reg = emu.get_cpu_mut(cpu_type).get_register(dest_lo) as i64;
+            big_reg |= (emu.get_cpu_mut(cpu_type).get_register(dest_hi) as i64) << 32;
             result = result.wrapping_add(big_reg);
         }
 
-        cpu.set_register(dest_lo, result as u32);
-        cpu.set_register(dest_hi, (result >> 32) as u32);
+        emu.get_cpu_mut(cpu_type)
+            .set_register(dest_lo, result as u32);
+        emu.get_cpu_mut(cpu_type)
+            .set_register(dest_hi, (result >> 32) as u32);
 
         if set_condition_codes {
-            cpu.set_zero(result == 0);
-            cpu.set_neg(((result >> 63) & 1) != 0);
+            emu.get_cpu_mut(cpu_type).set_zero(result == 0);
+            emu.get_cpu_mut(cpu_type).set_neg(((result >> 63) & 1) != 0);
         }
     } else {
         // Unsigned long multiply
         let mut result = (first_operand as u64) * (second_operand as u64);
 
         if accumulate {
-            let mut big_reg = cpu.get_register(dest_lo) as u64;
-            big_reg |= (cpu.get_register(dest_hi) as u64) << 32;
+            let mut big_reg = emu.get_cpu_mut(cpu_type).get_register(dest_lo) as u64;
+            big_reg |= (emu.get_cpu_mut(cpu_type).get_register(dest_hi) as u64) << 32;
             result = result.wrapping_add(big_reg);
         }
 
-        cpu.set_register(dest_lo, result as u32);
-        cpu.set_register(dest_hi, (result >> 32) as u32);
+        emu.get_cpu_mut(cpu_type)
+            .set_register(dest_lo, result as u32);
+        emu.get_cpu_mut(cpu_type)
+            .set_register(dest_hi, (result >> 32) as u32);
 
         if set_condition_codes {
-            cpu.set_zero(result == 0);
-            cpu.set_neg(((result >> 63) & 1) != 0);
+            emu.get_cpu_mut(cpu_type).set_zero(result == 0);
+            emu.get_cpu_mut(cpu_type).set_neg(((result >> 63) & 1) != 0);
         }
     }
 }
 
 /// Signed halfword multiply instruction
-pub fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
+pub fn signed_halfword_multiply(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     // No-op if ID bit set (matches C++)
-    if cpu.get_id() > 0 {
+    if emu.get_cpu(cpu_type).get_id() > 0 {
         return;
     }
 
@@ -497,8 +516,8 @@ pub fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
     match opcode {
         0x8 => {
             // SMLAxy
-            let op1 = cpu.get_register(first_operand);
-            let op2 = cpu.get_register(second_operand);
+            let op1 = emu.get_cpu_mut(cpu_type).get_register(first_operand);
+            let op2 = emu.get_cpu_mut(cpu_type).get_register(second_operand);
 
             product = if first_op_top {
                 (op1 >> 16) as i16 as i32
@@ -514,19 +533,19 @@ pub fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
 
             product *= rhs;
 
-            let acc = cpu.get_register(accumulate);
+            let acc = emu.get_cpu_mut(cpu_type).get_register(accumulate);
             let sum = (product as i64) + (acc as i64);
             result = sum as u32;
 
             if add_overflow(product as u32, acc, result) {
-                cpu.get_cpsr_mut().sticky_overflow = true;
+                emu.get_cpu_mut(cpu_type).get_cpsr_mut().sticky_overflow = true;
             }
         }
 
         0x9 => {
             // SMULWy / SMLAWy
-            let op1 = cpu.get_register(first_operand);
-            let op2 = cpu.get_register(second_operand);
+            let op1 = emu.get_cpu_mut(cpu_type).get_register(first_operand);
+            let op2 = emu.get_cpu_mut(cpu_type).get_register(second_operand);
 
             product = if first_op_top {
                 (op1 >> 16) as i16 as i32
@@ -538,12 +557,12 @@ pub fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
 
             if !second_op_top {
                 // SMLAWy
-                let acc = cpu.get_register(accumulate);
+                let acc = emu.get_cpu_mut(cpu_type).get_register(accumulate);
                 let sum = big_product + acc as i64;
                 result = sum as u32;
 
                 if add_overflow(big_product as u32, acc, result) {
-                    cpu.get_cpsr_mut().sticky_overflow = true;
+                    emu.get_cpu_mut(cpu_type).get_cpsr_mut().sticky_overflow = true;
                 }
             } else {
                 // SMULWy
@@ -553,8 +572,8 @@ pub fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
 
         0xB => {
             // SMULxy
-            let op1 = cpu.get_register(first_operand);
-            let op2 = cpu.get_register(second_operand);
+            let op1 = emu.get_cpu_mut(cpu_type).get_register(first_operand);
+            let op2 = emu.get_cpu_mut(cpu_type).get_register(second_operand);
 
             product = if first_op_top {
                 (op1 >> 16) as i16 as i32
@@ -579,121 +598,122 @@ pub fn signed_halfword_multiply(cpu: &mut ArmCpu, instruction: u32) {
         }
     }
 
-    cpu.set_register(destination, result);
+    emu.get_cpu_mut(cpu_type).set_register(destination, result);
 }
 
 /// Swap instruction
-pub fn swap(cpu: &mut ArmCpu, instruction: u32) {
+pub fn swap(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let is_byte = (instruction & (1 << 22)) != 0;
     let base = ((instruction >> 16) & 0xF) as i32;
     let destination = ((instruction >> 12) & 0xF) as i32;
     let source = (instruction & 0xF) as i32;
 
-    let address = cpu.get_register(base);
+    let address = emu.get_cpu_mut(cpu_type).get_register(base);
 
     if is_byte {
         // SWPB
-        // let byte = cpu.read_byte(address);
+        // let byte = emu.get_cpu_mut(cpu_type).read_byte(address);
         let byte = 0;
-        // cpu.write_byte(address, (cpu.get_register(source) & 0xFF) as u8);
-        cpu.set_register(destination, byte as u32);
+        // emu.get_cpu_mut(cpu_type).write_byte(address, (emu.get_cpu_mut(cpu_type).get_register(source) & 0xFF) as u8);
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination, byte as u32);
 
-        cpu.add_n16_data(address, 2);
+        emu.get_cpu_mut(cpu_type).add_n16_data(address, 2);
     } else {
         // SWP (word)
         let aligned = address & !0x3;
         let rotate = (address & 0x3) * 8;
 
-        let word = cpu.rotr32(
-            // cpu.read_word(aligned),
+        let word = emu.get_cpu_mut(cpu_type).rotr32(
+            // emu.get_cpu_mut(cpu_type).read_word(aligned),
             0, rotate, false,
         );
 
-        // cpu.write_word(address, cpu.get_register(source));
-        cpu.set_register(destination, word);
+        // emu.get_cpu_mut(cpu_type).write_word(address, emu.get_cpu_mut(cpu_type).get_register(source));
+        emu.get_cpu_mut(cpu_type).set_register(destination, word);
 
-        cpu.add_n32_data(address, 2);
+        emu.get_cpu_mut(cpu_type).add_n32_data(address, 2);
     }
 }
 
 /// Store a word to memory
-pub fn store_word(cpu: &mut ArmCpu, instruction: u32) {
+pub fn store_word(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a word from memory
-pub fn load_word(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_word(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Store a byte to memory
-pub fn store_byte(cpu: &mut ArmCpu, instruction: u32) {
+pub fn store_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a byte from memory
-pub fn load_byte(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Store a halfword to memory
-pub fn store_halfword(cpu: &mut ArmCpu, instruction: u32) {
+pub fn store_halfword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a halfword from memory
-pub fn load_halfword(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_halfword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a signed byte from memory
-pub fn load_signed_byte(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_signed_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a signed halfword from memory
-pub fn load_signed_halfword(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_signed_halfword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Store a doubleword to memory
-pub fn store_doubleword(cpu: &mut ArmCpu, instruction: u32) {
+pub fn store_doubleword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a doubleword from memory
-pub fn load_doubleword(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_doubleword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Store a block of registers to memory
-pub fn store_block(cpu: &mut ArmCpu, instruction: u32) {
+pub fn store_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Load a block of registers from memory
-pub fn load_block(cpu: &mut ArmCpu, instruction: u32) {
+pub fn load_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Branch instruction
-pub fn branch(cpu: &mut ArmCpu, instruction: u32) {
+pub fn branch(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Branch with link instruction
-pub fn branch_link(cpu: &mut ArmCpu, instruction: u32) {
+pub fn branch_link(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Branch and exchange instruction
-pub fn branch_exchange(cpu: &mut ArmCpu, instruction: u32) {
+pub fn branch_exchange(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Coprocessor register transfer
-pub fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
-    // // let cp15 = cpu.get_cp15();
+pub fn coprocessor_reg_transfer(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
+    // // let cp15 = emu.get_cpu_mut(cpu_type).get_cp15();
     // if cp15.is_none() {
     //     // Coprocessor not present → instruction ignored
     //     return;
@@ -712,8 +732,8 @@ pub fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
 
     // if is_loading {
     //     // MRC
-    //     cpu.add_internal_cycles(2);
-    //     cpu.add_cop_cycles(1);
+    //     emu.get_cpu_mut(cpu_type).add_internal_cycles(2);
+    //     emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
 
     //     match coprocessor_id {
     //         15 => {
@@ -723,7 +743,7 @@ pub fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
     //                 coprocessor_info,
     //                 coprocessor_operand,
     //             );
-    //             cpu.set_register(arm_reg, value);
+    //             emu.get_cpu_mut(cpu_type).set_register(arm_reg, value);
     //         }
     //         _ => {
     //             // mirrors printf + exit(1)
@@ -732,12 +752,12 @@ pub fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
     //     }
     // } else {
     //     // MCR
-    //     cpu.add_internal_cycles(1);
-    //     cpu.add_cop_cycles(1);
+    //     emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
+    //     emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
 
     //     match coprocessor_id {
     //         15 => {
-    //             let value = cpu.get_register(arm_reg);
+    //             let value = emu.get_cpu_mut(cpu_type).get_register(arm_reg);
     //             cp15.mcr(
     //                 operation_mode,
     //                 cp_reg,
@@ -754,23 +774,24 @@ pub fn coprocessor_reg_transfer(cpu: &mut ArmCpu, instruction: u32) {
 }
 
 /// Branch with link and exchange (register)
-pub fn blx_reg(cpu: &mut ArmCpu, instruction: u32) {
-    cpu.set_register(REG_LR as i32, cpu.get_pc() - 4);
+pub fn blx_reg(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
+    let value = emu.get_cpu(cpu_type).get_pc() - 4;
+    emu.get_cpu_mut(cpu_type).set_register(REG_LR as i32, value);
 
     let reg_id = (instruction & 0xF) as i32;
 
-    //if (cpu.can_disassemble())
+    //if (emu.get_cpu_mut(cpu_type).can_disassemble())
     //printf("BLX {%d}", reg_id);
 
-    let new_address = cpu.get_register(reg_id);
+    let new_address = emu.get_cpu(cpu_type).get_register(reg_id);
 }
 
 /// Branch with link and exchange (immediate)
-pub fn blx(cpu: &mut ArmCpu, instruction: u32) {
+pub fn blx(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     todo!()
 }
 
 /// Software interrupt
-pub fn swi(cpu: &mut ArmCpu, instruction: u32) {
-    cpu.handle_swi();
+pub fn swi(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
+    emu.get_cpu_mut(cpu_type).handle_swi();
 }
