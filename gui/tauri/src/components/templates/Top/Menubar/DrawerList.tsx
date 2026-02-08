@@ -1,4 +1,4 @@
-import * as React from "react";
+import { useState } from "react";
 import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
 import ListItemButton from "@mui/material/ListItemButton";
@@ -22,10 +22,8 @@ interface Props {
 
 // Main export
 export function DrawerList({ open, items }: Props) {
-  const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
-  const [activeItem, setActiveItem] = React.useState<DrawerMenuItem | null>(
-    null,
-  );
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [activeItem, setActiveItem] = useState<DrawerMenuItem | null>(null);
 
   // Drawer item
   const handleEnterItem = ((e, item) => {
