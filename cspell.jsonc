@@ -2,12 +2,13 @@
   "words": [
     "clippy",
     "cpsr",
+    "halfword",
+    "halfword",
     "hexdump",
     "ignorePaths",
     "Lunaris",
     "regs",
     "serde",
     "tauri",
-    "wgpu",
-  ],
+    "g ],
 }

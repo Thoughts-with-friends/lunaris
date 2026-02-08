@@ -10,22 +10,22 @@ pub const REG_LR: u32 = 14;
 pub const REG_PC: u32 = 15;
 
 #[inline]
-const fn carry_add(a: u32, b: u32) -> bool {
+pub const fn carry_add(a: u32, b: u32) -> bool {
     (0xFFFF_FFFF_u32.wrapping_sub(a)) < b
 }
 
 #[inline]
-const fn carry_sub(a: u32, b: u32) -> bool {
+pub const fn carry_sub(a: u32, b: u32) -> bool {
     a >= b
 }
 
 #[inline]
-const fn add_overflow(a: u32, b: u32, result: u32) -> bool {
+pub const fn add_overflow(a: u32, b: u32, result: u32) -> bool {
     (((a ^ b) & 0x8000_0000) == 0) && (((a ^ result) & 0x8000_0000) != 0)
 }
 
 #[inline]
-const fn sub_overflow(a: u32, b: u32, result: u32) -> bool {
+pub const fn sub_overflow(a: u32, b: u32, result: u32) -> bool {
     (((a ^ b) & 0x8000_0000) != 0) && (((a ^ result) & 0x8000_0000) != 0)
 }
 
@@ -578,11 +578,19 @@ impl ArmCpu {
     }
 
     /// CPSR access
+    #[inline]
     pub const fn get_cpsr(&self) -> &PsrFlags {
         &self.cpsr
     }
 
-    /// Memory access
+    /// CPSR access
+    #[inline]
+    pub const fn get_cpsr_mut(&mut self) -> &mut PsrFlags {
+        &mut self.cpsr
+    }
+
+    // -----------------------------------------------
+    /// Memory access (will be deleted later)
     pub fn read_word(&mut self, address: u32) -> u32 {
         todo!()
     }
@@ -602,6 +610,7 @@ impl ArmCpu {
     pub fn write_byte(&mut self, address: u32, value: u8) {
         todo!()
     }
+    // -----------------------------------------------
 
     //WaitState bullshit
     pub const fn add_n32_code(&mut self, address: u32, cycles: i32) {
