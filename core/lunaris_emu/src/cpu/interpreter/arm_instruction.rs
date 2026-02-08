@@ -1,5 +1,5 @@
 #![allow(clippy::missing_const_for_fn)]
-use crate::cpu::arm_cpu::{CpuType, REG_LR, REG_PC, add_overflow, sub_overflow};
+use crate::cpu::arm_cpu::{CpuType, PsrMode, REG_LR, REG_PC, add_overflow, sub_overflow};
 use crate::emulator::Emulator;
 
 /// Loads or stores a value using a shifted register addressing mode.
@@ -638,160 +638,834 @@ pub fn swap(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
 
 /// Store a word to memory
 pub fn store_word(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let base = (instruction >> 16) & 0xF;
+    let source = (instruction >> 12) & 0xF;
+
+    let is_imm = (instruction & (1 << 25)) == 0;
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let offset: u32 = if is_imm {
+        instruction & 0xFFF
+    } else {
+        load_store_shift_reg(emu, cpu_type, instruction)
+    };
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+    let value = emu.get_cpu(cpu_type).get_register(source as i32);
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
+        emu.write_word(address & !0x3, value, cpu_type);
+    } else {
+        emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
+        emu.write_word(address & !0x3, value, cpu_type);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+    }
 }
 
 /// Load a word from memory
 pub fn load_word(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let base = (instruction >> 16) & 0xF;
+    let destination = (instruction >> 12) & 0xF;
+
+    let is_imm = (instruction & (1 << 25)) == 0;
+    let is_pre_indexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let offset: u32 = if is_imm {
+        instruction & 0xFFF
+    } else {
+        load_store_shift_reg(emu, cpu_type, instruction)
+    };
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+    emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
+
+    if is_pre_indexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        let value = emu.read_word(address & !0x3, cpu_type);
+        let word = emu
+            .get_cpu_mut(cpu_type)
+            .rotr32(value, (address & 0x3) * 8, false);
+
+        if destination == REG_PC {
+            // Only ARM9 can change thumb state
+            let has_change_cpu_id = emu.get_cpu(cpu_type).get_id() <= 0;
+            emu.get_cpu_mut(cpu_type).jp(word, has_change_cpu_id);
+        } else {
+            emu.get_cpu_mut(cpu_type)
+                .set_register(destination as i32, word);
+        }
+    } else {
+        let value = emu.read_word(address & !0x3, cpu_type);
+        let word = emu
+            .get_cpu_mut(cpu_type)
+            .rotr32(value, (address & 0x3) * 8, false);
+
+        if destination == REG_PC {
+            // Only ARM9 can change thumb state
+            let has_change_cpu_id = emu.get_cpu(cpu_type).get_id() <= 0;
+            emu.get_cpu_mut(cpu_type).jp(word, has_change_cpu_id);
+        } else {
+            emu.get_cpu_mut(cpu_type)
+                .set_register(destination as i32, word);
+        }
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if base != destination {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+    }
 }
 
 /// Store a byte to memory
 pub fn store_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let base = (instruction >> 16) & 0xF;
+    let source = (instruction >> 12) & 0xF;
+
+    let is_imm = (instruction & (1 << 25)) == 0;
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let offset: u32 = if is_imm {
+        instruction & 0xFFF
+    } else {
+        load_store_shift_reg(emu, cpu_type, instruction)
+    };
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+    let value = (emu.get_cpu(cpu_type).get_register(source as i32) & 0xFF) as u8;
+
+    emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        emu.write_byte(address, value, cpu_type);
+    } else {
+        emu.write_byte(address, value, cpu_type);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+    }
 }
 
 /// Load a byte from memory
 pub fn load_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let base = (instruction >> 16) & 0xF;
+    let destination = (instruction >> 12) & 0xF;
+
+    let is_imm = (instruction & (1 << 25)) == 0;
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let offset: u32 = if is_imm {
+        instruction & 0xFFF
+    } else {
+        load_store_shift_reg(emu, cpu_type, instruction)
+    };
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    // Timing behavior matches original C++:
+    emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
+    emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        let value = emu.read_byte(address, cpu_type) as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+    } else {
+        let value = emu.read_byte(address, cpu_type) as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if base != destination {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+    }
 }
 
 /// Store a halfword to memory
 pub fn store_halfword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let base = (instruction >> 16) & 0xF;
+    let source = (instruction >> 12) & 0xF;
+
+    let is_imm_offset = (instruction & (1 << 22)) != 0;
+
+    let mut offset = instruction & 0xF;
+    if is_imm_offset {
+        offset |= (instruction >> 4) & 0xF0;
+    } else {
+        offset = emu.get_cpu(cpu_type).get_register(offset as i32);
+    }
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+    let halfword = (emu.get_cpu(cpu_type).get_register(source as i32) & 0xFFFF) as u16;
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        emu.write_halfword(address, halfword, cpu_type);
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+    } else {
+        emu.write_halfword(address, halfword, cpu_type);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+    }
+
+    emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
 }
 
 /// Load a halfword from memory
 pub fn load_halfword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let base = (instruction >> 16) & 0xF;
+    let destination = (instruction >> 12) & 0xF;
+
+    let is_imm_offset = (instruction & (1 << 22)) != 0;
+
+    let mut offset = instruction & 0xF;
+    if is_imm_offset {
+        offset |= (instruction >> 4) & 0xF0;
+    } else {
+        offset = emu.get_cpu(cpu_type).get_register(offset as i32);
+    }
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back && base != destination {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        let value = emu.read_halfword(address, cpu_type) as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+    } else {
+        let value = emu.read_halfword(address, cpu_type) as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if base != destination {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+    }
+
+    emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
 }
 
 /// Load a signed byte from memory
 pub fn load_signed_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let base = (instruction >> 16) & 0xF;
+    let destination = (instruction >> 12) & 0xF;
+
+    let is_imm_offset = (instruction & (1 << 22)) != 0;
+
+    let mut offset = instruction & 0xF;
+    if is_imm_offset {
+        offset |= (instruction >> 4) & 0xF0;
+    } else {
+        offset = emu.get_cpu(cpu_type).get_register(offset as i32);
+    }
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        let byte = emu.read_byte(address, cpu_type) as i8;
+        let value = byte as i32 as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+    } else {
+        let byte = emu.read_byte(address, cpu_type) as i8;
+        let value = byte as i32 as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if base != destination {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+    }
+
+    emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
 }
 
 /// Load a signed halfword from memory
 pub fn load_signed_halfword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+
+    let base = (instruction >> 16) & 0xF;
+    let destination = (instruction >> 12) & 0xF;
+
+    let is_imm_offset = (instruction & (1 << 22)) != 0;
+
+    let mut offset = instruction & 0xF;
+    if is_imm_offset {
+        offset |= (instruction >> 4) & 0xF0;
+    } else {
+        offset = emu.get_cpu(cpu_type).get_register(offset as i32);
+    }
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    if is_preindexing {
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if is_writing_back {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+
+        let half = emu.read_halfword(address, cpu_type) as i16;
+        let value = half as i32 as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+    } else {
+        let half = emu.read_halfword(address, cpu_type) as i16;
+        let value = half as i32 as u32;
+        emu.get_cpu_mut(cpu_type)
+            .set_register(destination as i32, value);
+
+        if is_adding_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        if base != destination {
+            emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+        }
+    }
+
+    emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
 }
 
 /// Store a doubleword to memory
 pub fn store_doubleword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    // Only supported on ARM9 (matches C++ behavior)
+    if emu.get_cpu(cpu_type).get_id() != 0 {
+        emu.get_cpu_mut(cpu_type).handle_undefined();
+        return;
+    }
+
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+    let add_offset = (instruction & (1 << 23)) != 0;
+    let is_imm_offset = (instruction & (1 << 22)) != 0;
+    let write_back = (instruction & (1 << 21)) != 0;
+
+    let base = (instruction >> 16) & 0xF;
+    let source = (instruction >> 12) & 0xF;
+
+    let mut offset = instruction & 0xF;
+    if is_imm_offset {
+        offset |= (instruction >> 4) & 0xF0;
+    } else {
+        offset = emu.get_cpu(cpu_type).get_register(offset as i32);
+    }
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    if is_preindexing {
+        if add_offset {
+            address = address.wrapping_add(offset);
+        } else {
+            address = address.wrapping_sub(offset);
+        }
+
+        let low = emu.get_cpu(cpu_type).get_register(source as i32);
+        let high = emu.get_cpu(cpu_type).get_register((source + 1) as i32);
+
+        emu.write_word(address, low, cpu_type);
+        emu.write_word(address.wrapping_add(4), high, cpu_type);
+
+        if write_back {
+            // Mirrors the original C++ exactly (even though it looks odd)
+            let base_reg = emu.get_cpu(cpu_type).get_register(base as i32);
+            emu.get_cpu_mut(cpu_type)
+                .set_register(base_reg as i32, address.wrapping_add(4));
+        }
+    } else {
+        #[cfg(feature = "tracing")]
+        tracing::error!("store post_indexing not supported");
+    }
 }
 
-/// Load a doubleword from memory
-pub fn load_doubleword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+/// Load multiple registers from memory (LDM)
+pub fn load_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
+    let reg_list = instruction & 0xFFFF;
+    let base = (instruction >> 16) & 0xF;
+
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+    let load_psr = (instruction & (1 << 22)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+
+    let user_bank_transfer = load_psr && (reg_list & (1 << 15)) == 0;
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    let offset: i32 = if is_adding_offset { 4 } else { -4 };
+
+    // Switch to USER bank if required
+    let old_mode = emu.get_cpu_mut(cpu_type).get_cpsr().mode;
+
+    if user_bank_transfer {
+        emu.get_cpu_mut(cpu_type).update_reg_mode(PsrMode::User);
+        emu.get_cpu_mut(cpu_type).get_cpsr_mut().mode = PsrMode::User;
+    }
+
+    let mut regs = 0;
+
+    if is_adding_offset {
+        // Incrementing
+        for i in 0..15 {
+            if (reg_list & (1 << i)) != 0 {
+                regs += 1;
+
+                if is_preindexing {
+                    address = address.wrapping_add(offset as u32);
+                    let value = emu.read_word(address, cpu_type);
+                    emu.get_cpu_mut(cpu_type).set_register(i, value);
+                } else {
+                    let value = emu.read_word(address, cpu_type);
+                    emu.get_cpu_mut(cpu_type).set_register(i, value);
+                    address = address.wrapping_add(offset as u32);
+                }
+            }
+        }
+
+        // PC (R15) handled last
+        if (reg_list & (1 << 15)) != 0 {
+            if is_preindexing {
+                address = address.wrapping_add(offset as u32);
+                let mut new_pc = emu.read_word(address, cpu_type);
+                if emu.get_cpu(cpu_type).get_id() != 0 {
+                    new_pc &= !0x1;
+                }
+                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
+            } else {
+                let mut new_pc = emu.read_word(address, cpu_type);
+                if emu.get_cpu(cpu_type).get_id() != 0 {
+                    new_pc &= !0x1;
+                }
+                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
+                address = address.wrapping_add(offset as u32);
+            }
+
+            if load_psr {
+                emu.get_cpu_mut(cpu_type).spsr_to_cpsr();
+            }
+
+            regs += 1;
+        }
+    } else {
+        // Decrementing: PC first
+        if (reg_list & (1 << 15)) != 0 {
+            if is_preindexing {
+                address = address.wrapping_add(offset as u32);
+                let mut new_pc = emu.read_word(address, cpu_type);
+                if emu.get_cpu(cpu_type).get_id() != 0 {
+                    new_pc &= !0x1;
+                }
+                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
+            } else {
+                let mut new_pc = emu.read_word(address, cpu_type);
+                if emu.get_cpu(cpu_type).get_id() != 0 {
+                    new_pc &= !0x1;
+                }
+                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
+                address = address.wrapping_add(offset as u32);
+            }
+
+            if load_psr {
+                emu.get_cpu_mut(cpu_type).spsr_to_cpsr();
+            }
+
+            regs += 1;
+        }
+
+        for i in (0..15).rev() {
+            if (reg_list & (1 << i)) != 0 {
+                regs += 1;
+
+                if is_preindexing {
+                    address = address.wrapping_add(offset as u32);
+                    let value = emu.read_word(address, cpu_type);
+                    emu.get_cpu_mut(cpu_type).set_register(i, value);
+                } else {
+                    let value = emu.read_word(address, cpu_type);
+                    emu.get_cpu_mut(cpu_type).set_register(i, value);
+                    address = address.wrapping_add(offset as u32);
+                }
+            }
+        }
+    }
+
+    // Restore original mode if USER bank was used
+    if user_bank_transfer {
+        emu.get_cpu_mut(cpu_type).update_reg_mode(old_mode);
+        emu.get_cpu_mut(cpu_type).get_cpsr_mut().mode = old_mode;
+    }
+
+    // Timing
+    if regs > 1 {
+        emu.get_cpu_mut(cpu_type).add_s32_data(address, regs - 1);
+    }
+    emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
+    emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
+
+    // Writeback (blocked when base is in list on ARM9)
+    if is_writing_back && !((reg_list & (1 << base)) != 0 && emu.get_cpu(cpu_type).get_id() != 0) {
+        emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+    }
 }
 
 /// Store a block of registers to memory
 pub fn store_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
-}
+    let reg_list = instruction & 0xFFFF;
+    let base = (instruction >> 16) & 0xF;
 
-/// Load a block of registers from memory
-pub fn load_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let is_writing_back = (instruction & (1 << 21)) != 0;
+    let load_psr = (instruction & (1 << 22)) != 0;
+    let is_adding_offset = (instruction & (1 << 23)) != 0;
+    let is_preindexing = (instruction & (1 << 24)) != 0;
+
+    let user_bank_transfer = load_psr && (reg_list & (1 << 15)) == 0;
+
+    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
+
+    let offset: i32 = if is_adding_offset { 4 } else { -4 };
+
+    // Handle user-mode banked register transfer
+    let old_mode = emu.get_cpu_mut(cpu_type).get_cpsr().mode;
+
+    if user_bank_transfer {
+        emu.get_cpu_mut(cpu_type).update_reg_mode(PsrMode::User);
+        emu.get_cpu_mut(cpu_type).get_cpsr_mut().mode = PsrMode::User;
+    }
+
+    let mut regs = 0;
+
+    if is_adding_offset {
+        // Incrementing: low → high
+        for i in 0..16 {
+            if (reg_list & (1 << i)) != 0 {
+                regs += 1;
+
+                if is_preindexing {
+                    address = address.wrapping_add(offset as u32);
+                    let value = emu.get_cpu(cpu_type).get_register(i);
+                    emu.write_word(address, value, cpu_type);
+                } else {
+                    let value = emu.get_cpu(cpu_type).get_register(i);
+                    emu.write_word(address, value, cpu_type);
+                    address = address.wrapping_add(offset as u32);
+                }
+            }
+        }
+    } else {
+        // Decrementing: high → low
+        for i in (0..16).rev() {
+            if (reg_list & (1 << i)) != 0 {
+                regs += 1;
+
+                if is_preindexing {
+                    address = address.wrapping_add(offset as u32);
+                    let value = emu.get_cpu(cpu_type).get_register(i);
+                    emu.write_word(address, value, cpu_type);
+                } else {
+                    let value = emu.get_cpu(cpu_type).get_register(i);
+                    emu.write_word(address, value, cpu_type);
+                    address = address.wrapping_add(offset as u32);
+                }
+            }
+        }
+    }
+
+    // Restore original mode if we switched to USER
+    if user_bank_transfer {
+        emu.get_cpu_mut(cpu_type).update_reg_mode(old_mode);
+        emu.get_cpu_mut(cpu_type).get_cpsr_mut().mode = old_mode;
+    }
+
+    // Timing behavior (matches C++)
+    if regs > 2 {
+        emu.get_cpu_mut(cpu_type).add_s32_data(address, regs - 1);
+    }
+    emu.get_cpu_mut(cpu_type).add_n32_data(address, 2);
+
+    if is_writing_back {
+        emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+    }
 }
 
 /// Branch instruction
 pub fn branch(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let mut address = emu.get_cpu(cpu_type).get_pc();
+
+    // 24-bit signed offset, shifted left by 2
+    let mut offset = ((instruction & 0x00FF_FFFF) << 2) as i32;
+
+    // Sign-extend
+    offset <<= 6;
+    offset >>= 6;
+
+    address = address.wrapping_add(offset as u32);
+
+    emu.get_cpu_mut(cpu_type).jp(address, false);
 }
 
 /// Branch with link instruction
 pub fn branch_link(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let address = emu.get_cpu(cpu_type).get_pc();
+
+    // 24-bit signed offset, shifted left by 2
+    let mut offset = ((instruction & 0x00FF_FFFF) << 2) as i32;
+
+    // Sign extend
+    offset <<= 6;
+    offset >>= 6;
+
+    // Branch
+    let target = address.wrapping_add(offset as u32);
+    emu.get_cpu_mut(cpu_type).jp(target, false);
+
+    // Link register gets address of next instruction minus 4
+    emu.get_cpu_mut(cpu_type)
+        .set_register(REG_LR as i32, address.wrapping_sub(4));
 }
 
 /// Branch and exchange instruction
 pub fn branch_exchange(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let reg_id = instruction & 0xF;
+    let new_address = emu.get_cpu(cpu_type).get_register(reg_id as i32);
+
+    emu.get_cpu_mut(cpu_type).jp(new_address, true);
 }
 
 /// Coprocessor register transfer
 pub fn coprocessor_reg_transfer(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    // // let cp15 = emu.get_cpu_mut(cpu_type).get_cp15();
-    // if cp15.is_none() {
-    //     // Coprocessor not present → instruction ignored
-    //     return;
-    // }
-    // let cp15 = cp15.unwrap();
+    let operation_mode = (instruction >> 21) & 0x7;
+    let is_loading = (instruction & (1 << 20)) != 0;
 
-    // let operation_mode = ((instruction >> 21) & 0x7) as u32;
-    // let is_loading = (instruction & (1 << 20)) != 0;
+    let cp_reg = (instruction >> 16) & 0xF;
+    let arm_reg = (instruction >> 12) & 0xF;
 
-    // let cp_reg = ((instruction >> 16) & 0xF) as u32;
-    // let arm_reg = ((instruction >> 12) & 0xF) as usize;
+    let coprocessor_id = (instruction >> 8) & 0xF;
+    let coprocessor_info = (instruction >> 5) & 0x7;
+    let coprocessor_operand = instruction & 0xF;
 
-    // let coprocessor_id = ((instruction >> 8) & 0xF) as u32;
-    // let coprocessor_info = ((instruction >> 5) & 0x7) as u32;
-    // let coprocessor_operand = (instruction & 0xF) as u32;
+    if is_loading {
+        // MRC
+        emu.get_cpu_mut(cpu_type).add_internal_cycles(2);
+        emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
 
-    // if is_loading {
-    //     // MRC
-    //     emu.get_cpu_mut(cpu_type).add_internal_cycles(2);
-    //     emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
+        match coprocessor_id {
+            15 => {
+                let value = emu.arm9_cp15.mrc(
+                    operation_mode as i32,
+                    cp_reg as i32,
+                    coprocessor_info as i32,
+                    coprocessor_operand as i32,
+                );
+                emu.get_cpu_mut(cpu_type)
+                    .set_register(arm_reg as i32, value);
+            }
+            _ => {
+                // mirrors printf + exit(1)
+                #[cfg(feature = "tracing")]
+                tracing::error!("Coprocessor {coprocessor_id} not recognized");
+            }
+        }
+    } else {
+        // MCR
+        emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
+        emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
 
-    //     match coprocessor_id {
-    //         15 => {
-    //             let value = cp15.mrc(
-    //                 operation_mode,
-    //                 cp_reg,
-    //                 coprocessor_info,
-    //                 coprocessor_operand,
-    //             );
-    //             emu.get_cpu_mut(cpu_type).set_register(arm_reg, value);
-    //         }
-    //         _ => {
-    //             // mirrors printf + exit(1)
-    //             panic!("Coprocessor {} not recognized", coprocessor_id);
-    //         }
-    //     }
-    // } else {
-    //     // MCR
-    //     emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
-    //     emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
-
-    //     match coprocessor_id {
-    //         15 => {
-    //             let value = emu.get_cpu_mut(cpu_type).get_register(arm_reg);
-    //             cp15.mcr(
-    //                 operation_mode,
-    //                 cp_reg,
-    //                 value,
-    //                 coprocessor_info,
-    //                 coprocessor_operand,
-    //             );
-    //         }
-    //         _ => {
-    //             panic!("Coprocessor {} not recognized", coprocessor_id);
-    //         }
-    //     }
-    // }
+        match coprocessor_id {
+            15 => {
+                let value = emu.get_cpu_mut(cpu_type).get_register(arm_reg as i32);
+                emu.arm9_cp15.mcr(
+                    operation_mode as i32,
+                    cp_reg as i32,
+                    value,
+                    coprocessor_info as i32,
+                    coprocessor_operand as i32,
+                );
+            }
+            _ => {
+                // mirrors printf + exit(1)
+                #[cfg(feature = "tracing")]
+                tracing::error!("Coprocessor {coprocessor_id} not recognized");
+            }
+        }
+    }
 }
 
-/// Branch with link and exchange (register)
+/// Branch with Link and Exchange (BLX, register)
 pub fn blx_reg(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    let value = emu.get_cpu(cpu_type).get_pc() - 4;
-    emu.get_cpu_mut(cpu_type).set_register(REG_LR as i32, value);
+    // Save return address
+    let pc = emu.get_cpu(cpu_type).get_pc();
+    emu.get_cpu_mut(cpu_type)
+        .set_register(REG_LR as i32, pc.wrapping_sub(4));
 
-    let reg_id = (instruction & 0xF) as i32;
+    let reg_id = instruction & 0xF;
+    let new_address = emu.get_cpu(cpu_type).get_register(reg_id as i32);
 
-    //if (emu.get_cpu_mut(cpu_type).can_disassemble())
-    //printf("BLX {%d}", reg_id);
-
-    let new_address = emu.get_cpu(cpu_type).get_register(reg_id);
+    // Branch and exchange
+    emu.get_cpu_mut(cpu_type).jp(new_address, true);
 }
 
-/// Branch with link and exchange (immediate)
+/// Branch with Link and Exchange (BLX, immediate)
 pub fn blx(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    todo!()
+    let address = emu.get_cpu(cpu_type).get_pc();
+
+    // 24-bit signed offset, shifted left by 2
+    let mut offset = ((instruction & 0x00FF_FFFF) << 2) as i32;
+
+    // Sign extend
+    offset <<= 6;
+    offset >>= 6;
+
+    // H bit adds 2
+    if (instruction & (1 << 24)) != 0 {
+        offset += 2;
+    }
+
+    // Set link register
+    emu.get_cpu_mut(cpu_type)
+        .set_register(REG_LR as i32, address.wrapping_sub(4));
+
+    // Branch and exchange (force Thumb)
+    let target = address.wrapping_add(offset as u32).wrapping_add(1);
+
+    emu.get_cpu_mut(cpu_type).jp(target, true);
 }
 
 /// Software interrupt
 pub fn swi(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
+    let _ = instruction;
     emu.get_cpu_mut(cpu_type).handle_swi();
 }
