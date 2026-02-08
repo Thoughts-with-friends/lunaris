@@ -1,5 +1,5 @@
-/// Nintendo DS Firmware controller
-/// Handles firmware data loading, CRC verification, and SPI data transfer
+//! Nintendo DS Firmware controller
+//! Handles firmware data loading, CRC verification, and SPI data transfer
 use std::{fs::File, io::Read as _};
 
 use crate::error::{EmuError, FailedReadFileSnafu};

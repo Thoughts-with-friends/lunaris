@@ -1,5 +1,5 @@
-/// WiFi Controller stub for Nintendo DS
-/// Provides basic WiFi hardware register interface (emulation stub)
+//! WiFi Controller stub for Nintendo DS
+//! Provides basic WiFi hardware register interface (emulation stub)
 
 /// WiFi Controller
 /// This is a stub implementation for WiFi hardware

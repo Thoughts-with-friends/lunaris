@@ -93,7 +93,7 @@ pub struct PsrFlags {
 
 impl PsrFlags {
     /// Serialize flags into a 32-bit CPSR/SPSR value
-    pub const fn get(&self) -> u32 {
+    pub fn get(&self) -> u32 {
         let mut reg = 0;
         reg |= (self.negative as u32) << 31;
         reg |= (self.zero as u32) << 30;
@@ -111,7 +111,7 @@ impl PsrFlags {
     }
 
     /// Load flags from a 32-bit CPSR/SPSR value
-    pub const fn set(&mut self, value: u32) {
+    pub fn set(&mut self, value: u32) {
         self.negative = (value & (1 << 31)) != 0;
         self.zero = (value & (1 << 30)) != 0;
         self.carry = (value & (1 << 29)) != 0;
@@ -131,9 +131,18 @@ impl PsrFlags {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub enum CpuType {
+    #[default]
+    Arm7,
+    Arm9,
+}
+
 /// ARM CPU core
 #[derive(Debug, Default)]
 pub struct ArmCpu {
+    pub cpu_type: CpuType,
+
     /// CPU ID (ARM9 / ARM7 etc.)
     pub cpu_id: i32,
 
@@ -203,7 +212,7 @@ pub struct ArmCpu {
 
 impl ArmCpu {
     /// Create a new ARM CPU
-    pub fn new(cpu_id: i32) -> Self {
+    pub fn new(cpu_id: i32, cpu_type: CpuType) -> Self {
         let mut code_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
         let mut data_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
 
@@ -312,6 +321,7 @@ impl ArmCpu {
             cpu_id,
             data_waitstates,
             exception_base: if cpu_id <= 0 { 0 } else { 0xFFFF0000 },
+            cpu_type,
             ..Default::default()
         }
     }
@@ -589,29 +599,6 @@ impl ArmCpu {
         &mut self.cpsr
     }
 
-    // -----------------------------------------------
-    /// Memory access (will be deleted later)
-    pub fn read_word(&mut self, address: u32) -> u32 {
-        todo!()
-    }
-    pub fn read_halfword(&mut self, address: u32) -> u16 {
-        todo!()
-    }
-    pub fn read_byte(&mut self, address: u32) -> u8 {
-        todo!()
-    }
-
-    pub fn write_word(&mut self, address: u32, value: u32) {
-        todo!()
-    }
-    pub fn write_halfword(&mut self, address: u32, value: u16) {
-        todo!()
-    }
-    pub fn write_byte(&mut self, address: u32, value: u8) {
-        todo!()
-    }
-    // -----------------------------------------------
-
     //WaitState bullshit
     pub const fn add_n32_code(&mut self, address: u32, cycles: i32) {
         let idx = ((address & 0x0F00_0000) >> 24) as usize;
@@ -685,7 +672,7 @@ impl ArmCpu {
             self.set_zero_neg_flags(result);
         }
     }
-    pub const fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+    pub fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let unsigned_result: u64 = (src + operand) as u64;
 
         if dst == REG_PC {
@@ -721,7 +708,7 @@ impl ArmCpu {
             }
         }
     }
-    pub const fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+    pub fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let carry = if self.cpsr.carry { 1 } else { 0 };
         self.add(dst, src + carry, operand, set_condition_codes);
 
@@ -732,7 +719,7 @@ impl ArmCpu {
             self.cpsr.overflow = add_overflow(src, operand, temp) | add_overflow(temp, carry, res);
         }
     }
-    pub const fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+    pub fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let borrow = if self.cpsr.carry { 0 } else { 1 };
         self.add(dst, src + borrow, operand, set_condition_codes);
 
@@ -795,7 +782,7 @@ impl ArmCpu {
         }
     }
 
-    pub const fn mrs(&mut self, instruction: u32) {
+    pub fn mrs(&mut self, instruction: u32) {
         let using_cpsr = (instruction & (1 << 22)) == 0;
         let dst = (instruction >> 12) & 0xF;
 
@@ -851,7 +838,7 @@ impl ArmCpu {
                 self.update_reg_mode(mode);
             } else {
                 #[cfg(feature = "tracing")]
-                tracing::warn!("Invalid PsrMode: new_cpsr = {new_cpsr}");
+                tracing::warn!("Invalid PsrMode: new_cpsr = {using_cpsr}");
             }
         }
 

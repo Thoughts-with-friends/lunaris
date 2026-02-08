@@ -5,24 +5,26 @@
 //! Core emulator system that manages CPU, memory, and all peripheral devices
 //! Handles the dual-CPU architecture of the Nintendo DS and system timing
 pub mod emu_config;
+mod read;
 mod read_arm7;
 mod read_arm9;
 mod runner;
 mod timers;
+mod write;
 mod write_arm7;
 mod write_arm9;
 
 use snafu::ResultExt as _;
 use std::collections::VecDeque;
 
+use crate::cpu::arm_cpu::ArmCpu;
+use crate::cpu::coprocessor_15::Cp15;
 use lunaris_ds_audio::SPU;
-use lunaris_ds_cpu::arm_cpu::ArmCpu;
-use lunaris_ds_cpu::coprocessor_15::Cp15;
 use lunaris_ds_gpu::gpu_root::{Gpu, gpu_reg::SchedulerEvent};
 use lunaris_ds_mem_const::*;
 
-use crate::bios::Bios;
 use crate::cartridge::NDSCart;
+use crate::cpu::arm_cpu::CpuType;
 use crate::dma::NDSDma;
 use crate::error::{EmuError, FailedReadFileSnafu};
 use crate::interrupts::{Interrupt, InterruptRegs};
@@ -35,7 +37,7 @@ use emu_config::{BiosMem, Config, ExtKeyInReg, KeyInputReg, PowCnt2Reg};
 
 /// Core Nintendo DS emulator system
 /// Manages dual ARM CPUs, memory, and all peripheral devices
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Emulator {
     /// Config
     pub config: Config,
@@ -43,7 +45,6 @@ pub struct Emulator {
     pub cycle_count: u64,
     pub arm7: ArmCpu,
     pub arm9: ArmCpu,
-    pub bios: Bios,
     pub arm9_cp15: Cp15,
     pub cart: NDSCart,
     pub dma: NDSDma,
@@ -139,11 +140,85 @@ pub struct Emulator {
     pub last_arm7_timestamp: u64,
 }
 
+impl Default for Emulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Emulator {
     /// Create a new emulator instance with default values
     pub fn new() -> Self {
-        Emulator {
-            ..Default::default()
+        Self {
+            arm7: ArmCpu::new(0, CpuType::Arm7),
+            arm9: ArmCpu::new(1, CpuType::Arm9),
+            config: Default::default(),
+            cycle_count: Default::default(),
+            arm9_cp15: Default::default(),
+            cart: Default::default(),
+            dma: Default::default(),
+            gpu: Default::default(),
+            rtc: Default::default(),
+            spi: Default::default(),
+            spu: Default::default(),
+            nds_timing: Default::default(),
+            wifi: Default::default(),
+            main_ram: Default::default(),
+            shared_wram: Default::default(),
+            arm7_wram: Default::default(),
+            arm9_bios: Default::default(),
+            arm7_bios: Default::default(),
+            system_timestamp: Default::default(),
+            next_event_time: Default::default(),
+            gpu_event: Default::default(),
+            dma_event: Default::default(),
+            ipc_sync_nds9: Default::default(),
+            ipc_sync_nds7: Default::default(),
+            fifo7: Default::default(),
+            fifo9: Default::default(),
+            fifo7_queue: Default::default(),
+            fifo9_queue: Default::default(),
+            aux_spi_cnt: Default::default(),
+            int7_reg: Default::default(),
+            int9_reg: Default::default(),
+            key_input: Default::default(),
+            ext_key_in: Default::default(),
+            pow_cnt2: Default::default(),
+            dma_fill: Default::default(),
+            sio_cnt: Default::default(),
+            r_cnt: Default::default(),
+            ex_mem_cnt: Default::default(),
+            wram_cnt: Default::default(),
+            divcnt: Default::default(),
+            div_numer: Default::default(),
+            div_denom: Default::default(),
+            div_result: Default::default(),
+            div_remresult: Default::default(),
+            sqrtcnt: Default::default(),
+            sqrt_result: Default::default(),
+            sqrt_param: Default::default(),
+            postflg7: Default::default(),
+            postflg9: Default::default(),
+            bios_prot: Default::default(),
+            hstep_even: Default::default(),
+            cycles: Default::default(),
+            total_timestamp: Default::default(),
+            last_arm9_timestamp: Default::default(),
+            last_arm7_timestamp: Default::default(),
+        }
+    }
+
+    pub fn get_cpu(&self, cpu_type: CpuType) -> &ArmCpu {
+        match cpu_type {
+            CpuType::Arm7 => &self.arm7,
+            CpuType::Arm9 => &self.arm9,
+        }
+    }
+
+    pub fn get_cpu_mut(&mut self, cpu_type: CpuType) -> &mut ArmCpu {
+        match cpu_type {
+            CpuType::Arm7 => &mut self.arm7,
+            CpuType::Arm9 => &mut self.arm9,
         }
     }
 
@@ -447,8 +522,8 @@ impl Emulator {
     /// Call high-level BIOS function.
     pub fn hle_bios(&mut self, cpu_id: i32) -> i32 {
         match cpu_id {
-            0 => self.bios.swi9(&mut self.arm9),
-            _ => self.bios.swi7(&mut self.arm7),
+            0 => self.swi9(),
+            _ => self.swi7(),
         }
     }
 

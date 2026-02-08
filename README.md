@@ -67,7 +67,7 @@ npm run build
 - [ ] **Phase 3 ( 90%)**: Memory / I/O Management
 - [ ] **Phase 4 ( 70%)**: GPU Infrastructure
 - [ ] **Phase 5 ( 0%)**: BIOS / ROM Loading
-- [ ] **Phase 6 ( 60%)**: UI / Threading
+- [ ] **Phase 6 ( 70%)**: UI / Threading
 - [ ] **Phase 7 ( 40%)**: Audio System
 - [ ] **Phase 8 ( 80%)**: Interrupt System
 - [ ] **Phase 9 ( 90%)**: Instruction Set Completion (ARM9)

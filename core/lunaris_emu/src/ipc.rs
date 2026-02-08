@@ -1,5 +1,5 @@
-/// Inter-Processor Communication (IPC) system for Nintendo DS
-/// Enables communication between ARM7 and ARM9 processors
+//! Inter-Processor Communication (IPC) system for Nintendo DS
+//! Enables communication between ARM7 and ARM9 processors
 use std::collections::VecDeque;
 
 /// IPC Synchronization register

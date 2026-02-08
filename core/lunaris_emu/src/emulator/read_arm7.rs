@@ -67,7 +67,7 @@ impl Emulator {
     }
 
     /// ARM7 read 16-bit halfword
-    pub fn arm7_read_halfword(&mut self, address: u32) -> u16 {
+    pub fn arm7_read_halfword(&self, address: u32) -> u16 {
         match address {
             // BIOS (0x00000000..0x00003FFF)
             ..0x4000 => {
@@ -176,7 +176,7 @@ impl Emulator {
         }
     }
 
-    pub fn arm7_read_byte(&mut self, address: u32) -> u8 {
+    pub fn arm7_read_byte(&self, address: u32) -> u8 {
         #[allow(non_contiguous_range_endpoints)]
         match address {
             // Main RAM

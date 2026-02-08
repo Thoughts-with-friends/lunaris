@@ -122,7 +122,7 @@ impl SPIBus {
     }
 
     /// Read from SPI data register
-    pub fn read_spidata(&mut self) -> u8 {
+    pub fn read_spidata(&self) -> u8 {
         if self.spicnt.enabled { 0 } else { self.output }
     }
 
