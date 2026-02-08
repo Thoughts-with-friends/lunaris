@@ -1,5 +1,5 @@
-use lunaris_ds_cpu::interpreter::arm_interpret;
-use lunaris_ds_cpu::interpreter::thumb_instruction::thumb_interpret;
+use crate::cpu::interpreter::arm_interpret;
+use crate::cpu::interpreter::thumb_instruction::thumb_interpret;
 
 use crate::emulator::Emulator;
 
@@ -85,6 +85,20 @@ impl Emulator {
             arm.regs[15] += 4;
             arm_interpret(arm);
         }
+
+        // interpreter(&mut Emu);
+        //   -> arm.read_dram(&mut Emu.dram)
+        //
+        // interpreter(&mut Emu)
+        //
+        // impl Engine for Emu {
+        //    fn get_cpu_mut(&mut self) -> &mut ArmCpu;
+        //    fn read_halfword(&mut self) -> u32;
+        // }
+        // interpreter(emu: &mut impl Engine)
+        //    -> emu.get_halfword(&mut self) -> u32
+        //
+        // arm -> Emu -> interpreter
 
         if is_interrupt && !arm.cpsr.irq_disabled {
             arm.handle_irq();

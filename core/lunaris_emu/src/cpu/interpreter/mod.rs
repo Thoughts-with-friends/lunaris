@@ -6,9 +6,9 @@ pub mod arm_instruction;
 pub mod thumb_instruction;
 
 use self::arm_instruction::blx;
-use crate::arm_cpu::ArmCpu;
-use crate::arm_table;
-use crate::instruction_table::ARMInstr;
+use super::arm_cpu::ArmCpu;
+use super::arm_table;
+use super::instruction_table::ARMInstr;
 
 /// Interprets an ARM instruction
 pub fn arm_interpret(cpu: &mut ArmCpu) {

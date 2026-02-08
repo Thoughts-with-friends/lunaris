@@ -1,5 +1,5 @@
 #![allow(clippy::missing_const_for_fn)]
-use crate::arm_cpu::{ArmCpu, REG_LR, REG_PC, add_overflow, sub_overflow};
+use crate::cpu::arm_cpu::{ArmCpu, REG_LR, REG_PC, add_overflow, sub_overflow};
 
 /// Loads or stores a value using a shifted register addressing mode.
 ///

@@ -15,7 +15,6 @@ members = [
   "core/lunaris_emu",
   "core/gpu",
   "core/audio",
-  "core/cpu",
   "core/free_bios",
   "core/mem_const",
   "gui/tauri/src-tauri"
@@ -28,10 +27,7 @@ tracing = "0.1.44"
 snafu = "0.8.9"
 
 # workspace members
-lunaris_ds_arm7 = { path = "./core/arm7" }
-lunaris_ds_arm9 = { path = "./core/arm9" }
 lunaris_ds_audio = { path = "./core/audio" }
-lunaris_ds_cpu = { path = "./core/cpu" }
 lunaris_ds_free_bios = { path = "./core/free_bios" }
 lunaris_ds_gpu = { path = "./core/gpu" }
 lunaris_ds_mem_const = { path = "./core/mem_const" }

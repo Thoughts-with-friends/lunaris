@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-use lunaris_ds_cpu::arm_cpu::ArmCpu;
+use crate::cpu::arm_cpu::ArmCpu;
 
 /// BIOS emulation for CorgiDS.
 #[derive(Debug, Default)]

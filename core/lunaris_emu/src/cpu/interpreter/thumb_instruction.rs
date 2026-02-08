@@ -3,8 +3,8 @@
 //! instrthumb.cpp
 //!
 
-use crate::arm_cpu::{ArmCpu, REG_LR, REG_PC, REG_SP};
-use crate::instruction_table::ThumbInstr;
+use crate::cpu::arm_cpu::{ArmCpu, REG_LR, REG_PC, REG_SP};
+use crate::cpu::instruction_table::ThumbInstr;
 
 /// Interprets a Thumb instruction
 pub fn thumb_interpret(cpu: &mut ArmCpu) {
@@ -206,7 +206,7 @@ pub fn thumb_mov_shift(cpu: &mut ArmCpu) {
 }
 
 /// Thumb instruction: ADD register
-pub const fn thumb_add_reg(cpu: &mut ArmCpu) {
+pub fn thumb_add_reg(cpu: &mut ArmCpu) {
     let instruction = cpu.get_current_instr() as u16;
     let destination = (instruction & 0x7) as u32;
     let source = ((instruction >> 3) & 0x7) as u32;
@@ -222,8 +222,8 @@ pub const fn thumb_add_reg(cpu: &mut ArmCpu) {
     // else if cpu.get_id() > 0 {
     //     // println!("ADD {{{}}}, {{{}}}, ${:08X}", destination, source, operand);
     // }
-
-    cpu.add(destination, cpu.get_register(source as i32), operand, true);
+    let src = cpu.get_register(source as i32);
+    cpu.add(destination, src, operand, true);
 }
 
 /// Thumb instruction: SUB register
@@ -273,7 +273,7 @@ pub const fn thumb_cmp(cpu: &mut ArmCpu) {
 }
 
 /// Thumb instruction: ADD
-pub const fn thumb_add(cpu: &mut ArmCpu) {
+pub fn thumb_add(cpu: &mut ArmCpu) {
     let instruction: u16 = cpu.get_current_instr() as u16;
     let offset: u32 = (instruction & 0xFF) as u32;
     let reg: u32 = ((instruction >> 8) & 0x7) as u32;
@@ -889,7 +889,7 @@ pub const fn thumb_offset_sp(cpu: &mut ArmCpu) {
 }
 
 /// Thumb instruction: Load address
-pub const fn thumb_load_address(cpu: &mut ArmCpu) {
+pub fn thumb_load_address(cpu: &mut ArmCpu) {
     let instruction: u16 = cpu.get_current_instr() as u16;
 
     let destination: u32 = ((instruction >> 8) & 0x7) as u32;

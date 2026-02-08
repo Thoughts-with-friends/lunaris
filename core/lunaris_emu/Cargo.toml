@@ -17,7 +17,6 @@ snafu = { workspace = true }
 
 # workspace members
 lunaris_ds_audio = { workspace = true }
-lunaris_ds_cpu = { workspace = true }
 lunaris_ds_free_bios = { workspace = true }
 lunaris_ds_gpu = { workspace = true }
 lunaris_ds_mem_const = { workspace = true }

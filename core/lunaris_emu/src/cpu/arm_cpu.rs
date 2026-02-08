@@ -93,7 +93,7 @@ pub struct PsrFlags {
 
 impl PsrFlags {
     /// Serialize flags into a 32-bit CPSR/SPSR value
-    pub const fn get(&self) -> u32 {
+    pub fn get(&self) -> u32 {
         let mut reg = 0;
         reg |= (self.negative as u32) << 31;
         reg |= (self.zero as u32) << 30;
@@ -111,7 +111,7 @@ impl PsrFlags {
     }
 
     /// Load flags from a 32-bit CPSR/SPSR value
-    pub const fn set(&mut self, value: u32) {
+    pub fn set(&mut self, value: u32) {
         self.negative = (value & (1 << 31)) != 0;
         self.zero = (value & (1 << 30)) != 0;
         self.carry = (value & (1 << 29)) != 0;
@@ -602,7 +602,28 @@ impl ArmCpu {
     }
 
     pub fn write_word(&mut self, address: u32, value: u32) {
-        todo!()
+        // if (address < itcm_size)
+        // {
+        //     *(uint32_t*)&ITCM[address & ITCM_MASK] = word;
+        // }
+        // else if (address >= dtcm_base && address < (dtcm_base + dtcm_size))
+        // {
+        //     *(uint32_t*)&DTCM[address & DTCM_MASK] = word;
+        // }
+        // else
+        // {
+        //     e->arm9_write_word(address, word);
+
+        // if (!cpu_id)
+        //     e->cpu->
+        //     e->cp15->
+        //     e->write_word(address, word);
+        //
+        // => To
+        //    e->cp15_write_word(address, word);
+        //    e->cpu->read_word();
+        // else
+        //     e->arm7_write_word(address, word)
     }
     pub fn write_halfword(&mut self, address: u32, value: u16) {
         todo!()
@@ -685,7 +706,7 @@ impl ArmCpu {
             self.set_zero_neg_flags(result);
         }
     }
-    pub const fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+    pub fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let unsigned_result: u64 = (src + operand) as u64;
 
         if dst == REG_PC {
@@ -721,7 +742,7 @@ impl ArmCpu {
             }
         }
     }
-    pub const fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+    pub fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let carry = if self.cpsr.carry { 1 } else { 0 };
         self.add(dst, src + carry, operand, set_condition_codes);
 
@@ -732,7 +753,7 @@ impl ArmCpu {
             self.cpsr.overflow = add_overflow(src, operand, temp) | add_overflow(temp, carry, res);
         }
     }
-    pub const fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+    pub fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
         let borrow = if self.cpsr.carry { 0 } else { 1 };
         self.add(dst, src + borrow, operand, set_condition_codes);
 
@@ -795,7 +816,7 @@ impl ArmCpu {
         }
     }
 
-    pub const fn mrs(&mut self, instruction: u32) {
+    pub fn mrs(&mut self, instruction: u32) {
         let using_cpsr = (instruction & (1 << 22)) == 0;
         let dst = (instruction >> 12) & 0xF;
 
@@ -851,7 +872,7 @@ impl ArmCpu {
                 self.update_reg_mode(mode);
             } else {
                 #[cfg(feature = "tracing")]
-                tracing::warn!("Invalid PsrMode: new_cpsr = {new_cpsr}");
+                tracing::warn!("Invalid PsrMode: new_cpsr = {using_cpsr}");
             }
         }
 

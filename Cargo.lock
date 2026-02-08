@@ -2035,18 +2035,10 @@ name = "lunaris_ds_audio"
 version = "0.1.0"
 
 [[package]]
-name = "lunaris_ds_cpu"
-version = "0.1.0"
-dependencies = [
- "tracing",
-]
-
-[[package]]
 name = "lunaris_ds_emu"
 version = "0.1.0"
 dependencies = [
  "lunaris_ds_audio",
- "lunaris_ds_cpu",
  "lunaris_ds_free_bios",
  "lunaris_ds_gpu",
  "lunaris_ds_mem_const",

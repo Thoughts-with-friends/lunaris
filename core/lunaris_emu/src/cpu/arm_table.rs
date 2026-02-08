@@ -3,7 +3,7 @@
 //! armtable.cpp
 //!
 use super::interpreter::arm_instruction::*;
-use crate::arm_cpu::ArmCpu;
+use crate::cpu::arm_cpu::ArmCpu;
 
 /// Function pointer type for ARM/Thumb instruction interpreters
 pub type InterpreterFunc = fn(cpu: &mut ArmCpu, instruction: u32);
