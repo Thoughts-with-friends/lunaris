@@ -14,8 +14,7 @@
 # misc
 .DS_Store
 *.pem
-./src-tauri/icons/android/*
-./src-tauri/icons/ios/*
+
 
 # debug
 npm-debug.log*
