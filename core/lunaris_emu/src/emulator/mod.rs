@@ -150,8 +150,8 @@ impl Emulator {
     /// Create a new emulator instance with default values
     pub fn new() -> Self {
         Self {
-            arm7: ArmCpu::new(0, CpuType::Arm7),
-            arm9: ArmCpu::new(1, CpuType::Arm9),
+            arm7: ArmCpu::new(1, CpuType::Arm7),
+            arm9: ArmCpu::new(0, CpuType::Arm9),
             config: Default::default(),
             cycle_count: Default::default(),
             arm9_cp15: Default::default(),

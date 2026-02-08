@@ -209,11 +209,11 @@ impl Gpu {
                                         false => &mut self.engine_lower,
                                     };
 
-                                    if priority > engine.final_bg_priority[idx as usize] {
+                                    if priority > engine.final_bg_priority[idx] {
                                         continue;
                                     }
 
-                                    let address = 0x200 + palette as u32 * 32 + color_index * 2;
+                                    let address = 0x200 + palette * 32 + color_index * 2;
 
                                     engine.sprite_scanline[idx] = match is_engine_a {
                                         true => read_palette_value(&self.palette_upper, address),
@@ -237,7 +237,7 @@ impl Gpu {
                                 } else {
                                     (data >> (i * 8)) & 0xFF
                                 } as u32;
-                                let idx = (index & 0x1FF) as u32;
+                                let idx = index & 0x1FF;
                                 index += 1;
 
                                 if idx >= PIXELS_PER_LINE as u32 || color_index == 0 {
@@ -307,9 +307,9 @@ impl Gpu {
                 continue;
             }
             let color = engine.sprite_scanline[i];
-            let r = ((color & 0x1F) << 3) as u32;
-            let g = (((color >> 5) & 0x1F) << 3) as u32;
-            let b = (((color >> 10) & 0x1F) << 3) as u32;
+            let r = (color & 0x1F) << 3;
+            let g = ((color >> 5) & 0x1F) << 3;
+            let b = ((color >> 10) & 0x1F) << 3;
             engine.framebuffer[i + vcount as usize * PIXELS_PER_LINE] =
                 0xFF000000 | (r << 16) | (g << 8) | b;
         }
@@ -496,7 +496,7 @@ impl Gpu {
             let mut px_offset = x_offset;
             let mut px = x;
             while px_offset < x_bound as i32 {
-                if rot_x as u32 <= width as u32 && rot_y as u32 <= height as u32 {
+                if rot_x as u32 <= width && rot_y as u32 <= height {
                     let mut pixel_addr = pixel_base;
                     pixel_addr += ((rot_y >> 11) * y_dimension_num as i32) as u32;
                     pixel_addr += ((rot_y & 0x700) >> 6) as u32;

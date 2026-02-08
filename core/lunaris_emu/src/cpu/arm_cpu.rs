@@ -131,6 +131,7 @@ impl PsrFlags {
     }
 }
 
+/// This type exists to avoid cross references between emu and cpu.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum CpuType {
     #[default]

@@ -11,62 +11,67 @@ impl Gpu {
     pub fn read_arm7_u16(&self, address: u32) -> u16 {
         {
             let mut reg = 0;
-            if self.vramcnt_c.enabled {
-                if addr_in_range(
+
+            if self.vramcnt_c.enabled
+                && addr_in_range(
                     address,
                     0x06000000 + self.vramcnt_c.offset * 0x20000,
-                    VRAM_C_SIZE as u32,
-                ) && self.vramcnt_c.mst == 2
-                {
-                    let start = (address & VRAM_C_MASK) as usize;
-                    let end = (start + 2) as usize;
-                    reg |= u16::from_le_bytes(self.vram_c[start..end].try_into().unwrap());
-                }
+                    VRAM_C_SIZE,
+                )
+                && self.vramcnt_c.mst == 2
+            {
+                let start = (address & VRAM_C_MASK) as usize;
+                let end = start + 2;
+                reg |= u16::from_le_bytes(self.vram_c[start..end].try_into().unwrap());
             }
-            if self.vramcnt_d.enabled {
-                if addr_in_range(
+
+            if self.vramcnt_d.enabled
+                && addr_in_range(
                     address,
                     0x06000000 + self.vramcnt_d.offset * 0x20000,
-                    VRAM_D_SIZE as u32,
-                ) && self.vramcnt_d.mst == 2
-                {
-                    let start = (address & VRAM_D_MASK) as usize;
-                    let end = (start + 2) as usize;
-                    reg |= u16::from_le_bytes(self.vram_d[start..end].try_into().unwrap());
-                }
+                    VRAM_D_SIZE,
+                )
+                && self.vramcnt_d.mst == 2
+            {
+                let start = (address & VRAM_D_MASK) as usize;
+                let end = start + 2;
+                reg |= u16::from_le_bytes(self.vram_d[start..end].try_into().unwrap());
             }
-            return reg;
+
+            reg
         }
     }
 
     pub fn read_arm7_u32(&self, address: u32) -> u32 {
         {
             let mut reg = 0;
-            if self.vramcnt_c.enabled {
-                if addr_in_range(
+            if self.vramcnt_c.enabled
+                && addr_in_range(
                     address,
                     0x06000000 + self.vramcnt_c.offset * 0x20000,
-                    VRAM_C_SIZE as u32,
-                ) && self.vramcnt_c.mst == 2
-                {
-                    let start = (address & VRAM_C_MASK) as usize;
-                    let end = (start + 4) as usize;
-                    reg |= u32::from_le_bytes(self.vram_c[start..end].try_into().unwrap());
-                }
+                    VRAM_C_SIZE,
+                )
+                && self.vramcnt_c.mst == 2
+            {
+                let start = (address & VRAM_C_MASK) as usize;
+                let end = start + 4;
+                reg |= u32::from_le_bytes(self.vram_c[start..end].try_into().unwrap());
             }
-            if self.vramcnt_d.enabled {
-                if addr_in_range(
+
+            if self.vramcnt_d.enabled
+                && addr_in_range(
                     address,
                     0x06000000 + self.vramcnt_d.offset * 0x20000,
-                    VRAM_D_SIZE as u32,
-                ) && self.vramcnt_d.mst == 2
-                {
-                    let start = (address & VRAM_D_MASK) as usize;
-                    let end = (start + 4) as usize;
-                    reg |= u32::from_le_bytes(self.vram_d[start..end].try_into().unwrap());
-                }
+                    VRAM_D_SIZE,
+                )
+                && self.vramcnt_d.mst == 2
+            {
+                let start = (address & VRAM_D_MASK) as usize;
+                let end = start + 4;
+                reg |= u32::from_le_bytes(self.vram_d[start..end].try_into().unwrap());
             }
-            return reg;
+
+            reg
         }
     }
 
@@ -75,7 +80,7 @@ impl Gpu {
         // VRAM C
         if self.vramcnt_c.enabled {
             let start = 0x06000000 + self.vramcnt_c.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_C_SIZE as u32) && self.vramcnt_c.mst == 2 {
+            if addr_in_range(address, start, VRAM_C_SIZE) && self.vramcnt_c.mst == 2 {
                 let start = (address & VRAM_C_MASK) as usize;
                 self.vram_c[start..start + 4].copy_from_slice(&value.to_le_bytes());
             }
@@ -84,7 +89,7 @@ impl Gpu {
         // VRAM D
         if self.vramcnt_d.enabled {
             let start = 0x06000000 + self.vramcnt_d.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_D_SIZE as u32) && self.vramcnt_d.mst == 2 {
+            if addr_in_range(address, start, VRAM_D_SIZE) && self.vramcnt_d.mst == 2 {
                 let start = (address & VRAM_D_MASK) as usize;
                 self.vram_d[start..start + 4].copy_from_slice(&value.to_le_bytes());
             }
@@ -97,7 +102,7 @@ impl Gpu {
         // VRAM C
         if self.vramcnt_c.enabled {
             let start = 0x06000000 + self.vramcnt_c.offset * 0x20000;
-            if addr_in_range(address, start, VRAM_C_SIZE as u32) && self.vramcnt_c.mst == 2 {
+            if addr_in_range(address, start, VRAM_C_SIZE) && self.vramcnt_c.mst == 2 {
                 let idx = (address & VRAM_C_MASK) as usize;
                 self.vram_c[idx] = value;
             }
