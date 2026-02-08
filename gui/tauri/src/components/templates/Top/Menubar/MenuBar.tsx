@@ -1,4 +1,4 @@
-import * as React from "react";
+import { useState } from "react";
 import { useTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import Toolbar from "@mui/material/Toolbar";
@@ -15,7 +15,7 @@ import { useDrawerMenu } from "./drawerMenu";
 
 export function MenuBar() {
   const theme = useTheme();
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useState(false);
   const drawerMenu = useDrawerMenu();
 
   return (
