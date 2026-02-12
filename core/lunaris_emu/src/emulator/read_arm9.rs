@@ -111,10 +111,12 @@ impl Emulator {
             }
             0x04000640..0x04000680 => self.gpu.read_clip_mtx(address),
             0x04000680..0x040006A4 => self.gpu.read_vec_mtx(address),
-            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga::<u32>(address),
-            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb::<u32>(address),
-            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc::<u32>(address),
+
+            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga_u32(address),
+            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb_u32(address),
+            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc_u32(address),
             OAM_START..GBA_ROM_START => self.gpu.read_oam_u32(address),
+
             _ => {
                 if address >= GBA_ROM_START {
                     0xFFFF_FFFF
@@ -169,9 +171,9 @@ impl Emulator {
                     self.gpu.read_palette_b(address)
                 }
             }
-            VRAM_OBJA_START..VRAM_OBJB_START => self.gpu.read_obja::<u16>(address), // VRAM OBJ A/B
-            VRAM_OBJB_START..VRAM_LCDC_A => self.gpu.read_objb::<u16>(address),
-            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc::<u16>(address), // VRAM LCDC
+            VRAM_OBJA_START..VRAM_OBJB_START => self.gpu.read_obja_u16(address), // VRAM OBJ A/B
+            VRAM_OBJB_START..VRAM_LCDC_A => self.gpu.read_objb_u16(address),
+            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc_u16(address), // VRAM LCDC
             0x0400_0000 => self.gpu.get_dispcnt_a() as u16,
             0x0400_0004 => self.gpu.get_dispstat9(),
             0x0400_0006 => self.gpu.get_vcount(),
@@ -226,9 +228,9 @@ impl Emulator {
             0x0400_0630..0x0400_0636 => self.gpu.read_vec_test(address),
             _ => {
                 if (VRAM_BGA_START..VRAM_BGB_START).contains(&address) {
-                    self.gpu.read_bga::<u16>(address)
+                    self.gpu.read_bga_u16(address)
                 } else if (VRAM_BGB_START..VRAM_OBJA_START).contains(&address) {
-                    self.gpu.read_bgb::<u16>(address)
+                    self.gpu.read_bgb_u16(address)
                 } else if address >= GBA_ROM_START {
                     0xFFFF
                 } else {
@@ -279,11 +281,11 @@ impl Emulator {
                     (self.gpu.read_palette_b(address) & 0xFF) as u8
                 }
             }
-            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga::<u8>(address),
-            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb::<u8>(address),
-            VRAM_LCDC_A..OAM_START => self.gpu.read_lcdc::<u8>(address), // VRAM LCDC
-            OAM_START..GBA_ROM_START => self.gpu.read_oam_u8(address),   // OAM
-            GBA_ROM_START.. => 0xFF,                                     // GBA ROM
+            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga_u8(address),
+            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb_u8(address),
+            VRAM_LCDC_A..OAM_START => self.gpu.read_lcdc_u8(address), // VRAM LCDC
+            OAM_START..GBA_ROM_START => self.gpu.read_oam_u8(address), // OAM
+            GBA_ROM_START.. => 0xFF,                                  // GBA ROM
             _ => {
                 // Palette memory
                 #[cfg(feature = "tracing")]

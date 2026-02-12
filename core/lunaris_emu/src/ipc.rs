@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! ipc.hpp
+//!
 //! Inter-Processor Communication (IPC) system for Nintendo DS
 //! Enables communication between ARM7 and ARM9 processors
 use std::collections::VecDeque;

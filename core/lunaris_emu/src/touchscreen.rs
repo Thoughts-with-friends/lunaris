@@ -94,21 +94,10 @@ impl TouchScreen {
 
             // Select ADC channel
             match channel {
-                1 => {
-                    // Touch Y
-                    self.output_coords = self.press_y;
-                }
-                5 => {
-                    // Touch X
-                    self.output_coords = self.press_x;
-                }
-                6 => {
-                    // Battery / auxiliary channel
-                    self.output_coords = 0x800;
-                }
-                _ => {
-                    self.output_coords = 0xFFF;
-                }
+                1 => self.output_coords = self.press_y, // Touch Y
+                5 => self.output_coords = self.press_x, // Touch X
+                6 => self.output_coords = 0x800,        // Battery / auxiliary channel
+                _ => self.output_coords = 0xFFF,
             }
 
             // Conversion mode change

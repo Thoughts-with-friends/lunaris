@@ -255,11 +255,11 @@ impl Emulator {
             0x04000054 => self.gpu.set_bldy_a(halfword as u8),
             0x04000060 => self.gpu.set_disp3dcnt(halfword),
             0x0400006C => self.gpu.set_master_bright_a(halfword),
-            0x040000BA => self.dma.write_cnt(0, halfword),
-            0x040000C6 => self.dma.write_cnt(1, halfword),
+            0x040000BA => self.dma_write_cnt(0, halfword), // DMA
+            0x040000C6 => self.dma_write_cnt(1, halfword), // DMA
             0x040000D0 => self.dma.write_len(2, halfword),
-            0x040000D2 => self.dma.write_cnt(2, halfword),
-            0x040000DE => self.dma.write_cnt(3, halfword),
+            0x040000D2 => self.dma_write_cnt(2, halfword), // DMA
+            0x040000DE => self.dma_write_cnt(3, halfword), // DMA
             0x04000100 => self.nds_timing.write_lo(halfword, 4),
             0x04000102 => self.nds_timing.write_hi(halfword, 4),
             0x04000104 => self.nds_timing.write_lo(halfword, 5),

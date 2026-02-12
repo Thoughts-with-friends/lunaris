@@ -67,7 +67,9 @@ pub struct InterruptRegs {
 }
 
 impl InterruptRegs {
-    fn is_requesting_int(bit: i32) -> bool {
-        todo!()
+    #[allow(unused)]
+    pub fn is_requesting_int(&self, bit: u32) -> bool {
+        // (self.irq_enable & bit != 0) && (self.irq_flags & bit != 0)
+        unimplemented!("It is not used in C++ and has no definition.");
     }
 }

@@ -14,3 +14,5 @@ mod spi;
 mod timers;
 mod touchscreen;
 mod wifi;
+
+pub use emulator::{Emulator, emu_config::Config};

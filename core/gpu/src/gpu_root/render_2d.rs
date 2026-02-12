@@ -161,7 +161,6 @@ impl Gpu {
                 tile_addr_offset <<= 1;
 
                 // Read tile ID
-
                 let tile: u16 = match is_engine_a {
                     true => self.read_bga_u16(screen_base + tile_addr_offset),
                     false => self.read_bgb_u16(screen_base + tile_addr_offset),

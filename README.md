@@ -63,19 +63,21 @@ npm run build
 
 - [x] **Phase 0 (100%)**: FreeBIOS Development
 - [x] **Phase 1 (100%)**: Foundation Setup (Memory, Constants)
-- [ ] **Phase 2 ( 90%)**: CPU Core Implementation
-- [ ] **Phase 3 ( 90%)**: Memory / I/O Management
+- [x] **Phase 2 (100%)**: CPU Core Implementation
+- [x] **Phase 3 (100%)**: Memory / I/O Management
 - [ ] **Phase 4 ( 70%)**: GPU Infrastructure
 - [ ] **Phase 5 ( 0%)**: BIOS / ROM Loading
 - [ ] **Phase 6 ( 70%)**: UI / Threading
 - [ ] **Phase 7 ( 40%)**: Audio System
-- [ ] **Phase 8 ( 80%)**: Interrupt System
+- [x] **Phase 8 (100%)**: Interrupt System
 - [ ] **Phase 9 ( 90%)**: Instruction Set Completion (ARM9)
-- [ ] **Phase 10 ( 90%)**: ARM7 Implementation
+- [x] **Phase 10 (100%)**: ARM7 Implementation
 - [ ] **Phase 11 ( 10%)**: 3D Graphics
 - [ ] **Phase 12 ( 0%)**: Save Data System
 - [ ] **Phase 13 ( 80%)**: WiFi / Networking
 - [ ] **Phase 14 ( 0%)**: Optimization / Debugging
+- [ ] **Phase 15 ( 0%)**: VPN Network support
+- [ ] **Phase 16 ( 0%)**: JIT Compile
 
 ## Dependencies
 
@@ -95,6 +97,7 @@ npm run build
 ## References
 
 - [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
-- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator, sorta
 - [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
+- [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
+- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator, sorta
 - [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info

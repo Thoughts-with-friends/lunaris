@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
-
+//! rtc.hpp
+//!
 /// Real Time Clock (RTC) for Nintendo DS
 /// Manages date, time, and alarm functionality via bit-banged serial protocol
 /// Alarm settings
@@ -78,6 +79,12 @@ pub struct RealTimeClock {
     output_bit_num: u32,
     /// Index in output buffer
     output_index: u32,
+}
+
+impl Default for RealTimeClock {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RealTimeClock {
@@ -398,11 +405,5 @@ impl RealTimeClock {
     /// Convert BCD to binary
     pub fn from_bcd(value: u8) -> u8 {
         ((value >> 4) * 10) + (value & 0xF)
-    }
-}
-
-impl Default for RealTimeClock {
-    fn default() -> Self {
-        Self::new()
     }
 }

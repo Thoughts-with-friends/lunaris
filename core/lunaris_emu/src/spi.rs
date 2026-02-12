@@ -116,7 +116,10 @@ impl SPIBus {
         Ok(())
     }
 
-    /// Handle touchscreen press
+    pub fn init_data(&mut self, firmware: Vec<u8>) -> Result<(), EmuError> {
+        todo!()
+    }
+
     pub fn touchscreen_press(&mut self, x: i32, y: i32) {
         self.touchscreen.press_event(x, y);
     }

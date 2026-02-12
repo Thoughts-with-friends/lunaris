@@ -142,12 +142,12 @@ impl WiFi {
     }
 
     /// Power on WiFi hardware
-    pub fn power_on(&mut self) -> Result<(), String> {
-        Ok(())
+    pub fn power_on(&mut self) {
+        todo!()
     }
 
     /// Power off WiFi hardware
-    pub fn power_off(&mut self) -> Result<(), String> {
-        Ok(())
+    pub fn power_off(&mut self) {
+        todo!()
     }
 }

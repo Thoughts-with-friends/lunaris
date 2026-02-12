@@ -4,7 +4,11 @@
 //!
 //! Core emulator system that manages CPU, memory, and all peripheral devices
 //! Handles the dual-CPU architecture of the Nintendo DS and system timing
+mod button;
+mod dma;
 pub mod emu_config;
+mod interrupt;
+mod load;
 mod read;
 mod read_arm7;
 mod read_arm9;
@@ -14,20 +18,17 @@ mod write;
 mod write_arm7;
 mod write_arm9;
 
-use snafu::ResultExt as _;
-use std::collections::VecDeque;
-
 use crate::cpu::arm_cpu::ArmCpu;
 use crate::cpu::coprocessor_15::Cp15;
 use lunaris_ds_audio::SPU;
-use lunaris_ds_gpu::gpu_root::{Gpu, gpu_reg::SchedulerEvent};
+use lunaris_ds_gpu::gpu_root::{Gpu, register::SchedulerEvent};
 use lunaris_ds_mem_const::*;
+use std::collections::VecDeque;
 
 use crate::cartridge::NDSCart;
 use crate::cpu::arm_cpu::CpuType;
 use crate::dma::NDSDma;
-use crate::error::{EmuError, FailedReadFileSnafu};
-use crate::interrupts::{Interrupt, InterruptRegs};
+use crate::interrupts::InterruptRegs;
 use crate::ipc::{IpcFifo, IpcSync};
 use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
@@ -252,71 +253,6 @@ impl Emulator {
         self.sqrt_result = (self.sqrt_param as f64).sqrt() as u32;
     }
 
-    /* ===== load (public) ===== */
-
-    /// Initialize emulator subsystems.
-    pub fn init(&mut self) -> i32 {
-        // self.arm9.set_cp15(&self.arm9_cp15);
-        // self.fifo7.receive_queue = &self.fifo7_queue;
-        // self.fifo7.send_queue = &self.fifo9_queue;
-
-        // self.fifo9.receive_queue = &self.fifo9_queue;
-        // self.fifo9.send_queue = &self.fifo7_queue;
-        0
-    }
-
-    /// Load firmware from internal source.
-    pub fn load_firmware(&mut self) -> Result<(), EmuError> {
-        let bin =
-            std::fs::read(&self.config.arm9_bios_path).with_context(|_| FailedReadFileSnafu {
-                path: &self.config.arm9_bios_path,
-            })?;
-        self.arm9_bios = BiosMem::User(bin);
-
-        let bin =
-            std::fs::read(&self.config.arm7_bios_path).with_context(|_| FailedReadFileSnafu {
-                path: &self.config.arm9_bios_path,
-            })?;
-        self.arm7_bios = BiosMem::User(bin);
-
-        self.spi.init(&self.config.firmware_path)
-    }
-
-    /// Load GBA BIOS.
-    pub fn load_bios_gba(&mut self, bios: &[u8]) {
-        unimplemented!("It is used in v2.");
-    }
-
-    /// Load ARM7 BIOS.
-    pub fn load_bios7(&mut self, bios: &[u8]) {
-        unimplemented!("It is not used in C++ and has no definition.");
-    }
-
-    /// Load ARM9 BIOS.
-    pub fn load_bios9(&mut self, bios: &[u8]) {
-        unimplemented!("It is not used in C++ and has no definition.");
-    }
-
-    /// Load firmware image.
-    pub fn load_firmware_image(&mut self, firmware: &[u8]) {
-        unimplemented!();
-    }
-
-    /// Load Slot-2 cartridge data.
-    pub fn load_slot2(&mut self, data: &[u8]) {
-        unimplemented!();
-    }
-
-    /// Load save database by name.
-    pub fn load_save_database(&mut self, name: &str) {
-        unimplemented!();
-    }
-
-    /// Load a ROM file.
-    pub fn load_rom(&mut self, rom_name: &str) -> i32 {
-        unimplemented!();
-    }
-
     /* ===== mark (public) ===== */
 
     /// Mark an address as ARM instruction.
@@ -333,7 +269,79 @@ impl Emulator {
 
     /// Power on the system.
     pub fn power_on(&mut self) {
-        unimplemented!();
+        for bg in &mut self.config.bg_enable {
+            *bg = true;
+        }
+        self.cycle_count = 0;
+        self.arm9.power_on();
+        self.arm7.power_on();
+        self.arm9_cp15.power_on();
+        self.dma.power_on();
+        self.gpu.power_on();
+        self.spu.power_on();
+        self.nds_timing.power_on();
+        self.rtc.init();
+        self.total_timestamp = 20; //Give the processors some time to run
+        self.pow_cnt2.speakers = true;
+        self.pow_cnt2.wifi = false;
+
+        self.system_timestamp = 0;
+        self.next_event_time = 0xffffffff;
+        self.gpu_event.activation_time = 0;
+        self.gpu_event.id = 0;
+        self.dma_event.activation_time = 0;
+        self.dma_event.processing = false;
+        self.dma_event.id = 0;
+
+        self.postflg7 = 0;
+        self.postflg9 = 0;
+        self.aux_spi_cnt = 0;
+        self.sio_cnt = 0;
+        self.bios_prot = 0;
+        self.hstep_even = true;
+
+        self.sqrtcnt = 0;
+        self.divcnt = 0;
+
+        self.key_input.button_a = false;
+        self.key_input.button_b = false;
+        self.key_input.select = false;
+        self.key_input.start = false;
+        self.key_input.right = false;
+        self.key_input.left = false;
+        self.key_input.up = false;
+        self.key_input.down = false;
+        self.key_input.button_r = false;
+        self.key_input.button_l = false;
+
+        self.ext_key_in.button_x = false;
+        self.ext_key_in.button_y = false;
+        self.ext_key_in.pen_down = false;
+        self.ext_key_in.hinge_closed = false;
+
+        self.ipc_sync_nds7.input = 0;
+        self.ipc_sync_nds9.input = 0;
+        self.fifo7.write_cnt(0);
+        self.fifo7.error = false;
+        self.fifo9.write_cnt(0);
+        self.fifo9.error = false;
+        self.fifo7.recent_word = 0;
+        self.fifo9.recent_word = 0;
+
+        self.main_ram.clear();
+        self.shared_wram.clear();
+        self.arm7_wram.clear();
+
+        self.int7_reg.ime = 0;
+        self.int7_reg.irq_enable = 0;
+        self.int7_reg.irq_flags = 0;
+        self.int9_reg.ime = 0;
+        self.int9_reg.irq_enable = 0;
+        self.int9_reg.irq_flags = 0;
+
+        if self.config.direct_boot_enabled {
+            self.direct_boot();
+        }
     }
 
     /// Perform a direct boot sequence.
@@ -457,7 +465,7 @@ impl Emulator {
         unimplemented!();
     }
 
-    /* DMA ===== (public) ===== */
+    /* ===== DMA (public) ===== */
 
     /// Request HBLANK DMA.
     pub fn hblank_dma_request(&mut self) {
@@ -527,11 +535,10 @@ impl Emulator {
         }
     }
 
-    /* ===== read and write arm (public) =====
-      - moved read_arm7/read_arm9, write_arm7/write_arm9
-    */
+    // ===== read and write arm =====
+    // - moved read_arm7/read_arm9, write_arm7/write_arm9
 
-    /* ===== cartrige (public) ===== */
+    /* ===== cartrige ===== */
 
     pub fn cart_copy_keybuffer(&self, buffer: &mut [u8]) {
         if let Some(bios) = &self.arm7_bios.get(0x30..0x30 + 0x1048) {
@@ -550,151 +557,5 @@ impl Emulator {
             self.main_ram[addr] = bytes[0];
             self.main_ram[addr + 1] = bytes[1];
         }
-    }
-
-    /* ===== interrupt (public) ===== */
-
-    /// Request an interrupt for ARM7.
-    pub fn request_interrupt7(&mut self, id: Interrupt) {
-        self.int7_reg.irq_flags |= 1 << (id as u32);
-    }
-
-    /// Request an interrupt for ARM9.
-    pub fn request_interrupt9(&mut self, id: Interrupt) {
-        self.int9_reg.irq_flags |= 1 << (id as u32);
-    }
-
-    /// Request a GBA interrupt.
-    pub fn request_interrupt_gba(&mut self, id: i32) {
-        self.int7_reg.irq_flags |= 1 << (id as u32);
-    }
-
-    /// Check if ARM7 has cartridge access rights.
-    pub fn arm7_has_cart_rights(&self) -> bool {
-        todo!()
-    }
-
-    /* ===== Button input handling (public) ===== */
-
-    /// Handle up button press
-    pub fn button_up_pressed(&mut self) {
-        self.key_input.up = true;
-    }
-
-    /// Handle down button press
-    pub fn button_down_pressed(&mut self) {
-        self.key_input.down = true;
-    }
-
-    /// Handle left button press
-    pub fn button_left_pressed(&mut self) {
-        self.key_input.left = true;
-    }
-
-    /// Handle start button press
-    pub fn button_start_pressed(&mut self) {
-        self.key_input.start = true;
-    }
-
-    /// Handle select button press
-    pub fn button_select_pressed(&mut self) {
-        self.key_input.select = true;
-    }
-
-    /// Handle A button press
-    pub fn button_a_pressed(&mut self) {
-        self.key_input.button_a = true;
-    }
-
-    /// Handle B button press
-    pub fn button_b_pressed(&mut self) {
-        self.key_input.button_b = true;
-    }
-
-    /// Handle X button press
-    pub fn button_x_pressed(&mut self) {
-        self.ext_key_in.button_x = true;
-    }
-
-    /// Handle Y button press
-    pub fn button_y_pressed(&mut self) {
-        self.ext_key_in.button_y = true;
-    }
-
-    /// Handle L button press
-    pub fn button_l_pressed(&mut self) {
-        self.key_input.button_l = true;
-    }
-
-    /// Handle R button press
-    pub fn button_r_pressed(&mut self) {
-        self.key_input.button_r = true;
-    }
-
-    /// Handle right button press
-    pub fn button_right_pressed(&mut self) {
-        self.key_input.right = true;
-    }
-
-    /* ===== Button release handling (public) ===== */
-
-    /// Handle up button release
-    pub fn button_up_released(&mut self) {
-        self.key_input.up = false;
-    }
-
-    /// Handle down button release
-    pub fn button_down_released(&mut self) {
-        self.key_input.down = false;
-    }
-
-    /// Handle left button release
-    pub fn button_left_released(&mut self) {
-        self.key_input.left = false;
-    }
-
-    /// Handle right button release
-    pub fn button_right_released(&mut self) {
-        self.key_input.right = false;
-    }
-
-    /// Handle start button release
-    pub fn button_start_released(&mut self) {
-        self.key_input.start = false;
-    }
-
-    /// Handle select button release
-    pub fn button_select_released(&mut self) {
-        self.key_input.select = false;
-    }
-
-    /// Handle A button release
-    pub fn button_a_released(&mut self) {
-        self.key_input.button_a = false;
-    }
-
-    /// Handle B button release
-    pub fn button_b_released(&mut self) {
-        self.key_input.button_b = false;
-    }
-
-    /// Handle X button release
-    pub fn button_x_released(&mut self) {
-        self.ext_key_in.button_x = false;
-    }
-
-    /// Handle Y button release
-    pub fn button_y_released(&mut self) {
-        self.ext_key_in.button_y = false;
-    }
-
-    /// Handle L button release
-    pub fn button_l_released(&mut self) {
-        self.key_input.button_l = false;
-    }
-
-    /// Handle R button release
-    pub fn button_r_released(&mut self) {
-        self.key_input.button_r = false;
     }
 }

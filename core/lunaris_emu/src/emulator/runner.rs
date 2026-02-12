@@ -15,7 +15,7 @@ impl Emulator {
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
                 self.execute(CpuType::Arm9);
                 self.run_timers9((self.arm9.cycles_ran() >> 1) as i32);
-                self.gpu.run_3D((self.arm9.cycles_ran() >> 1) as u64);
+                self.gpu.run_3d((self.arm9.cycles_ran() >> 1) as u64);
             }
 
             // Now handle ARM7
@@ -30,7 +30,7 @@ impl Emulator {
 
             if self.system_timestamp >= self.dma_event.activation_time && self.dma_event.processing
             {
-                self.dma.handle_event(&self.dma_event);
+                self.dma_handle_event(); // DMA Method
             }
 
             self.cart.run(8);
@@ -88,7 +88,7 @@ impl Emulator {
         } else {
             {
                 let reg_15 = self.get_cpu_mut(cpu_type).regs[15];
-                let value = self.read_word(reg_15 - 4, cpu_type) as u32;
+                let value = self.read_word(reg_15 - 4, cpu_type);
                 let arm = self.get_cpu_mut(cpu_type);
 
                 arm.current_instr = value;

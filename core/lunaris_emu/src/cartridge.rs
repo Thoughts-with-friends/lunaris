@@ -307,6 +307,12 @@ pub struct NDSCart {
     keycode: [u32; 3],
 }
 
+impl Default for NDSCart {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NDSCart {
     /// Create new cartridge controller
     pub fn new() -> Self {
@@ -499,11 +505,5 @@ impl NDSCart {
     /// Initialize keycode from cartridge ID
     fn init_keycode(&mut self, _idcode: u32, _level: i32, _modulo: u32) {
         // Initialize encryption keycode from chip ID and level
-    }
-}
-
-impl Default for NDSCart {
-    fn default() -> Self {
-        Self::new()
     }
 }
