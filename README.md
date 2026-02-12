@@ -54,6 +54,16 @@ A Nintendo DS emulator - Rust-based
 
 ## How to Build
 
+- Install nvm: Example - v0.39.7 on Linux.
+
+```shell
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+nvm install --lts
+npm -v  # e.g. 11.10.0
+```
+
+- Build
+
 ```shell
 npm i
 npm run build
@@ -88,7 +98,7 @@ npm run build
 
 - Frontend: ./gui/tauri
   - tauri-build = 2.5.3
-  - ...
+  - [Other Web Libraries](gui/tauri/package.json)
 
 ## CI Tests
 

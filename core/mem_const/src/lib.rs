@@ -88,37 +88,37 @@ pub const GBA_RAM_START: u32 = 0x0A00_0000;
 
 // Memory Sizes
 
-/// Size of VRAM A in bytes
+/// Size of VRAM A in bytes: 128KiB
 pub const VRAM_A_SIZE: u32 = 1024 * 128;
 
-/// Size of VRAM B in bytes
+/// Size of VRAM B in bytes: 128KiB
 pub const VRAM_B_SIZE: u32 = 1024 * 128;
 
-/// Size of VRAM C in bytes
+/// Size of VRAM C in bytes: 128KiB
 pub const VRAM_C_SIZE: u32 = 1024 * 128;
 
-/// Size of VRAM D in bytes
+/// Size of VRAM D in bytes: 128KiB
 pub const VRAM_D_SIZE: u32 = 1024 * 128;
 
-/// Size of VRAM E in bytes
+/// Size of VRAM E in bytes: 64KiB
 pub const VRAM_E_SIZE: u32 = 1024 * 64;
 
-/// Size of VRAM F in bytes
+/// Size of VRAM F in bytes: 16KiB
 pub const VRAM_F_SIZE: u32 = 1024 * 16;
 
-/// Size of VRAM G in bytes
+/// Size of VRAM G in bytes: 16KiB
 pub const VRAM_G_SIZE: u32 = 1024 * 16;
 
-/// Size of VRAM H in bytes
+/// Size of VRAM H in bytes: 32KiB
 pub const VRAM_H_SIZE: u32 = 1024 * 32;
 
-/// Size of VRAM I in bytes
+/// Size of VRAM I in bytes: 16KiB
 pub const VRAM_I_SIZE: u32 = 1024 * 16;
 
-/// Size of ARM9 BIOS in bytes
+/// Size of ARM9 BIOS in bytes: 4KiB
 pub const BIOS9_SIZE: usize = 1024 * 4;
 
-/// Size of ARM7 BIOS in bytes
+/// Size of ARM7 BIOS in bytes: 16KiB
 pub const BIOS7_SIZE: usize = 1024 * 16;
 
 // Masks

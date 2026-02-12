@@ -217,22 +217,19 @@ impl ArmCpu {
         let mut code_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
         let mut data_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
 
-        //Fill waitstates with dummy values to prevent bugs
-        for i in 0..4 {
-            for j in 0..5 {
-                code_waitstates[i][j] = 1;
-            }
-            for j in 0..6 {
-                code_waitstates[i][j] = 1;
+        // Fill waitstates with dummy values to prevent bugs
+        for row in code_waitstates.iter_mut().take(4) {
+            for cell in row.iter_mut() {
+                *cell = 1;
             }
         }
 
-        //Initialize waitstates based upon GBATek's info
-        //Note that 8-bit reads/writes have the same timings as 16 bit
+        // Initialize waitstates based upon GBATek's info
+        // Note that 8-bit reads/writes have the same timings as 16 bit
         if cpu_id <= 0 {
-            //ARM9 - timings here are doubled to represent 66 MHz
-            //Of interest is that the ARM9 is incapable of sequential code fetches
-            //Thus ALL code fetches are subject to the three cycle penalty... so much for 66 MHz
+            // ARM9 - timings here are doubled to represent 66 MHz
+            // Of interest is that the ARM9 is incapable of sequential code fetches
+            // Thus ALL code fetches are subject to the three cycle penalty... so much for 66 MHz
             code_waitstates[0x2][0] = 1;
             code_waitstates[0x3][0] = 8;
             code_waitstates[0x4][0] = 8;
@@ -265,8 +262,8 @@ impl ArmCpu {
             code_waitstates[0x7][3] = 4;
             code_waitstates[0xF][3] = 4;
 
-            //Nonsequential data fetches are also subject to a three cycle penalty
-            //However the ARM9 *can* do sequential data fetches, allowing for some speedup
+            // Nonsequential data fetches are also subject to a three cycle penalty
+            // However the ARM9 *can* do sequential data fetches, allowing for some speedup
             data_waitstates[0x2][0] = 1;
             data_waitstates[0x3][0] = 2;
             data_waitstates[0x4][0] = 2;
@@ -299,7 +296,7 @@ impl ArmCpu {
             data_waitstates[0x7][3] = 2;
             data_waitstates[0xF][3] = 2;
         } else {
-            //ARM7 - not as much here as most waitstates only equal 1
+            // ARM7 - not as much here as most waitstates only equal 1
             code_waitstates[0x2][0] = 2;
             code_waitstates[0x5][0] = 2;
             code_waitstates[0x6][0] = 2;

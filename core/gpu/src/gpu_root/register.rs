@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! gpu.hpp
+//!
 /// Scheduler event entry for timing-based events
 #[derive(Debug, Clone, Default)]
 pub struct SchedulerEvent {

@@ -1,4 +1,8 @@
-/// Graphics Processing Unit (GPU) implementation for Nintendo DS
+// SPDX-FileCopyrightText: (C) 2017 PSISP
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! gpu.hpp
+//!
+// Graphics Processing Unit (GPU) implementation for Nintendo DS
 /// Handles 2D and 3D rendering, VRAM management, and display output
 pub(crate) mod arm_rw;
 pub(crate) mod draw_scanline;
@@ -15,17 +19,10 @@ pub(crate) mod writer;
 use crate::gpu_2d::Gpu2DEngine;
 use crate::gpu_3d::structs::Gpu3D;
 use crate::gpu_root::register::{DispStatReg, PowerCtrlReg, SchedulerEvent, VramBankCfg};
-
-/// VRAM memory constants
-pub const VRAM_A_SIZE: usize = 128 * 1024; // 128KB
-pub const VRAM_B_SIZE: usize = 128 * 1024; // 128KB
-pub const VRAM_C_SIZE: usize = 128 * 1024; // 128KB
-pub const VRAM_D_SIZE: usize = 128 * 1024; // 128KB
-pub const VRAM_E_SIZE: usize = 64 * 1024; // 64KB
-pub const VRAM_F_SIZE: usize = 16 * 1024; // 16KB
-pub const VRAM_G_SIZE: usize = 16 * 1024; // 16KB
-pub const VRAM_H_SIZE: usize = 32 * 1024; // 32KB
-pub const VRAM_I_SIZE: usize = 16 * 1024; // 16KB
+use lunaris_ds_mem_const::{
+    VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE, VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE,
+    VRAM_H_SIZE, VRAM_I_SIZE,
+};
 
 /// Graphics Processing Unit
 /// Manages 2D and 3D rendering for both screens
@@ -107,15 +104,15 @@ impl Gpu {
 
             cycles: 0,
 
-            vram_a: vec![0u8; VRAM_A_SIZE],
-            vram_b: vec![0u8; VRAM_B_SIZE],
-            vram_c: vec![0u8; VRAM_C_SIZE],
-            vram_d: vec![0u8; VRAM_D_SIZE],
-            vram_e: vec![0u8; VRAM_E_SIZE],
-            vram_f: vec![0u8; VRAM_F_SIZE],
-            vram_g: vec![0u8; VRAM_G_SIZE],
-            vram_h: vec![0u8; VRAM_H_SIZE],
-            vram_i: vec![0u8; VRAM_I_SIZE],
+            vram_a: vec![0u8; VRAM_A_SIZE as usize],
+            vram_b: vec![0u8; VRAM_B_SIZE as usize],
+            vram_c: vec![0u8; VRAM_C_SIZE as usize],
+            vram_d: vec![0u8; VRAM_D_SIZE as usize],
+            vram_e: vec![0u8; VRAM_E_SIZE as usize],
+            vram_f: vec![0u8; VRAM_F_SIZE as usize],
+            vram_g: vec![0u8; VRAM_G_SIZE as usize],
+            vram_h: vec![0u8; VRAM_H_SIZE as usize],
+            vram_i: vec![0u8; VRAM_I_SIZE as usize],
 
             palette_upper: vec![0u8; 1024],
             palette_lower: vec![0u8; 1024],
@@ -156,29 +153,29 @@ pub fn read_palette_value(bytes: &[u8], address: u32) -> u16 {
 }
 
 impl Gpu {
-    pub fn draw_bg_txt_line(&self, index: i32, engine_a: bool) {}
-    pub fn draw_bg_extended_line(&self, index: i32, engine_a: bool) {}
-    pub fn draw_sprite_line(&self, engine_a: bool) {}
+    pub fn draw_bg_txt_line(&self, index: i32, engine_a: bool) {
+        todo!()
+    }
+    pub fn draw_bg_extended_line(&self, index: i32, engine_a: bool) {
+        todo!()
+    }
+    pub fn draw_sprite_line(&self, engine_a: bool) {
+        todo!()
+    }
 
     // moved draw_scanline.rs
     // pub fn draw_scanline(&self) {}
+    // pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8)
 
     /// Get current cycle count
     pub fn get_cycles(&self) -> u64 {
         self.cycles
     }
 
-    pub fn draw_3D_scanline(
-        &self,
-        framebuffer: &[u32],
-        bg_priorities: [u8; 256],
-        bg0_priority: u8,
-    ) {
-    }
-
     /// Power on GPU
     pub fn power_on(&mut self) {
         todo!()
+
         // eng_3D.power_on();
         // cycles = 0;
         // frame_complete = false;
