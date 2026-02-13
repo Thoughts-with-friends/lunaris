@@ -33,9 +33,13 @@ impl Emulator {
                 self.dma_handle_event(); // DMA Method
             }
 
-            self.cart.run(8);
+            self.cartridge_run(8);
         }
-        self.cart.save_check();
+
+        if let Err(err) = self.cart.save_check() {
+            #[cfg(feature = "tracing")]
+            tracing::error!("{err}");
+        };
     }
 
     pub fn execute(&mut self, cpu_type: CpuType) {
@@ -74,12 +78,13 @@ impl Emulator {
 
         // Fetch and execute instruction
         let thumb_on = self.get_cpu_mut(cpu_type).cpsr.thumb_on;
+        let reg_15 = self.get_cpu(cpu_type).regs[15];
+
         if thumb_on {
             {
-                let reg_15 = self.get_cpu_mut(cpu_type).regs[15];
                 let value = self.read_halfword(reg_15 - 2, cpu_type) as u32;
-                let arm = self.get_cpu_mut(cpu_type);
 
+                let arm = self.get_cpu_mut(cpu_type);
                 arm.current_instr = value;
                 arm.add_s16_code(reg_15 - 2, 1);
                 arm.regs[15] += 2;
@@ -87,10 +92,9 @@ impl Emulator {
             thumb_interpret(self, cpu_type);
         } else {
             {
-                let reg_15 = self.get_cpu_mut(cpu_type).regs[15];
                 let value = self.read_word(reg_15 - 4, cpu_type);
-                let arm = self.get_cpu_mut(cpu_type);
 
+                let arm = self.get_cpu_mut(cpu_type);
                 arm.current_instr = value;
                 arm.add_s32_code(arm.regs[15] - 4, 1);
                 arm.regs[15] += 4;

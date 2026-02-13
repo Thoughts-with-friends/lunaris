@@ -5,6 +5,7 @@
 //! Core emulator system that manages CPU, memory, and all peripheral devices
 //! Handles the dual-CPU architecture of the Nintendo DS and system timing
 mod button;
+mod cartridge;
 mod dma;
 pub mod emu_config;
 mod interrupt;
@@ -387,12 +388,22 @@ impl Emulator {
 
     /// Run emulator in debug mode.
     pub fn debug(&mut self) {
-        unimplemented!();
-    }
-
-    /// Run emulator in GBA mode.
-    pub fn run_gba(&mut self) {
-        unimplemented!();
+        #[cfg(feature = "tracing")]
+        {
+            //arm7.set_disassembly(!arm7.can_disassemble());
+            //arm9.print_info();
+            self.config.test = !self.config.test;
+            tracing::debug!(
+                "IE9: {:08X} IF9: {:08X}",
+                self.int9_reg.irq_enable,
+                self.int9_reg.irq_flags
+            );
+            tracing::debug!(
+                "IE7: {:08X} IF7: {:08X}",
+                self.int7_reg.irq_enable,
+                self.int7_reg.irq_flags
+            );
+        }
     }
 
     /// Check whether a CPU is requesting an interrupt.
@@ -407,18 +418,6 @@ impl Emulator {
         }
     }
 
-    /* ===== GBA (public) ===== */
-
-    /// Check if emulator is currently in GBA mode.
-    pub fn is_gba(&self) -> bool {
-        unimplemented!();
-    }
-
-    /// Start GBA mode.
-    pub fn start_gba_mode(&mut self, throw_exception: bool) {
-        unimplemented!();
-    }
-
     /// Get current system timestamp.
     pub fn get_timestamp(&self) -> u64 {
         self.total_timestamp
@@ -427,25 +426,23 @@ impl Emulator {
     /* ===== get frame(public) ===== */
 
     /// Copy upper screen framebuffer.
-    pub fn get_upper_frame(&self) -> Vec<u32> {
-        // Return upper screen pixel data
-        vec![0u32; 256 * 192]
+    pub fn get_upper_frame(&self, buffer: &mut [u32]) {
+        self.gpu.get_upper_frame(buffer);
     }
 
     /// Copy lower screen framebuffer.
-    pub fn get_lower_frame(&self) -> Vec<u32> {
-        // Return lower screen pixel data
-        vec![0u32; 256 * 192]
+    pub fn get_lower_frame(&self, buffer: &mut [u32]) {
+        self.gpu.get_lower_frame(buffer);
     }
 
     /// Set upper screen framebuffer.
-    pub fn set_upper_screen(&mut self, buffer: &[u32]) {
-        unimplemented!();
+    pub fn set_upper_screen(&mut self, buffer: Vec<u32>) {
+        self.gpu.set_upper_buffer(buffer);
     }
 
     /// Set lower screen framebuffer.
-    pub fn set_lower_screen(&mut self, buffer: &[u32]) {
-        unimplemented!();
+    pub fn set_lower_screen(&mut self, buffer: Vec<u32>) {
+        self.gpu.set_lower_buffer(buffer);
     }
 
     /* frame, display and dma ===== (public) ===== */
@@ -462,24 +459,29 @@ impl Emulator {
 
     /// Check if DMA is active for a CPU.
     pub fn dma_active(&self) -> bool {
-        unimplemented!();
+        self.dma.is_active()
     }
 
-    /* ===== DMA (public) ===== */
+    /* ===== DMA (public)  ===== */
+
+    // inlined these functions.
+    // pub fn hblank_dma_request(&mut self);
+    // pub fn gamecart_dma_request(&mut self);
+    // pub fn gxfifo_dma_request(&mut self);
 
     /// Request HBLANK DMA.
     pub fn hblank_dma_request(&mut self) {
-        unimplemented!();
+        self.hblank_request() // inline
     }
 
     /// Request game cartridge DMA.
     pub fn gamecart_dma_request(&mut self) {
-        unimplemented!();
+        self.gamecart_request() // wrapping
     }
 
     /// Request GX FIFO DMA.
     pub fn gxfifo_dma_request(&mut self) {
-        unimplemented!();
+        self.gfxfifo_request(); // wrapping
     }
 
     /// Check GX FIFO DMA status.

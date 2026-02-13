@@ -5,3 +5,6 @@ docs/icon.drawio.svg
 .tanstack/
 dist/
 node_modules/
+
+*.nds
+core/test_rom/

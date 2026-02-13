@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! emulator.hpp
 //!
+use std::path::Path;
+
+use crate::cartridge::CartridgeError;
 use crate::emulator::Emulator;
 use crate::emulator::emu_config::BiosMem;
 use crate::error::{EmuError, FailedReadFileSnafu};
@@ -38,11 +41,6 @@ impl Emulator {
         self.spi.init(&self.config.firmware_path)
     }
 
-    /// Load GBA BIOS.
-    pub fn load_bios_gba(&mut self, bios: &[u8]) {
-        unimplemented!("It is used in v2.");
-    }
-
     /// Load ARM7 BIOS.
     pub fn load_bios7(&mut self, bios: &[u8]) {
         self.arm7_bios = BiosMem::User(bios.to_owned());
@@ -55,22 +53,20 @@ impl Emulator {
 
     /// Load firmware image.
     pub fn load_firmware_image(&mut self, firmware: &[u8]) {
-        todo!()
+        let _ = firmware;
+        unimplemented!("It is not used in C++.");
         // self.spi.init_data(BiosMem::User(firmware.to_owned()));
     }
 
-    /// Load Slot-2 cartridge data.
-    pub fn load_slot2(&mut self, data: &[u8]) {
-        unimplemented!();
-    }
-
     /// Load save database by name.
-    pub fn load_save_database(&mut self, name: &str) {
-        unimplemented!();
+    pub fn load_save_database(&mut self, name: &Path) -> Result<(), CartridgeError> {
+        self.cart.load_database(name)
     }
 
     /// Load a ROM file.
-    pub fn load_rom(&mut self, rom_name: &str) -> i32 {
-        unimplemented!();
+    pub fn load_rom(&mut self, rom_path: &Path) -> Result<(), CartridgeError> {
+        self.cartridge_load_rom(rom_path)?;
+        self.power_on();
+        Ok(())
     }
 }

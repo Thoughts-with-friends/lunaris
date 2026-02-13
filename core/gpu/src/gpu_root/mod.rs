@@ -217,6 +217,7 @@ impl Gpu {
     }
 
     /// Get upper screen framebuffer data
+    #[inline]
     pub fn get_upper_frame(&self, buffer: &mut [u32]) {
         let engine = match self.power_control_reg.swap_display {
             true => &self.engine_upper,
@@ -226,6 +227,7 @@ impl Gpu {
     }
 
     /// Get lower screen framebuffer data
+    #[inline]
     pub fn get_lower_frame(&self, buffer: &mut [u32]) {
         let engine = match self.power_control_reg.swap_display {
             true => &self.engine_lower,

@@ -32,6 +32,11 @@ impl Default for Alarm {
     }
 }
 
+// https://stackoverflow.com/questions/1408361/unsigned-integer-to-bcd-conversion
+fn byte_to_bcd(byte: u8) -> u8 {
+    (byte / 10 * 16) + (byte % 10)
+}
+
 /// Real Time Clock
 /// Provides date/time tracking and alarm functionality
 #[derive(Debug)]
@@ -118,27 +123,140 @@ impl RealTimeClock {
     }
 
     /// Initialize RTC with default values
-    pub fn init(&mut self) -> Result<(), String> {
+    pub fn init(&mut self) {
         // Initialize to default date/time (2000-01-01 00:00:00)
-        self.year = 0;
-        self.month = 1;
-        self.day = 1;
-        self.day_of_week = 6; // Saturday
-        self.hour = 0;
-        self.minute = 0;
-        self.second = 0;
 
+        //Place a hardcoded date into the RTC
+        //For those curious, this is January 1st, 2005, a couple of months after the release of the NDS
+        self.year = 0x05;
+        self.month = 0x1;
+        self.day = 0x1;
+        self.day_of_week = 0x0;
+
+        //Set the time to midnight
+        self.hour = 0x12;
+        self.minute = 0x0;
+        self.second = 0x0;
+
+        self.io_reg = 0;
         self.stat1_reg = 0;
         self.stat2_reg = 0;
-
-        Ok(())
     }
 
     /// Process input data from serial protocol
-    pub fn interpret_input(&mut self) -> Result<(), String> {
-        // Parse command and data from bit-banged input
-        // Different commands: read, write, status, etc.
-        Ok(())
+    pub fn interpret_input(&mut self) {
+        if self.input_index == 0 {
+            self.command = (self.input & 0x70) >> 4;
+
+            if (self.input & 0x80) != 0 {
+                match self.command {
+                    0 => self.internal_output[0] = self.stat1_reg,
+                    1 => {
+                        if (self.stat2_reg & 0x4) != 0 {
+                            self.internal_output[0] = self.alarm1.day_of_week;
+                            self.internal_output[1] = self.alarm1.hour;
+                            self.internal_output[2] = self.alarm1.minute;
+                        } else {
+                            self.internal_output[0] = self.alarm1.minute;
+                        }
+                    }
+                    2 => {
+                        use chrono::{Datelike, Local, Timelike};
+
+                        let now = Local::now();
+
+                        // tm_year - 100
+                        // C: tm_year = years since 1900
+                        // e.g.: 2025 → 125 → 125 - 100 = 25
+                        self.internal_output[0] = byte_to_bcd((now.year() - 2000) as u8);
+
+                        // tm_mon + 1 (1 based index)
+                        self.internal_output[1] = byte_to_bcd(now.month() as u8);
+
+                        // tm_mday
+                        self.internal_output[2] = byte_to_bcd(now.day() as u8);
+
+                        // tm_wday (C: 0 = Sunday)
+                        self.internal_output[3] =
+                            byte_to_bcd(now.weekday().num_days_from_sunday() as u8);
+
+                        // hour
+                        let hour = now.hour() as u8;
+
+                        if (self.stat1_reg & 0x2) > 0 {
+                            self.internal_output[4] = byte_to_bcd(hour); // 24 hour mode
+                        } else {
+                            self.internal_output[4] = byte_to_bcd(hour % 12); // 12 hour mode
+                        }
+
+                        self.internal_output[4] |= ((hour >= 12) as u8) << 6; // PM flag (bit 6)
+                        self.internal_output[5] = byte_to_bcd(now.minute() as u8); // minute
+                        self.internal_output[6] = byte_to_bcd(now.second() as u8); // second
+                    }
+
+                    4 => self.internal_output[0] = self.stat2_reg,
+                    5 => {
+                        self.internal_output[0] = self.alarm2.day_of_week;
+                        self.internal_output[1] = self.alarm2.hour;
+                        self.internal_output[2] = self.alarm2.minute;
+                    }
+                    6 => {
+                        self.internal_output[0] = self.hour;
+                        self.internal_output[1] = self.minute;
+                        self.internal_output[2] = self.second;
+                    }
+
+                    _ => {
+                        #[cfg(feature = "tracing")]
+                        tracing::error!("Unrecognized read from RTC command {}", self.command);
+                    }
+                }
+            }
+        } else {
+            match self.command {
+                0 => {
+                    self.stat1_reg = self.input as u8;
+                }
+
+                1 => {
+                    if (self.stat2_reg & 0x4) != 0 {
+                        match self.input_index {
+                            1 => self.alarm1.day_of_week = self.input as u8,
+                            2 => self.alarm1.hour = self.input as u8,
+                            3 => self.alarm1.minute = self.input as u8,
+                            _ => {}
+                        }
+                    } else if self.input_index == 1 {
+                        self.alarm1.minute = self.input as u8;
+                    }
+                }
+                2 => {} // do nothing
+                3 => {} // TODO: clock adjustment
+
+                4 => {
+                    if self.input_index == 1 {
+                        self.stat2_reg = self.input as u8;
+                    }
+                }
+
+                5 => match self.input_index {
+                    1 => self.alarm2.day_of_week = self.input as u8,
+                    2 => self.alarm2.hour = self.input as u8,
+                    3 => self.alarm2.minute = self.input as u8,
+                    _ => {}
+                },
+                _ => {
+                    #[cfg(feature = "tracing")]
+                    tracing::error!(
+                        "Unrecognized write ${:02X} to RTC command {}",
+                        self.input,
+                        self.command
+                    );
+                }
+            }
+        }
+
+        self.input_index += 1;
     }
 
     /// Read from RTC
@@ -148,7 +266,6 @@ impl RealTimeClock {
 
     /// Write to the RTC register.
     pub fn write(&mut self, mut value: u16, is_byte: bool) {
-        // If this is a byte write, merge with the previous high byte.
         if is_byte {
             value |= self.io_reg & 0xFF00;
         }
@@ -207,203 +324,7 @@ impl RealTimeClock {
         if is_writing {
             self.io_reg = value;
         } else {
-            self.io_reg = (self.io_reg & 0x0001) | (value & 0xFFFE);
+            self.io_reg = (self.io_reg & 0x0001) | (value & 0xFE);
         }
-    }
-
-    // Getter methods
-
-    /// Get current year (0-99)
-    pub fn get_year(&self) -> u8 {
-        self.year
-    }
-
-    /// Get current month (1-12)
-    pub fn get_month(&self) -> u8 {
-        self.month
-    }
-
-    /// Get current day (1-31)
-    pub fn get_day(&self) -> u8 {
-        self.day
-    }
-
-    /// Get current day of week (0=Sun, 6=Sat)
-    pub fn get_day_of_week(&self) -> u8 {
-        self.day_of_week
-    }
-
-    /// Get current hour (0-23)
-    pub fn get_hour(&self) -> u8 {
-        self.hour
-    }
-
-    /// Get current minute (0-59)
-    pub fn get_minute(&self) -> u8 {
-        self.minute
-    }
-
-    /// Get current second (0-59)
-    pub fn get_second(&self) -> u8 {
-        self.second
-    }
-
-    // Setter methods
-
-    /// Set year (0-99 for 2000-2099)
-    pub fn set_year(&mut self, year: u8) {
-        self.year = year;
-    }
-
-    /// Set month (1-12)
-    pub fn set_month(&mut self, month: u8) {
-        self.month = month.min(12).max(1);
-    }
-
-    /// Set day (1-31)
-    pub fn set_day(&mut self, day: u8) {
-        self.day = day.min(31).max(1);
-    }
-
-    /// Set day of week (0=Sun, 6=Sat)
-    pub fn set_day_of_week(&mut self, dow: u8) {
-        self.day_of_week = dow % 7;
-    }
-
-    /// Set hour (0-23)
-    pub fn set_hour(&mut self, hour: u8) {
-        self.hour = hour % 24;
-    }
-
-    /// Set minute (0-59)
-    pub fn set_minute(&mut self, minute: u8) {
-        self.minute = minute % 60;
-    }
-
-    /// Set second (0-59)
-    pub fn set_second(&mut self, second: u8) {
-        self.second = second % 60;
-    }
-
-    // Alarm methods
-
-    /// Get alarm 1
-    pub fn get_alarm1(&self) -> Alarm {
-        self.alarm1
-    }
-
-    /// Set alarm 1
-    pub fn set_alarm1(&mut self, alarm: Alarm) {
-        self.alarm1 = alarm;
-    }
-
-    /// Get alarm 2
-    pub fn get_alarm2(&self) -> Alarm {
-        self.alarm2
-    }
-
-    /// Set alarm 2
-    pub fn set_alarm2(&mut self, alarm: Alarm) {
-        self.alarm2 = alarm;
-    }
-
-    // Status register methods
-
-    /// Get status register 1
-    pub fn get_stat1(&self) -> u8 {
-        self.stat1_reg
-    }
-
-    /// Set status register 1
-    pub fn set_stat1(&mut self, value: u8) {
-        self.stat1_reg = value;
-    }
-
-    /// Get status register 2
-    pub fn get_stat2(&self) -> u8 {
-        self.stat2_reg
-    }
-
-    /// Set status register 2
-    pub fn set_stat2(&mut self, value: u8) {
-        self.stat2_reg = value;
-    }
-
-    // Helper methods
-
-    /// Increment second and handle overflow
-    pub fn tick_second(&mut self) {
-        self.second += 1;
-        if self.second >= 60 {
-            self.second = 0;
-            self.tick_minute();
-        }
-    }
-
-    /// Increment minute and handle overflow
-    fn tick_minute(&mut self) {
-        self.minute += 1;
-        if self.minute >= 60 {
-            self.minute = 0;
-            self.tick_hour();
-        }
-    }
-
-    /// Increment hour and handle overflow
-    fn tick_hour(&mut self) {
-        self.hour += 1;
-        if self.hour >= 24 {
-            self.hour = 0;
-            self.tick_day();
-        }
-    }
-
-    /// Increment day and handle overflow
-    fn tick_day(&mut self) {
-        self.day_of_week = (self.day_of_week + 1) % 7;
-
-        let days_in_month = match self.month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 => {
-                // Simple leap year check (century rules ignored for simplicity)
-                if (self.year as u32 + 2000).is_multiple_of(4) {
-                    29
-                } else {
-                    28
-                }
-            }
-            _ => 31,
-        };
-
-        self.day += 1;
-        if self.day > days_in_month {
-            self.day = 1;
-            self.tick_month();
-        }
-    }
-
-    /// Increment month and handle overflow
-    fn tick_month(&mut self) {
-        self.month += 1;
-        if self.month > 12 {
-            self.month = 1;
-            self.tick_year();
-        }
-    }
-
-    /// Increment year
-    fn tick_year(&mut self) {
-        self.year = (self.year + 1) % 100;
-    }
-
-    /// Convert time to BCD format (for I2C protocol)
-    pub fn to_bcd(value: u8) -> u8 {
-        ((value / 10) << 4) | (value % 10)
-    }
-
-    /// Convert BCD to binary
-    pub fn from_bcd(value: u8) -> u8 {
-        ((value >> 4) * 10) + (value & 0xF)
     }
 }

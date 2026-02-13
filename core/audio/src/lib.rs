@@ -256,10 +256,14 @@ impl SPU {
     }
 
     /// Power on SPU and initialize
-    pub fn power_on(&mut self) -> Result<(), String> {
-        self.soundcnt.master_enable = true;
-        self.soundbias = 0x200; // Default bias value
-        Ok(())
+    pub fn power_on(&mut self) {
+        self.soundcnt.master_volume = 0;
+        self.soundcnt.left_output = 0;
+        self.soundcnt.right_output = 0;
+        self.soundcnt.output_ch1_mixer = false;
+        self.soundcnt.output_ch3_mixer = false;
+        self.soundcnt.master_enable = false;
+        self.soundbias = 0x200;
     }
 
     /// Read from channel at address

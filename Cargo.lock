@@ -545,8 +545,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fac4744fb15ae8337dc853fee7fb3f4e48c0fbaa23d0afe49c447b4fab126118"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -2038,6 +2040,7 @@ version = "0.1.0"
 name = "lunaris_ds_emu"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "lunaris_ds_audio",
  "lunaris_ds_free_bios",
  "lunaris_ds_gpu",
