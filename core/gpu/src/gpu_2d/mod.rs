@@ -262,10 +262,7 @@ impl Gpu2DEngine {
         assert!(buffer.len() >= SCANLINES * PIXELS_PER_LINE);
 
         for y in 0..SCANLINES {
-            let line_start = y * PIXELS_PER_LINE;
-            for x in 0..PIXELS_PER_LINE {
-                buffer[line_start + x] = self.front_framebuffer[line_start + x];
-            }
+            buffer.copy_from_slice(&self.front_framebuffer[(y * PIXELS_PER_LINE)..PIXELS_PER_LINE]);
         }
 
         // Debug output (commented out)
@@ -430,7 +427,7 @@ impl Gpu2DEngine {
     // ============================================================
 
     /// Sets the low 16 bits of DISPCNT.
-    pub fn set_disp_cnt_lo(&mut self, halfword: u16) {
+    pub fn set_dispcnt_lo(&mut self, halfword: u16) {
         self.dispcnt.bg_mode = (halfword & 0x7) as i32;
         self.dispcnt.bg_3d = (halfword & (1 << 3)) != 0;
         self.dispcnt.tile_obj_1d = (halfword & (1 << 4)) != 0;
@@ -447,8 +444,8 @@ impl Gpu2DEngine {
     }
 
     /// Sets the full 32-bit DISPCNT.
-    pub fn set_disp_cnt(&mut self, word: u32) {
-        self.set_disp_cnt_lo((word & 0xFFFF) as u16);
+    pub fn set_dispcnt(&mut self, word: u32) {
+        self.set_dispcnt_lo((word & 0xFFFF) as u16);
 
         self.dispcnt.display_mode = ((word >> 16) & 0x3) as i32;
         self.dispcnt.vram_block = ((word >> 18) & 0x3) as i32;
@@ -516,6 +513,26 @@ impl Gpu2DEngine {
         }
     }
 
+    pub fn set_win0h(&mut self, halfword: u16) {
+        self.win0h = halfword;
+    }
+
+    pub fn set_win1h(&mut self, halfword: u16) {
+        self.win1h = halfword;
+    }
+
+    pub fn set_win0v(&mut self, halfword: u16) {
+        self.win0v = halfword;
+    }
+
+    pub fn set_win1v(&mut self, halfword: u16) {
+        self.win1v = halfword;
+    }
+
+    pub fn set_mosaic(&mut self, halfword: u16) {
+        self.mosaic = halfword;
+    }
+
     pub fn set_winin(&mut self, halfword: u16) {
         for bit in 0..4 {
             self.winin.win0_bg_enabled[bit] = (halfword & (1 << bit)) != 0;
@@ -536,10 +553,6 @@ impl Gpu2DEngine {
         self.winout.outside_color_special = (halfword & (1 << 5)) != 0;
         self.winout.objwin_obj_enabled = (halfword & (1 << 12)) != 0;
         self.winout.objwin_color_special = (halfword & (1 << 13)) != 0;
-    }
-
-    pub fn set_mosaic(&mut self, halfword: u16) {
-        self.mosaic = halfword;
     }
 
     pub fn set_bldcnt(&mut self, halfword: u16) {
@@ -568,12 +581,7 @@ impl Gpu2DEngine {
         self.master_bright = halfword;
     }
 
-    pub fn set_dispcapcnt(&mut self, word: u32, is_engine_a: bool) {
-        // if (!engine_A) return;
-        if !is_engine_a {
-            return;
-        }
-
+    pub fn set_dispcapcnt(&mut self, word: u32) {
         // EVA (0..=16 clamp)
         let eva = (word & 0x1F) as u8;
         self.dispcapcnt.eva = eva.min(16);

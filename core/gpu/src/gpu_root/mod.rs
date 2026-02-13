@@ -174,44 +174,42 @@ impl Gpu {
 
     /// Power on GPU
     pub fn power_on(&mut self) {
-        todo!()
+        // self.eng_3d.power_on();
+        self.cycles = 0;
+        self.frame_complete = false;
+        self.frames_skipped = 0;
 
-        // eng_3D.power_on();
-        // cycles = 0;
-        // frame_complete = false;
-        // frames_skipped = 0;
-        // set_POWCNT1(0x820F);
-        // set_DISPCNT_A(0);
-        // set_DISPCNT_B(0);
-        // set_DISPSTAT7(0);
-        // set_DISPSTAT9(0);
-        // set_WIN0H_A(0);
-        // set_DISPCAPCNT(0);
-        // for (int i = 0; i < 4; i++)
-        // {
-        //     set_BGHOFS_A(0, i);
-        //     set_BGVOFS_A(0, i);
-        //     set_BGHOFS_B(0, i);
-        //     set_BGVOFS_B(0, i);
-        // }
+        self.set_powcnt1(0x820F);
+        self.set_dispcnt_a(0);
+        self.set_dispcnt_b(0);
+        self.set_dispstat7(0);
+        self.set_dispstat9(0);
+        self.set_win0h_a(0);
+        self.set_dispcapcnt(0);
 
-        // e->add_GPU_event(0, 256 * 6);
+        for i in 0..4 {
+            self.set_bghofs_a(0, i);
+            self.set_bgvofs_a(0, i);
+            self.set_bghofs_b(0, i);
+            self.set_bgvofs_b(0, i);
+        }
 
-        // memset(VRAM_A, 0, VRAM_A_SIZE);
-        // memset(VRAM_B, 0, VRAM_B_SIZE);
-        // memset(VRAM_C, 0, VRAM_C_SIZE);
-        // memset(VRAM_D, 0, VRAM_D_SIZE);
-        // memset(VRAM_E, 0, VRAM_E_SIZE);
-        // memset(VRAM_F, 0, VRAM_F_SIZE);
-        // memset(VRAM_G, 0, VRAM_G_SIZE);
-        // memset(VRAM_H, 0, VRAM_H_SIZE);
-        // memset(VRAM_I, 0, VRAM_I_SIZE);
+        self.vram_a.clear();
+        self.vram_b.clear();
+        self.vram_c.clear();
+        self.vram_d.clear();
+        self.vram_e.clear();
+        self.vram_f.clear();
+        self.vram_g.clear();
+        self.vram_h.clear();
+        self.vram_i.clear();
     }
 
     /// Run 3D rendering for specified cycles
-    pub fn run_3d(&self, cycles: u64) {
-        todo!()
+    pub fn run_3d(&mut self, cycles: u64) {
+        self.engine_3d.run(cycles);
     }
+
     pub fn handle_event(&self, event: &SchedulerEvent) {
         todo!()
     }

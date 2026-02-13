@@ -82,6 +82,10 @@ impl Gpu3D {
         todo!()
     }
 
+    pub fn exec_command(&mut self) {
+        todo!()
+    }
+
     pub fn render_scanline(
         &mut self,
         framebuffer: &mut [u32],
@@ -92,7 +96,18 @@ impl Gpu3D {
     }
 
     pub fn run(&mut self, cycles_to_run: u64) {
-        todo!()
+        if self.swap_buffers {
+            return;
+        }
+        if self.cycles == 0 && self.gxpipe.is_empty() {
+            self.cycles = 0;
+            return;
+        }
+
+        self.cycles -= cycles_to_run;
+        while self.cycles == 0 && !self.gxpipe.is_empty() {
+            self.exec_command();
+        }
     }
 
     pub fn end_of_frame(&mut self) {

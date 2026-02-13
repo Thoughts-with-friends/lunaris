@@ -129,9 +129,13 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Since need local nds file"]
+    #[quick_tracing::init(test = "test_emulator", level = "DEBUG")]
     fn test_emulator() {
         // Run main emulator
         let mut emu = Box::new(Emulator::new());
+        let rom_path = std::path::Path::new("../test_rom/test.nds");
+        emu.load_rom(rom_path).unwrap();
         emu.run();
     }
 }

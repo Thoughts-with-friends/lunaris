@@ -18,19 +18,19 @@ impl Gpu {
     // ===== Setters / Commands =====
 
     pub fn set_dispcnt_a_lo(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_dispcnt_lo(halfword);
     }
 
     pub fn set_dispcnt_a(&mut self, word: u32) {
-        todo!()
+        self.engine_upper.set_dispcnt(word);
     }
 
     pub fn set_dispcnt_b_lo(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_dispcnt_lo(halfword);
     }
 
     pub fn set_dispcnt_b(&mut self, word: u32) {
-        todo!()
+        self.engine_lower.set_dispcnt(word);
     }
 
     /// Set DISPSTAT7 register value
@@ -43,172 +43,176 @@ impl Gpu {
         self.display_status_arm9.set(value);
     }
 
-    pub fn set_bgcnt_a(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bgcnt_a(&mut self, halfword: u16, index: usize) {
+        self.engine_upper.set_bgcnt(halfword, index);
     }
 
-    pub fn set_bgcnt_b(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bgcnt_b(&mut self, halfword: u16, index: usize) {
+        self.engine_lower.set_bgcnt(halfword, index);
     }
 
-    pub fn set_bghofs_a(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bghofs_a(&mut self, halfword: u16, index: usize) {
+        self.engine_upper.set_bghofs(halfword, index);
     }
 
-    pub fn set_bgvofs_a(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bgvofs_a(&mut self, halfword: u16, index: usize) {
+        self.engine_upper.set_bgvofs(halfword, index);
     }
 
-    pub fn set_bghofs_b(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bghofs_b(&mut self, halfword: u16, index: usize) {
+        self.engine_lower.set_bghofs(halfword, index);
     }
 
-    pub fn set_bgvofs_b(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bgvofs_b(&mut self, halfword: u16, index: usize) {
+        self.engine_lower.set_bgvofs(halfword, index);
     }
 
-    pub fn set_bg2p_a(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bg2p_a(&mut self, halfword: u16, index: usize) {
+        self.engine_upper
+            .set_bg2p(halfword, index, self.get_vcount());
     }
 
-    pub fn set_bg2p_b(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bg2p_b(&mut self, halfword: u16, index: usize) {
+        self.engine_lower
+            .set_bg2p(halfword, index, self.get_vcount());
     }
 
-    pub fn set_bg3p_a(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bg3p_a(&mut self, halfword: u16, index: usize) {
+        self.engine_upper
+            .set_bg3p(halfword, index, self.get_vcount());
     }
 
-    pub fn set_bg3p_b(&mut self, halfword: u16, index: i32) {
-        todo!()
+    pub fn set_bg3p_b(&mut self, halfword: u16, index: usize) {
+        self.engine_lower
+            .set_bg3p(halfword, index, self.get_vcount());
     }
 
     pub fn set_bg2x_a(&mut self, word: u32) {
-        todo!()
+        self.engine_upper.set_bg2x(word, self.get_vcount());
     }
 
     pub fn set_bg2y_a(&mut self, word: u32) {
-        todo!()
+        self.engine_upper.set_bg2y(word, self.get_vcount());
     }
 
     pub fn set_bg3x_a(&mut self, word: u32) {
-        todo!()
+        self.engine_upper.set_bg3x(word, self.get_vcount());
     }
 
     pub fn set_bg3y_a(&mut self, word: u32) {
-        todo!()
+        self.engine_upper.set_bg3y(word, self.get_vcount());
     }
 
     pub fn set_bg2x_b(&mut self, word: u32) {
-        todo!()
+        self.engine_lower.set_bg2x(word, self.get_vcount());
     }
 
     pub fn set_bg2y_b(&mut self, word: u32) {
-        todo!()
+        self.engine_lower.set_bg2y(word, self.get_vcount());
     }
 
     pub fn set_bg3x_b(&mut self, word: u32) {
-        todo!()
+        self.engine_lower.set_bg3x(word, self.get_vcount());
     }
 
     pub fn set_bg3y_b(&mut self, word: u32) {
-        todo!()
+        self.engine_lower.set_bg3y(word, self.get_vcount());
     }
 
     pub fn set_win0h_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_win0h(halfword);
     }
 
     pub fn set_win1h_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_win1h(halfword);
     }
 
     pub fn set_win0v_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_win0v(halfword);
     }
 
     pub fn set_win1v_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_win1v(halfword);
     }
 
     pub fn set_win0h_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_win0h(halfword);
     }
 
     pub fn set_win1h_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_win1h(halfword);
     }
 
     pub fn set_win0v_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_win0v(halfword);
     }
 
     pub fn set_win1v_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_win1v(halfword);
     }
 
     pub fn set_winin_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_winin(halfword);
     }
 
     pub fn set_winin_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_winin(halfword);
     }
 
     pub fn set_winout_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_winout(halfword);
     }
 
     pub fn set_winout_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_winout(halfword);
     }
 
     pub fn set_mosaic_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_mosaic(halfword);
     }
 
     pub fn set_mosaic_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_mosaic(halfword);
     }
 
     pub fn set_bldcnt_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_bldcnt(halfword);
     }
 
     pub fn set_bldcnt_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_bldcnt(halfword);
     }
 
     pub fn set_bldalpha_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_bldalpha(halfword);
     }
 
     pub fn set_bldalpha_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_bldalpha(halfword);
     }
 
     pub fn set_bldy_a(&mut self, byte: u8) {
-        todo!()
+        self.engine_upper.set_bldy(byte);
     }
 
     pub fn set_bldy_b(&mut self, byte: u8) {
-        todo!()
+        self.engine_lower.set_bldy(byte);
     }
 
     pub fn set_disp3dcnt(&mut self, halfword: u16) {
-        todo!()
+        self.engine_3d.set_disp3dcnt(halfword);
     }
 
     pub fn set_master_bright_a(&mut self, halfword: u16) {
-        todo!()
+        self.engine_upper.set_master_bright(halfword);
     }
 
     pub fn set_master_bright_b(&mut self, halfword: u16) {
-        todo!()
+        self.engine_lower.set_master_bright(halfword);
     }
 
     pub fn set_dispcapcnt(&mut self, word: u32) {
-        todo!()
+        self.engine_upper.set_dispcapcnt(word);
     }
 
     /// Set VRAM bank configuration A
@@ -271,23 +275,23 @@ impl Gpu {
     }
 
     /// Write to GXFIFO command queue
-    pub fn write_gxfifo(&mut self, _word: u32) {
-        todo!()
+    pub fn write_gxfifo(&mut self, word: u32) {
+        self.engine_3d.write_gxfifo(word);
     }
 
     pub fn write_fifo_direct(&mut self, address: u32, word: u32) {
-        todo!()
+        self.engine_3d.write_fifo_direct(address, word);
     }
 
     pub fn set_clear_color(&mut self, word: u32) {
-        todo!()
+        self.engine_3d.set_clear_color(word);
     }
 
     pub fn set_clear_depth(&mut self, word: u32) {
-        todo!()
+        self.engine_3d.set_clear_depth(word);
     }
 
     pub fn set_mtx_mode(&mut self, word: u32) {
-        todo!()
+        self.engine_3d.set_mtx_mode(word);
     }
 }

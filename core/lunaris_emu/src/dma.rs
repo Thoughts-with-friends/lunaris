@@ -136,10 +136,10 @@ pub struct NDSDma {
     /// DMA channels (0-7: 0-3 are ARM9, 4-7 are ARM7)
     pub dmas: [Dma; 8],
 
-    /// Currently active ARM7 DMA index
-    active_dma7: Option<usize>,
-    /// Currently active ARM9 DMA index
-    active_dma9: Option<usize>,
+    /// Currently active ARM7 DMA index (unused)
+    // active_dma7: Option<usize>,
+    /// Currently active ARM9 DMA index (unused)
+    // active_dma9: Option<usize>,
 
     /// Bitmask of which DMA channels are active
     pub active_dmas: u8,
@@ -158,8 +158,8 @@ impl NDSDma {
 
         NDSDma {
             dmas,
-            active_dma7: None,
-            active_dma9: None,
+            // active_dma7: None,
+            // active_dma9: None,
             active_dmas: 0,
         }
     }

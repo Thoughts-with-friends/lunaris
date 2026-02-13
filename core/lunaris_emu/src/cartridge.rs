@@ -27,6 +27,7 @@ pub enum CartCommand {
 
 impl CartCommand {
     /// Convert numeric value to CartCommand
+    #[expect(unused)]
     pub fn from_value(val: u32) -> Self {
         match val {
             0 => CartCommand::Empty,
@@ -63,6 +64,7 @@ pub enum AuxSpiCommand {
 
 impl AuxSpiCommand {
     /// Convert numeric value to AuxSpiCommand
+    #[expect(unused)]
     pub fn from_value(val: u32) -> Self {
         match val {
             0 => AuxSpiCommand::Empty,
@@ -154,6 +156,7 @@ impl RegRomCtrl {
     }
 
     /// Set register value from 32-bit word
+    #[expect(unused)]
     pub fn set(&mut self, value: u32) {
         self.key1_gap = value & 0x3F;
         self.key2_data_enabled = (value & (1 << 6)) != 0;
@@ -205,6 +208,7 @@ impl RegAuxSpiCnt {
     }
 
     /// Get register value as 16-bit halfword
+    #[expect(unused)]
     pub fn get(&self) -> u16 {
         let mut value = 0u16;
         value |= (self.bandwidth & 0x3) as u16;
@@ -227,6 +231,7 @@ impl RegAuxSpiCnt {
     }
 
     /// Set register value from 16-bit halfword
+    #[expect(unused)]
     pub fn set(&mut self, value: u16) {
         self.bandwidth = (value & 0x3) as u32;
         self.hold_chipselect = (value & (1 << 3)) != 0;
@@ -392,7 +397,7 @@ impl NDSCart {
         #[cfg(feature = "tracing")]
         tracing::info!("Loading save database: {}", file_name.display());
 
-        let mut file = File::open(&file_name).map_err(|source| {
+        let mut file = File::open(file_name).map_err(|source| {
             #[cfg(feature = "tracing")]
             tracing::error!("Failed to open save database: {}", file_name.display());
 
@@ -402,7 +407,7 @@ impl NDSCart {
             }
         })?;
 
-        let metadata = std::fs::metadata(&file_name).map_err(|source| {
+        let metadata = std::fs::metadata(file_name).map_err(|source| {
             #[cfg(feature = "tracing")]
             tracing::error!("Failed to read metadata: {}", file_name.display());
 
@@ -450,7 +455,7 @@ impl NDSCart {
     }
 
     // Move to struct Emulator
-    /// Loads ROM image and optional save data.
+    // Loads ROM image and optional save data.
     // pub fn load_rom( &mut self, file_name: &Path, is_direct_boot_enabled: bool,) -> Result<(), CartridgeError>;
 
     /// Writes save data to disk if modified.
@@ -522,7 +527,7 @@ impl NDSCart {
 
     /// Returns cartridge output register value.
     pub fn get_output(&mut self) -> u32 {
-        if (self.romctrl.word_ready) {
+        if self.romctrl.word_ready {
             self.romctrl.word_ready = false;
             self.cycles_left = 8;
         }
@@ -619,7 +624,7 @@ impl NDSCart {
                     tracing::error!("Unrecognized AUXSPI cmd {}", value);
 
                     #[cfg(not(feature = "tracing"))]
-                    eprintln!("Unrecognized AUXSPI cmd {}", value);
+                    tracing::error!("Unrecognized AUXSPI cmd {}", value);
 
                     return;
                 }
@@ -821,8 +826,8 @@ impl NDSCart {
                     data
                 );
 
-                for i in 0..8 {
-                    self.command_buffer[7 - i] = data[i];
+                for (buffer, data) in self.command_buffer.iter_mut().rev().zip(data) {
+                    *buffer = data;
                 }
             }
 
@@ -830,16 +835,12 @@ impl NDSCart {
 
             match self.command_buffer[0] {
                 0x9F => self.command_id = CartCommand::Dummy,
-
                 0x00 => {
                     self.command_id = CartCommand::GetHeader;
                     self.rom_data_index = 0;
                 }
-
                 0x90 => self.command_id = CartCommand::GetChipId,
-
                 0x3C => self.command_id = CartCommand::EnableKey1,
-
                 0xB7 => {
                     self.command_id = CartCommand::ReadRom;
 
@@ -854,34 +855,22 @@ impl NDSCart {
                         tracing::error!("ROM read bytes_left > 0x1000");
 
                         #[cfg(not(feature = "tracing"))]
-                        eprintln!("ROM read bytes_left > 0x1000");
-
-                        return;
+                        tracing::error!("ROM read bytes_left > 0x1000");
                     }
                 }
-
                 0xB8 => self.command_id = CartCommand::GetChipId,
 
                 _ => match self.command_buffer[0] & 0xF0 {
-                    0x40 => {
-                        self.command_id = CartCommand::Dummy;
-                    }
-
-                    0x10 => {
-                        self.command_id = CartCommand::GetChipId;
-                    }
-
+                    0x40 => self.command_id = CartCommand::Dummy,
+                    0x10 => self.command_id = CartCommand::GetChipId,
                     0x20 => {
                         self.command_id = CartCommand::GetSecureAreaBlock;
-
                         self.secure_area_index = ((self.command_buffer[2] & 0xF0) as u32) << 8;
                     }
-
                     0xA0 => {
                         self.command_id = CartCommand::Dummy;
                         self.cmd_encrypt_mode = 2;
                     }
-
                     _ => {}
                 },
             }
@@ -908,7 +897,7 @@ impl NDSCart {
         let word = word & 0x7F;
         self.encrypt_seed0 <<= 32;
         self.encrypt_seed0 >>= 32;
-        self.encrypt_seed0 |= (word << 32) as u64;
+        self.encrypt_seed0 |= (word as u64) << 32;
     }
 
     /// Sets high 32 bits of KEY2 seed 1.
@@ -939,15 +928,19 @@ impl NDSCart {
 
     /// Performs KEY1 encryption on data buffer.
     #[must_use]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
     pub(crate) fn key1_encrypt(&mut self, mut y: u32, mut x: u32) -> [u32; 2] {
+        #[cfg(feature = "tracing")]
+        tracing::info!(?y, ?x);
+
         for i in 0..=0xF {
             let z = (self.read_keybuf_u32(i) ^ x) as usize;
             x = self.read_keybuf_u32(0x012 + ((z >> 24) & 0xFF));
-            x += self.read_keybuf_u32(0x112 + ((z >> 16) & 0xFF));
+            x = x.wrapping_add(self.read_keybuf_u32(0x112 + ((z >> 16) & 0xFF)));
             x ^= self.read_keybuf_u32(0x212 + ((z >> 8) & 0xFF));
-            x += self.read_keybuf_u32(0x312 + (z & 0xFF));
+            x = x.wrapping_add(self.read_keybuf_u32(0x312 + (z & 0xFF)));
             x ^= y;
-            y = z as u32;
+            y = z as u32
         }
 
         [
@@ -957,6 +950,7 @@ impl NDSCart {
     }
 
     /// Performs KEY1 decryption on data buffer.
+    #[expect(unused)]
     fn key1_decrypt(&mut self, data: &mut [u32]) {
         let mut y = data[0];
         let mut x = data[1];

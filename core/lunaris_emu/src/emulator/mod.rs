@@ -278,7 +278,10 @@ impl Emulator {
         self.arm7.power_on();
         self.arm9_cp15.power_on();
         self.dma.power_on();
+
         self.gpu.power_on();
+        self.add_gpu_event(0, 256 * 6);
+
         self.spu.power_on();
         self.nds_timing.power_on();
         self.rtc.init();

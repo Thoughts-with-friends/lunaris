@@ -126,7 +126,7 @@ pub struct GxCommand {
 #[derive(Debug, Default)]
 pub struct Gpu3D {
     /// Remaining cycles
-    pub cycles: i32,
+    pub cycles: u64,
 
     /// 3D display control
     pub disp3dcnt: Disp3DCntReg,

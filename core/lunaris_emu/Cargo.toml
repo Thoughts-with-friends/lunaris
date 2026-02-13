@@ -22,6 +22,9 @@ lunaris_ds_free_bios = { workspace = true }
 lunaris_ds_gpu = { workspace = true }
 lunaris_ds_mem_const = { workspace = true }
 
+[dev-dependencies]
+quick_tracing = { version = "0.1.5", features = ["derive"] }
+
 [features]
 default = ["tracing"]
 tracing = ["dep:tracing"]
