@@ -75,17 +75,17 @@ npm run build
 - [x] **Phase 1 (100%)**: Foundation Setup (Memory, Constants)
 - [x] **Phase 2 (100%)**: CPU Core Implementation
 - [x] **Phase 3 (100%)**: Memory / I/O Management
-- [ ] **Phase 4 ( 70%)**: GPU Infrastructure
-- [ ] **Phase 5 ( 0%)**: BIOS / ROM Loading
+- [x] **Phase 4 (100%)**: GPU Infrastructure
+- [x] **Phase 5 (100%)**: BIOS / ROM Loading
 - [ ] **Phase 6 ( 70%)**: UI / Threading
 - [ ] **Phase 7 ( 40%)**: Audio System
 - [x] **Phase 8 (100%)**: Interrupt System
-- [ ] **Phase 9 ( 90%)**: Instruction Set Completion (ARM9)
+- [x] **Phase 9 (100%)**: Instruction Set Completion (ARM9)
 - [x] **Phase 10 (100%)**: ARM7 Implementation
-- [ ] **Phase 11 ( 10%)**: 3D Graphics
-- [ ] **Phase 12 ( 0%)**: Save Data System
+- [x] **Phase 11 (100%)**: 3D Graphics
+- [ ] **Phase 12 ( 20%)**: Save Data System
 - [ ] **Phase 13 ( 80%)**: WiFi / Networking
-- [ ] **Phase 14 ( 0%)**: Optimization / Debugging
+- [ ] **Phase 14 ( 20%)**: Optimization / Debugging
 - [ ] **Phase 15 ( 0%)**: VPN Network support
 - [ ] **Phase 16 ( 0%)**: JIT Compile
 

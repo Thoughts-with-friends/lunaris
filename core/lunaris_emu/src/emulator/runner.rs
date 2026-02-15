@@ -18,11 +18,24 @@ impl Emulator {
                 self.run_3d((self.arm9.cycles_ran() >> 1) as u64);
             }
 
+            #[cfg(feature = "tracing")]
+            tracing::debug!("Complete: ARM9");
+
             // Now handle ARM7
             while self.arm7.get_timestamp() < self.system_timestamp {
                 self.execute(CpuType::Arm7);
                 self.run_timers7(self.arm7.cycles_ran() as i32);
             }
+
+            #[cfg(feature = "tracing")]
+            tracing::debug!("Complete: ARM7");
+
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                "Sys. Time: {}, Act. Time: {}",
+                self.system_timestamp,
+                self.gpu_event.activation_time
+            );
 
             if self.system_timestamp >= self.gpu_event.activation_time {
                 self.gpu_handle_event();
@@ -119,6 +132,7 @@ impl Emulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
 
     #[test]
     fn test_initialize_emulator() {
@@ -130,12 +144,71 @@ mod tests {
 
     #[test]
     #[ignore = "Since need local nds file"]
-    #[quick_tracing::init(test = "test_emulator", level = "DEBUG")]
+    #[quick_tracing::init(test = "test_emulator", level = "trace")]
     fn test_emulator() {
         // Run main emulator
         let mut emu = Box::new(Emulator::new());
-        let rom_path = std::path::Path::new("../test_rom/test.nds");
+        let rom_path = std::path::Path::new("../test_rom/hello_world.nds");
+        // let rom_path = std::path::Path::new("../test_rom/test.nds");
         emu.load_rom(rom_path).unwrap();
-        emu.run();
+
+        const PIXEL: usize = PIXELS_PER_LINE * SCANLINES;
+        let mut upper_buffer: [u32; PIXEL] = [0; PIXEL];
+        let mut lower_buffer: [u32; PIXEL] = [0; PIXEL];
+
+        let mut frames: u64 = 0;
+        loop {
+            #[cfg(feature = "tracing")]
+            tracing::info!("frame: {frames}");
+
+            // let last_update = std::time::Instant::now();
+            emu.run();
+
+            frames += 1;
+            emu.get_upper_frame(&mut upper_buffer); // RGBA
+            emu.get_lower_frame(&mut lower_buffer); // RGBA
+
+            // upper display
+            save_frame_as_png(
+                &upper_buffer,
+                PIXELS_PER_LINE as u32,
+                SCANLINES as u32,
+                format!("frame_upper_{:05}.png", frames),
+            )
+            .unwrap();
+
+            // Lower display
+            save_frame_as_png(
+                &lower_buffer,
+                PIXELS_PER_LINE as u32,
+                SCANLINES as u32,
+                format!("frame_lower_{:05}.png", frames),
+            )
+            .unwrap();
+        }
+    }
+
+    pub fn save_frame_as_png<P>(
+        buffer: &[u32],
+        width: u32,
+        height: u32,
+        path: P,
+    ) -> Result<(), Box<dyn core::error::Error + Send + Sync + 'static>>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        use image::{ImageBuffer, Rgba};
+
+        // 1D u32 -> u8: le RGBA [0xAARRGGBB]
+        let raw_bytes: Vec<u8> = buffer.iter().flat_map(|px| px.to_le_bytes()).collect();
+
+        // ImageBuffer
+        let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, raw_bytes)
+            .ok_or("Failed to create image buffer")?;
+
+        // Save PNG
+        img.save(path)?;
+
+        Ok(())
     }
 }

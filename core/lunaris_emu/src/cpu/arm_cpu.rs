@@ -346,15 +346,8 @@ impl ArmCpu {
         self.cpsr.mode = PsrMode::System;
     }
 
-    /// Run continuously
-    pub fn run(&mut self) {
-        todo!()
-    }
-
-    // /// Execute a single instruction(impl Emulator)
-    // pub fn execute(&mut self) {
-    //     todo!()
-    // }
+    // pub fn run(&mut self)
+    // pub fn execute(&mut self)
 
     /// Jump to address, optionally changing Thumb state
     pub const fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {

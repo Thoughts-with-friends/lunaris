@@ -168,11 +168,10 @@ impl Cp15 {
         self.dtcm_size = 0;
     }
 
-    /// Link CP15 with ARM9 CPU
-    pub fn link_with_cpu(&mut self, _arm9: ()) {
-        // self.arm9 = Some(_arm9);
-        todo!()
-    }
+    // Removed
+    //
+    // Link CP15 with ARM9 CPU
+    // fn link_with_cpu(&mut self);
 
     /// Get instruction TCM size
     /// Returns size in bytes if enabled, 0 if disabled

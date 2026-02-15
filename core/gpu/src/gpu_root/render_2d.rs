@@ -77,8 +77,7 @@ impl Gpu {
     }
 
     pub fn handle_bldcnt_effects(&mut self) {
-        // Nothing impl in CorgiDS.
-        todo!()
+        // Nothing impl in CorgiDS
     }
 
     /// Draws an extended text background (BG2 or BG3) for the current scanline.

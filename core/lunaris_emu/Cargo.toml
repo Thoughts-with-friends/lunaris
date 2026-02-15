@@ -24,6 +24,7 @@ lunaris_ds_mem_const = { workspace = true }
 
 [dev-dependencies]
 quick_tracing = { version = "0.1.5", features = ["derive"] }
+image = { version = "0.25.9" }
 
 [features]
 default = ["tracing"]

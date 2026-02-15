@@ -7,7 +7,6 @@ use crate::Emulator;
 use crate::interrupts::Interrupt;
 use lunaris_ds_gpu::gpu_3d::consts::{CMD_PARAM_AMOUNTS, SCANLINES};
 use lunaris_ds_gpu::gpu_3d::structs::GxCommand;
-use lunaris_ds_gpu::gpu_root::register::SchedulerEvent;
 
 impl Emulator {
     /// - Instead of
@@ -180,11 +179,17 @@ impl Emulator {
                 if (self.gpu.vertical_count as usize) < SCANLINES {
                     self.hblank_dma_request();
                 }
+
+                #[cfg(feature = "tracing")]
+                tracing::debug!("Add_gpu_event: 1");
+
                 self.add_gpu_event(1, 99 * 6);
             }
             1 => {
-                //  End HBLANK
-                //printf("\nEnd HBLANK");
+                // End HBLANK
+                #[cfg(feature = "tracing")]
+                tracing::debug!("End HBLANK");
+
                 self.gpu.display_status_arm7.is_hblank = false;
                 self.gpu.display_status_arm9.is_hblank = false;
 
@@ -205,6 +210,10 @@ impl Emulator {
                 }
 
                 self.gpu.vertical_count += 1;
+                // VBLANK Counter
+                #[cfg(feature = "tracing")]
+                tracing::debug!("VBLANK Count: {}/{}", self.gpu.vertical_count, SCANLINES);
+
                 if self.gpu.vertical_count as usize == SCANLINES {
                     // VBLANK
                     #[cfg(feature = "tracing")]
@@ -234,6 +243,7 @@ impl Emulator {
                         false => self.gpu.frames_skipped += 1,
                     }
                 }
+
                 self.add_gpu_event(0, 256 * 6);
             }
             unknown_id => {

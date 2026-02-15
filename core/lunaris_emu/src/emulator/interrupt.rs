@@ -23,6 +23,6 @@ impl Emulator {
 
     /// Check if ARM7 has cartridge access rights.
     pub fn arm7_has_cart_rights(&self) -> bool {
-        todo!()
+        (self.ex_mem_cnt & (1 << 11)) != 0
     }
 }

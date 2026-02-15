@@ -19,6 +19,7 @@ impl Emulator {
 
     /// Implements the BIOS signed division routine.
     /// r0 = quotient, r1 = remainder, r3 = |quotient|
+    #[expect(unused)]
     fn div(&mut self, cpu_type: CpuType) {
         let dividend = self.get_cpu(cpu_type).get_register(0) as i32;
         let divisor = self.get_cpu(cpu_type).get_register(1) as i32;

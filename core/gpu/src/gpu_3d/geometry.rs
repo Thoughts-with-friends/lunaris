@@ -362,7 +362,8 @@ impl Gpu3D {
         let bz = v2.coords[2] - v1.coords[2];
 
         // Culling code taken shamelessly from melonDS :P
-        let mut normal = [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+        let mut normal =
+            [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx].map(|x| x as u64);
 
         // TODO: check what real DS does. Maybe help StapleButter?
         while (((normal[0] >> 31) ^ (normal[0] >> 63)) != 0)
@@ -374,7 +375,9 @@ impl Gpu3D {
             normal[2] >>= 4;
         }
 
-        let dot = v1.coords[0] * normal[0] + v1.coords[1] * normal[1] + v1.coords[3] * normal[2];
+        let dot = v1.coords[0] * normal[0] as i32
+            + v1.coords[1] * normal[1] as i32
+            + v1.coords[3] * normal[2] as i32;
         let front_view = dot < 0;
 
         let render = match front_view {

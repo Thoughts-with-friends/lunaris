@@ -372,11 +372,11 @@ impl NDSCart {
         self.auxspicnt.irq_after_transfer = false;
         self.auxspicnt.enabled = false;
 
-        self.spi_save.clear();
+        self.spi_save.fill(0);
         self.dirty_save = false;
 
         if !self.rom.is_empty() {
-            self.rom.clear();
+            self.rom.fill(0);
         }
 
         self.rom_name.clear();
@@ -814,19 +814,29 @@ impl NDSCart {
                 self.cycles_left += self.romctrl.key1_gap as i32;
 
                 let mut data = [0u8; 8];
-
                 for (data, buffer) in data.iter_mut().zip(self.command_buffer) {
                     *data = buffer;
                 }
 
+                // To [u32; 2]
+                let mut data = [
+                    u32::from_le_bytes(data[0..4].try_into().unwrap()),
+                    u32::from_le_bytes(data[4..8].try_into().unwrap()),
+                ];
+                self.key1_decrypt(&mut data);
+
                 #[cfg(feature = "tracing")]
                 tracing::trace!(
-                    "Data sent {:02X?} decrypted {:02X?}",
+                    "Data sent {:02X?} decrypted {data:02X?}",
                     self.command_buffer,
-                    data
                 );
 
-                for (buffer, data) in self.command_buffer.iter_mut().rev().zip(data) {
+                // to bytes
+                let mut out = [0u8; 8];
+                out[0..4].copy_from_slice(&data[0].to_le_bytes());
+                out[4..8].copy_from_slice(&data[1].to_le_bytes());
+
+                for (buffer, data) in self.command_buffer.iter_mut().rev().zip(out) {
                     *buffer = data;
                 }
             }
@@ -852,9 +862,6 @@ impl NDSCart {
 
                     if self.bytes_left > 0x1000 {
                         #[cfg(feature = "tracing")]
-                        tracing::error!("ROM read bytes_left > 0x1000");
-
-                        #[cfg(not(feature = "tracing"))]
                         tracing::error!("ROM read bytes_left > 0x1000");
                     }
                 }
@@ -893,7 +900,6 @@ impl NDSCart {
 
     /// Sets high 32 bits of KEY2 seed 0.
     pub fn set_hi_key2_seed0(&mut self, word: u32) {
-        self.encrypt_seed0 = (self.encrypt_seed0 & 0x00000000FFFFFFFF) | ((word as u64) << 32);
         let word = word & 0x7F;
         self.encrypt_seed0 <<= 32;
         self.encrypt_seed0 >>= 32;
@@ -902,7 +908,10 @@ impl NDSCart {
 
     /// Sets high 32 bits of KEY2 seed 1.
     pub fn set_hi_key2_seed1(&mut self, word: u32) {
-        self.encrypt_seed1 = (self.encrypt_seed1 & 0x00000000FFFFFFFF) | ((word as u64) << 32);
+        let word = word & 0x7F;
+        self.encrypt_seed1 <<= 32;
+        self.encrypt_seed1 >>= 32;
+        self.encrypt_seed1 |= (word as u64) << 32;
     }
 
     #[inline]
@@ -928,10 +937,10 @@ impl NDSCart {
 
     /// Performs KEY1 encryption on data buffer.
     #[must_use]
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
     pub(crate) fn key1_encrypt(&mut self, mut y: u32, mut x: u32) -> [u32; 2] {
-        #[cfg(feature = "tracing")]
-        tracing::info!(?y, ?x);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!(?y, ?x);
 
         for i in 0..=0xF {
             let z = (self.read_keybuf_u32(i) ^ x) as usize;

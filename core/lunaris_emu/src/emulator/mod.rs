@@ -230,6 +230,7 @@ impl Emulator {
     /// Check FIFO interrupt for ARM7.
     ///
     /// NOTE: It is not used in C++ and has no definition.
+    #[expect(unused)]
     fn check_fifo7_interrupt(&mut self) {
         unimplemented!("It is not used in C++ and has no definition.");
     }
@@ -237,6 +238,7 @@ impl Emulator {
     /// Check FIFO interrupt for ARM9.
     ///
     /// NOTE: It is not used in C++ and has no definition.
+    #[expect(unused)]
     fn check_fifo9_interrupt(&mut self) {
         unimplemented!("It is not used in C++ and has no definition.");
     }
@@ -253,18 +255,6 @@ impl Emulator {
     /// Start hardware square root unit.
     pub fn start_sqrt(&mut self) {
         self.sqrt_result = (self.sqrt_param as f64).sqrt() as u32;
-    }
-
-    /* ===== mark (public) ===== */
-
-    /// Mark an address as ARM instruction.
-    pub fn mark_as_arm(&mut self, address: u32) {
-        unimplemented!();
-    }
-
-    /// Mark an address as THUMB instruction.
-    pub fn mark_as_thumb(&mut self, address: u32) {
-        unimplemented!();
     }
 
     /* ===== power and run (public) ===== */
@@ -522,10 +512,19 @@ impl Emulator {
 
     /// Recalculate system timestamp.
     pub fn calculate_system_timestamp(&mut self) {
-        let cycles = self.next_event_time - self.system_timestamp;
+        if self.next_event_time < self.system_timestamp {
+            #[cfg(feature = "tracing")]
+            tracing::error!(
+                "next_event_time < system_timestamp: {} < {}.",
+                self.next_event_time,
+                self.system_timestamp
+            );
+        }
+
+        let cycles = self.next_event_time as i64 - self.system_timestamp as i64;
         match cycles {
-            0 | 20.. => self.system_timestamp += 20,
-            _ => self.system_timestamp += cycles,
+            ..0 | 20.. => self.system_timestamp += 20,
+            _ => self.system_timestamp += cycles as u64,
         }
     }
 

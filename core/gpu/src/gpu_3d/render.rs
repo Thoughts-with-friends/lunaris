@@ -214,7 +214,7 @@ impl Gpu3D {
 
         reg |= self.gxstat.box_pos_vec_busy as u32;
         reg |= (self.gxstat.boxtest_result as u32) << 1;
-        reg |= ((self.model_view_sp & 0x1F) << 8) as u32;
+        reg |= ((self.model_view_sp & 0x1F) as u32) << 8;
         reg |= (self.gxstat.mtx_stack_busy as u32) << 14;
         reg |= (self.gxfifo.len() << 16) as u32;
         reg |= ((self.gxfifo.len() < 128) as u32) << 25;
