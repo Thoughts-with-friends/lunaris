@@ -3,7 +3,7 @@
 //! gpu.hpp
 //!
 use crate::gpu_root::Gpu;
-use lunaris_ds_mem_const::*;
+use lunaris_ds_mem_const::{VRAM_C_MASK, VRAM_C_SIZE, VRAM_D_MASK, VRAM_D_SIZE, addr_in_range};
 
 const OAM_MASK: u32 = 0x7FF;
 

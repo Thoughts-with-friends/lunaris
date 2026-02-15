@@ -37,6 +37,24 @@ pub struct TexImageParamReg {
     pub transformation_mode: i32,
 }
 
+impl TexImageParamReg {
+    pub(crate) fn set(&mut self, word: u32) {
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Set TEXIMAGE_PARAM: {word:08X}");
+
+        self.vram_offset = (word & 0xFFFF) as i32;
+        self.repeat_s = (word & (1 << 16)) != 0;
+        self.repeat_t = (word & (1 << 17)) != 0;
+        self.flip_s = (word & (1 << 18)) != 0;
+        self.flip_t = (word & (1 << 19)) != 0;
+        self.s_size = ((word >> 20) & 0x7) as i32;
+        self.t_size = ((word >> 23) & 0x7) as i32;
+        self.format = ((word >> 26) & 0x7) as i32;
+        self.color0_transparent = (word & (1 << 29)) != 0;
+        self.transformation_mode = (word >> 30) as i32;
+    }
+}
+
 /// Polygon Attribute Register
 #[derive(Debug, Default, Clone)]
 pub struct PolygonAttrReg {
@@ -51,6 +69,22 @@ pub struct PolygonAttrReg {
     pub fog_enable: bool,
     pub alpha: i32,
     pub id: i32,
+}
+
+impl PolygonAttrReg {
+    pub(crate) fn set(&mut self, word: u32) {
+        self.light_enable = (word & 0xF) as i32;
+        self.polygon_mode = ((word >> 4) & 0x3) as i32;
+        self.render_back = (word & (1 << 6)) != 0;
+        self.render_front = (word & (1 << 7)) != 0;
+        self.set_new_trans_depth = (word & (1 << 11)) != 0;
+        self.render_far_intersect = (word & (1 << 12)) != 0;
+        self.render_1dot = (word & (1 << 13)) != 0;
+        self.depth_test_equal = (word & (1 << 14)) != 0;
+        self.fog_enable = (word & (1 << 15)) != 0;
+        self.alpha = ((word >> 16) & 0x1F) as i32;
+        self.id = ((word >> 24) & 0x3F) as i32;
+    }
 }
 
 /// Viewport Register
@@ -70,7 +104,7 @@ pub struct GxStatReg {
     pub mtx_stack_busy: bool,
     pub mtx_overflow: bool,
     pub geo_busy: bool,
-    pub gfxifo_irq_stat: i32,
+    pub gxfifo_irq_stat: i32,
 }
 
 /// 4x4 Matrix
@@ -86,9 +120,20 @@ impl Matrix {
         Self { m }
     }
 
+    #[inline]
+    pub const fn zeros() -> Self {
+        let m = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+        Self { m }
+    }
+
     /// Set this matrix to another
     pub fn set(&mut self, other: &Matrix) {
-        todo!()
+        self.m = other.m;
+    }
+
+    /// Set as identity
+    pub fn set_identity(&mut self) {
+        self.m = super::consts::IDENTITY_MATRIX.clone().m;
     }
 }
 
@@ -116,7 +161,7 @@ pub struct Polygon {
 }
 
 /// GX Command
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GxCommand {
     pub command: u8,
     pub param: u32,
@@ -152,7 +197,7 @@ pub struct Gpu3D {
     pub flush_mode: i32,
 
     /// Command FIFO
-    pub gfxifo: VecDeque<GxCommand>,
+    pub gxfifo: VecDeque<GxCommand>,
     /// Command pipeline
     pub gxpipe: VecDeque<GxCommand>,
 

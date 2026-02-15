@@ -33,7 +33,7 @@ pub struct Gpu {
     /// 2D Engine lower screen
     engine_lower: Gpu2DEngine,
 
-    engine_3d: Gpu3D,
+    pub engine_3d: Gpu3D,
 
     /// Frame rendering complete flag
     frame_complete: bool,
@@ -203,11 +203,6 @@ impl Gpu {
         self.vram_g.clear();
         self.vram_h.clear();
         self.vram_i.clear();
-    }
-
-    /// Run 3D rendering for specified cycles
-    pub fn run_3d(&mut self, cycles: u64) {
-        self.engine_3d.run(cycles);
     }
 
     pub fn handle_event(&self, event: &SchedulerEvent) {

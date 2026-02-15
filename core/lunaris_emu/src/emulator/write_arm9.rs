@@ -97,7 +97,7 @@ impl Emulator {
             0x0400_02B8..=0x0400_02BC => { /* Square root registers, implement start_sqrt */ }
             0x0400_0304 => self.gpu.set_powcnt1((word & 0xFFFF) as u16),
             0x0400_0350 => self.gpu.set_clear_color(word),
-            0x0400_0600 => self.gpu.set_gxstat(word),
+            0x0400_0600 => self.set_gxstat(word), // self.gpu.set_gxstat(word) for Gpu3D
             0x0400_1000 => self.gpu.set_dispcnt_b(word),
             0x0400_0330..0x0400_0340 | 0x0400_0360..0x0400_0380 => {} // FOG_TABLE / EDGE_COLOR (TODO)
             0x0400_0380..0x0400_03C0 => {
@@ -375,7 +375,6 @@ impl Emulator {
                 let idx = (address & MAIN_RAM_MASK) as usize;
                 self.main_ram[idx] = byte;
             }
-            PALETTE_START..VRAM_BGA_START => {} // Palette memory (ignored for byte writes)
             0x0400004C => self.gpu.set_mosaic_a(byte as u16),
             0x040001A1 => self.cart.set_hi_auxspicnt(byte),
             0x040001A2 => {
@@ -399,7 +398,15 @@ impl Emulator {
             0x04000249 => self.gpu.set_vramcnt_i(byte),
             0x0400104C => self.gpu.set_mosaic_b(byte as u16),
             0x04001054 => self.gpu.set_bldy_b(byte),
-            PALETTE_START..GBA_ROM_START => {
+
+            // 0x0500_0000..0x0600_0000
+            PALETTE_START..VRAM_BGA_START => {
+                #[cfg(feature = "tracing")]
+                tracing::warn!("\nPalette memory (ignored for byte writes) ${address:08X}");
+            }
+            // 0x0500_0000..0x0800_0000
+            // PALETTE_START..GBA_ROM_START => {
+            VRAM_BGA_START..GBA_ROM_START => {
                 #[cfg(feature = "tracing")]
                 tracing::warn!("\nWarning: 8-bit write to VRAM ${address:08X}");
             }

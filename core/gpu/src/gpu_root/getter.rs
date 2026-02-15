@@ -5,8 +5,11 @@
 use crate::gpu_root::Gpu;
 
 impl Gpu {
-    pub fn get_palette(&mut self, engine_a: bool) -> &mut [u16] {
-        todo!()
+    pub fn get_palette(&mut self, engine_a: bool) -> &mut Vec<u8> {
+        if engine_a {
+            return &mut self.palette_upper;
+        }
+        &mut self.palette_lower
     }
 
     // TODO: id to enum?
@@ -141,63 +144,63 @@ impl Gpu {
     }
 
     pub fn get_win0v_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_win0v()
     }
 
     pub fn get_win1v_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_win1v()
     }
 
     pub fn get_win0v_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_win0v()
     }
 
     pub fn get_win1v_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_win1v()
     }
 
     pub fn get_winin_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_winin()
     }
 
     pub fn get_winin_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_winin()
     }
 
     pub fn get_winout_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_winout()
     }
 
     pub fn get_winout_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_winout()
     }
 
     pub fn get_bldcnt_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_bldcnt()
     }
 
     pub fn get_bldcnt_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_bldcnt()
     }
 
     pub fn get_bldalpha_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_bldalpha()
     }
 
     pub fn get_bldalpha_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_bldalpha()
     }
 
     pub fn get_disp3dcnt(&self) -> u16 {
-        todo!()
+        self.engine_3d.get_disp3dcnt()
     }
 
     pub fn get_master_bright_a(&self) -> u16 {
-        todo!()
+        self.engine_upper.get_master_bright()
     }
 
     pub fn get_master_bright_b(&self) -> u16 {
-        todo!()
+        self.engine_lower.get_master_bright()
     }
 
     /// Replace uint32_t get_DISPCAPCNT();
@@ -264,14 +267,14 @@ impl Gpu {
     }
 
     pub fn get_gxstat(&self) -> u32 {
-        todo!()
+        self.engine_3d.get_gxstat()
     }
 
     pub fn get_vert_count(&self) -> u16 {
-        todo!()
+        self.engine_3d.get_vert_count()
     }
 
     pub fn get_poly_count(&self) -> u16 {
-        todo!()
+        self.engine_3d.get_poly_count()
     }
 }

@@ -8,6 +8,7 @@ mod button;
 mod cartridge;
 mod dma;
 pub mod emu_config;
+mod gpu;
 mod interrupt;
 mod load;
 mod read;

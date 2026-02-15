@@ -5,11 +5,11 @@
 use crate::gpu_3d::structs::Matrix;
 
 // Constants to define
-const SCANLINES: usize = 256;
-const PIXELS_PER_LINE: usize = 256;
+pub const SCANLINES: usize = 256;
+pub const PIXELS_PER_LINE: usize = 256;
 
 #[rustfmt::skip]
-static CMD_PARAM_AMOUNTS: [u8; 256] = [
+pub static CMD_PARAM_AMOUNTS: [u8; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     1, 0, 1, 1, 1, 0, 16, 12, 16, 12, 9, 3, 3, 0, 0, 0,
     1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
@@ -29,7 +29,7 @@ static CMD_PARAM_AMOUNTS: [u8; 256] = [
 ];
 
 #[rustfmt::skip]
-static CMD_CYCLE_AMOUNTS: [u16; 256] = [
+pub static CMD_CYCLE_AMOUNTS: [u16; 256] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     1, 17, 36, 17, 36, 19, 34, 30, 35, 31, 28, 22, 22, 0, 0, 0,
     1, 9, 1, 9, 8, 8, 8, 8, 8, 1, 1, 1, 0, 0, 0, 0,
@@ -49,7 +49,7 @@ static CMD_CYCLE_AMOUNTS: [u16; 256] = [
 ];
 
 #[rustfmt::skip]
-static IDENTITY_MATRIX: Matrix = Matrix::new([
+pub static IDENTITY_MATRIX: Matrix = Matrix::new([
     [1 << 12, 0, 0, 0],
     [0, 1 << 12, 0, 0],
     [0, 0, 1 << 12, 0],

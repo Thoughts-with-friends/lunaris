@@ -15,7 +15,7 @@ impl Emulator {
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
                 self.execute(CpuType::Arm9);
                 self.run_timers9((self.arm9.cycles_ran() >> 1) as i32);
-                self.gpu.run_3d((self.arm9.cycles_ran() >> 1) as u64);
+                self.run_3d((self.arm9.cycles_ran() >> 1) as u64);
             }
 
             // Now handle ARM7
