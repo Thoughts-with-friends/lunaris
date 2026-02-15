@@ -19,7 +19,7 @@ pub struct Config {
 
     /// Background enable flags
     pub bg_enable: [bool; 4],
-    pub frameskip: i32,
+    pub frameskip: u32,
 
     /// Enable frame limiter
     pub enable_framelimiter: bool,

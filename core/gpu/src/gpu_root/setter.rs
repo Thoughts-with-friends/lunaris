@@ -274,15 +274,6 @@ impl Gpu {
         self.power_control_reg.set(value);
     }
 
-    /// Write to GXFIFO command queue
-    pub fn write_gxfifo(&mut self, word: u32) {
-        self.engine_3d.write_gxfifo(word);
-    }
-
-    pub fn write_fifo_direct(&mut self, address: u32, word: u32) {
-        self.engine_3d.write_fifo_direct(address, word);
-    }
-
     pub fn set_clear_color(&mut self, word: u32) {
         self.engine_3d.set_clear_color(word);
     }

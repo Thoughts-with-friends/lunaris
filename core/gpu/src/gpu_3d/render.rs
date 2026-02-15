@@ -2,388 +2,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! gpu3d.hpp
 //!
-use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
-use std::collections::VecDeque;
+use crate::gpu_3d::structs::{Gpu3D, Matrix, Polygon, Vertex};
 
-use crate::gpu_3d::structs::{
-    Disp3DCntReg, Gpu3D, GxStatReg, Matrix, Polygon, PolygonAttrReg, TexImageParamReg, Vertex,
-    ViewportReg,
-};
+fn safe_clone<T>(dest: &mut Vec<T>, src: &mut Vec<T>, size: usize)
+where
+    T: Default + Clone,
+{
+    let src: Vec<T> = core::mem::take(src);
+    for (d, s) in dest.iter_mut().zip(src.iter()).take(size) {
+        *d = s.clone();
+    }
+    let _ = core::mem::replace(dest, src);
+}
 
 impl Gpu3D {
-    pub fn new() -> Self {
-        Self {
-            cycles: 100,
-            disp3dcnt: Disp3DCntReg::default(),
-            polygon_attr: PolygonAttrReg::default(),
-            teximage_param: TexImageParamReg::default(),
-            toon_table: [0; 32],
-            pltt_base: 0,
-            viewport: ViewportReg::default(),
-            gxstat: GxStatReg::default(),
-            polygon_type: 0,
-            clear_depth: 0,
-            clear_color: 0,
-            flush_mode: 0,
-            gxfifo: VecDeque::new(),
-            gxpipe: VecDeque::new(),
-            cmd_params: vec![0; 32],
-            param_count: 0,
-            cmd_param_count: 0,
-            cmd_count: 0,
-            total_params: 0,
-            current_cmd: 0,
-            current_poly_attr: PolygonAttrReg::default(),
-            current_color: 0,
-            current_vertex: [0, 0, 0],
-            current_texcoords: [0, 0],
-            z_buffer: vec![vec![0; PIXELS_PER_LINE]; SCANLINES],
-            trans_poly_ids: vec![0; PIXELS_PER_LINE],
-            swap_buffers: false,
-            geo_vert: vec![Vertex::default(); 6188],
-            rend_vert: vec![Vertex::default(); 6188],
-            geo_poly: vec![Polygon::default(); 2048],
-            rend_poly: vec![Polygon::default(); 2048],
-            last_poly_strip: None,
-            vertex_list: vec![Vertex::default(); 10],
-            vertex_list_count: 0,
-            geo_vert_count: 0,
-            rend_vert_count: 0,
-            geo_poly_count: 0,
-            rend_poly_count: 0,
-            consecutive_polygons: 0,
-            vtx_16_index: 0,
-            mtx_mode: 0,
-            projection_mtx: Matrix::default(),
-            vector_mtx: Matrix::default(),
-            modelview_mtx: Matrix::default(),
-            texture_mtx: Matrix::default(),
-            projection_stack: Matrix::default(),
-            texture_stack: Matrix::default(),
-            modelview_stack: vec![Matrix::default(); 0x20],
-            vector_stack: vec![Matrix::default(); 0x20],
-            clip_mtx: Matrix::default(),
-            clip_dirty: false,
-            model_view_sp: 0,
-            emission_color: 0,
-            ambient_color: 0,
-            diffuse_color: 0,
-            specular_color: 0,
-            light_color: [0; 4],
-            light_direction: [[0; 3]; 4],
-            normal_vector: [0; 3],
-            shine_table: vec![0; 128],
-            using_shine_table: false,
-            vec_test_result: [0; 3],
-            mult_params: Matrix::default(),
-            mult_params_index: 0,
-        }
-    }
-
     // ============= private method =============
-
-    /// Perspective-Correct Linear Interpolation
-    fn interpolate(
-        &self,
-        step: u64,
-        step_count: u64,
-        value_start: i64,
-        value_end: i64,
-        depth_scale_start: i32,
-        depth_scale_end: i32,
-    ) -> i64 {
-        let pixel = step as i64;
-        let pixel_range = step_count as i64;
-        let w1 = depth_scale_start as i64;
-        let w2 = depth_scale_end as i64;
-
-        let mut bark = (pixel_range - pixel) * (value_start * w2);
-        bark += pixel * (value_end * w1);
-
-        let mut denom = (pixel_range - pixel) * w2;
-        denom += pixel * w1;
-
-        bark / denom
-    }
-
-    // Moved to impl Matrix
-    // fn get_identity_matrix(&mut self, mtx: &mut Matrix);
-    // pub fn read_command(&mut self) -> Option<GxCommand>;
-    // fn write_command(&mut self, cmd: GxCommand);
-
-    // fn exec_command(&mut self) {
-    //     todo!()
-    // }
-
-    fn add_mult_param(&mut self) {
-        todo!()
-    }
-
-    fn matrix_mult(&mut self) {
-        todo!()
-    }
-
-    fn update_clip_matrix(&mut self) {
-        todo!()
-    }
-
-    fn clip(
-        &mut self,
-        v_list: &mut [Vertex],
-        mut v_len: usize,
-        clip_start: usize,
-        add_attributes: bool,
-    ) -> usize {
-        v_len = self.clip_plane(0, v_list, v_len, clip_start, add_attributes);
-        v_len = self.clip_plane(1, v_list, v_len, clip_start, add_attributes);
-        v_len = self.clip_plane(2, v_list, v_len, clip_start, add_attributes);
-        v_len
-    }
-
-    pub fn clip_plane(
-        &mut self,
-        plane: usize,
-        v_list: &mut [Vertex],
-        mut v_len: usize,
-        clip_start: usize,
-        add_attributes: bool,
-    ) -> usize {
-        let mut temp_v_list: Vec<Vertex> = vec![Vertex::default(); 10];
-        let mut clip_index = clip_start;
-
-        if clip_start == 2 {
-            temp_v_list[0] = v_list[0].clone();
-            temp_v_list[1] = v_list[1].clone();
-        }
-
-        // Clip everything higher than w
-        for i in clip_start..v_len {
-            let prev_v = if i == 0 { v_len - 1 } else { i - 1 };
-            let next_v = if i + 1 >= v_len { 0 } else { i + 1 };
-
-            let v = v_list[i].clone();
-
-            if v.coords[plane] > v.coords[3] {
-                if plane == 2 && !self.current_poly_attr.render_far_intersect {
-                    return 0;
-                }
-
-                let vp = v_list[prev_v].clone();
-                if vp.coords[plane] <= vp.coords[3] {
-                    self.clip_vertex(
-                        plane,
-                        &mut temp_v_list[clip_index],
-                        &v,
-                        &vp,
-                        1,
-                        add_attributes,
-                    );
-                    clip_index += 1;
-                }
-
-                let vn = v_list[next_v].clone();
-                if vn.coords[plane] <= vn.coords[3] {
-                    self.clip_vertex(
-                        plane,
-                        &mut temp_v_list[clip_index],
-                        &v,
-                        &vn,
-                        1,
-                        add_attributes,
-                    );
-                    clip_index += 1;
-                }
-            } else {
-                temp_v_list[clip_index] = v;
-                clip_index += 1;
-            }
-        }
-
-        v_len = clip_index;
-        clip_index = clip_start;
-
-        // Clip everything lower than -w
-        for i in clip_start..v_len {
-            let prev_v = if i == 0 { v_len - 1 } else { i - 1 };
-            let next_v = if i + 1 >= v_len { 0 } else { i + 1 };
-
-            let v = temp_v_list[i].clone();
-
-            if v.coords[plane] < -v.coords[3] {
-                let vp = temp_v_list[prev_v].clone();
-                if vp.coords[plane] >= -vp.coords[3] {
-                    self.clip_vertex(plane, &mut v_list[clip_index], &v, &vp, -1, add_attributes);
-                    clip_index += 1;
-                }
-
-                let vn = temp_v_list[next_v].clone();
-                if vn.coords[plane] >= -vn.coords[3] {
-                    self.clip_vertex(plane, &mut v_list[clip_index], &v, &vn, -1, add_attributes);
-                    clip_index += 1;
-                }
-            } else {
-                v_list[clip_index] = v;
-                clip_index += 1;
-            }
-        }
-
-        clip_index
-    }
-
-    pub fn clip_vertex(
-        &mut self,
-        plane: usize,
-        v_list: &mut Vertex, // output
-        v_out: &Vertex,      // outside vertex
-        v_in: &Vertex,       // inside vertex
-        side: i32,
-        add_attributes: bool,
-    ) {
-        // Copied logic from melonDS version
-        let factor_num: i64 = v_in.coords[3] as i64 - (side as i64 * v_in.coords[plane] as i64);
-
-        let factor_den: i32 = (factor_num
-            - (v_out.coords[3] as i64 - (side as i64 * v_out.coords[plane] as i64)))
-            as i32;
-
-        if factor_den == 0 {
-            panic!("Error: factor_den equals zero!");
-        }
-
-        // Helper closure for interpolation
-        let interp = |vin: i32, vout: i32| -> i32 {
-            vin + (((vout - vin) as i64 * factor_num) / factor_den as i64) as i32
-        };
-
-        if plane != 0 {
-            v_list.coords[0] = interp(v_in.coords[0], v_out.coords[0]);
-        }
-        if plane != 1 {
-            v_list.coords[1] = interp(v_in.coords[1], v_out.coords[1]);
-        }
-        if plane != 2 {
-            v_list.coords[2] = interp(v_in.coords[2], v_out.coords[2]);
-        }
-
-        v_list.coords[3] = interp(v_in.coords[3], v_out.coords[3]);
-        v_list.coords[plane] = side * v_list.coords[3];
-
-        if add_attributes {
-            v_list.colors[0] = interp(v_in.colors[0], v_out.colors[0]);
-            v_list.colors[1] = interp(v_in.colors[1], v_out.colors[1]);
-            v_list.colors[2] = interp(v_in.colors[2], v_out.colors[2]);
-
-            v_list.texcoords[0] = interp(v_in.texcoords[0], v_out.texcoords[0]);
-            v_list.texcoords[1] = interp(v_in.texcoords[1], v_out.texcoords[1]);
-        }
-
-        v_list.clipped = true;
-    }
-
-    pub fn add_vertex(&mut self) {
-        // if (geo_vert_count >= 6188)
-        //     return;
-        // int64_t coords[4];
-        // coords[0] = (int64_t)(int16_t)current_vertex[0];
-        // coords[1] = (int64_t)(int16_t)current_vertex[1];
-        // coords[2] = (int64_t)(int16_t)current_vertex[2];
-        // coords[3] = 0x1000;
-
-        // update_clip_mtx();
-
-        // Vertex* vtx = &vertex_list[vertex_list_count];
-
-        // vtx->coords[0] = (coords[0]*clip_mtx.m[0][0] + coords[1]*clip_mtx.m[1][0] +
-        //         coords[2]*clip_mtx.m[2][0] + coords[3]*clip_mtx.m[3][0]) >> 12;
-        // vtx->coords[1] = (coords[0]*clip_mtx.m[0][1] + coords[1]*clip_mtx.m[1][1] +
-        //         coords[2]*clip_mtx.m[2][1] + coords[3]*clip_mtx.m[3][1]) >> 12;
-        // vtx->coords[2] = (coords[0]*clip_mtx.m[0][2] + coords[1]*clip_mtx.m[1][2] +
-        //         coords[2]*clip_mtx.m[2][2] + coords[3]*clip_mtx.m[3][2]) >> 12;
-        // vtx->coords[3] = (coords[0]*clip_mtx.m[0][3] + coords[1]*clip_mtx.m[1][3] +
-        //         coords[2]*clip_mtx.m[2][3] + coords[3]*clip_mtx.m[3][3]) >> 12;
-
-        // if (TEXIMAGE_PARAM.transformation_mode == 3)
-        // {
-        //     int16_t texcoords[2];
-        //     texcoords[0] = current_texcoords[0];
-        //     texcoords[1] = current_texcoords[1];
-        //     current_texcoords[0] = ((coords[0] * texture_mtx.m[0][0] + coords[1] * texture_mtx.m[1][0]
-        //             + coords[2] * texture_mtx.m[2][0]) >> 24) + texcoords[0];
-        //     current_texcoords[1] = ((coords[0] * texture_mtx.m[0][1] + coords[1] * texture_mtx.m[1][1]
-        //             + coords[2] * texture_mtx.m[2][1]) >> 24) + texcoords[1];
-        // }
-
-        // vtx->colors[0] = ((current_color & 0x1F) << 12) + 0xFFF;
-        // vtx->colors[1] = (((current_color >> 5) & 0x1F) << 12) + 0xFFF;
-        // vtx->colors[2] = (((current_color >> 10) & 0x1F) << 12) + 0xFFF;
-        // vtx->texcoords[0] = (int16_t)current_texcoords[0];
-        // vtx->texcoords[1] = (int16_t)current_texcoords[1];
-        // vtx->clipped = false;
-
-        // vertex_list_count++;
-        // switch (POLYGON_TYPE)
-        // {
-        //     case 0:
-        //         if (vertex_list_count == 3)
-        //         {
-        //             add_polygon();
-        //             consecutive_polygons++;
-        //             vertex_list_count = 0;
-        //         }
-        //         break;
-        //     case 1:
-        //         if (vertex_list_count == 4)
-        //         {
-        //             add_polygon();
-        //             consecutive_polygons++;
-        //             vertex_list_count = 0;
-        //         }
-        //         break;
-        //     case 2:
-        //         if (consecutive_polygons & 0x1)
-        //         {
-        //             swap(vertex_list[0], vertex_list[1]);
-
-        //             add_polygon();
-        //             consecutive_polygons++;
-        //             vertex_list_count = 2;
-        //             vertex_list[1] = vertex_list[2];
-        //         }
-        //         else if (vertex_list_count == 3)
-        //         {
-        //             add_polygon();
-        //             consecutive_polygons++;
-        //             vertex_list_count = 2;
-        //             vertex_list[0] = vertex_list[1];
-        //             vertex_list[1] = vertex_list[2];
-        //         }
-        //         break;
-        //     case 3:
-        //         if (vertex_list_count == 4)
-        //         {
-        //             swap(vertex_list[2], vertex_list[3]);
-        //             add_polygon();
-        //             consecutive_polygons++;
-        //             vertex_list_count = 2;
-
-        //             vertex_list[0] = vertex_list[3];
-        //             vertex_list[1] = vertex_list[2];
-        //         }
-        //         break;
-        //     default:
-        //         printf("\nUnrecognized POLYGON_TYPE %d", POLYGON_TYPE);
-        //         exit(1);
-        // }
-    }
-
-    fn add_polygon(&mut self) {
-        todo!()
-    }
-
-    fn request_fifo_dma(&mut self) {
-        todo!()
-    }
-
+    // moved geometry.rs
     // ============= private method =============
 
     pub fn power_on(&mut self) {
@@ -429,112 +63,358 @@ impl Gpu3D {
 
     // Moved to struct Emulator method (Because use emulator method)
     // pub fn run_3d(&mut self, cycles: u64)
-
-    pub fn render_scanline(
-        &mut self,
-        framebuffer: &mut [u32],
-        bg_priorities: &[u8],
-        bg0_priority: u8,
-    ) {
-        todo!()
-    }
+    // pub fn render_scanline;
 
     // Moved to struct Emulator method (Because use emulator method)
     // pub fn run(&mut self, cycles_to_run: u64)
+    // pub fn check_fifo_dma(&mut self);
 
     pub fn end_of_frame(&mut self) {
-        todo!()
-    }
+        #[cfg(feature = "tracing")]
+        tracing::info!("SWAP_BUFFERS");
 
-    pub fn check_fifo_dma(&mut self) {
-        todo!()
+        if self.swap_buffers {
+            let geo_vert_count = self.geo_vert_count as usize;
+            let geo_poly_count = self.geo_poly_count as usize;
+
+            safe_clone(&mut self.rend_vert, &mut self.geo_vert, geo_vert_count);
+            safe_clone(&mut self.rend_poly, &mut self.geo_poly, geo_poly_count);
+
+            #[cfg(feature = "tracing")]
+            tracing::info!("Geo_vert_count: {}", geo_vert_count);
+            tracing::info!("Geo_poly_count: {}", geo_poly_count);
+
+            self.rend_vert_count = geo_vert_count as i32;
+            self.rend_poly_count = geo_poly_count as i32;
+            self.geo_vert_count = 0;
+            self.geo_poly_count = 0;
+
+            for i in 0..self.rend_poly_count as usize {
+                let vert_index = self.rend_poly[i].vert_index as usize;
+                self.rend_poly[i].top_y = 256;
+                self.rend_poly[i].bottom_y = 0;
+
+                for j in 0..self.rend_poly[i].vertices as usize {
+                    #[cfg(feature = "tracing")]
+                    tracing::info!(
+                        "Color: (R, G, B) = ({}, {}, {})",
+                        self.rend_vert[vert_index + j].colors[0] & 0xFFFF,
+                        self.rend_vert[vert_index + j].colors[1] & 0xFFFF,
+                        self.rend_vert[vert_index + j].colors[2] & 0xFFFF
+                    );
+
+                    let xx = self.rend_vert[vert_index + j].coords[0];
+                    let yy = self.rend_vert[vert_index + j].coords[1];
+                    let ww = self.rend_vert[vert_index + j].coords[3];
+
+                    #[cfg(feature = "tracing")]
+                    tracing::info!("Coords: (x, y, w) = ({}, {}, {})", xx, yy, ww);
+
+                    let final_x: i32;
+                    let final_y: i32;
+
+                    if ww == 0 {
+                        #[cfg(feature = "tracing")]
+                        tracing::info!("Poly {} ww == 0?", i);
+                    } else {
+                        let width = self.viewport.x2 - self.viewport.x1 + 1;
+                        let height = self.viewport.y1 - self.viewport.y2 + 1;
+                        // let width = (self.viewport.x2 as u16 - self.viewport.x1 as u16 + 1) & 0x1FF;
+                        // let height = (self.viewport.y1 - self.viewport.y2 + 1) & 0xFF;
+
+                        // NOTE: (x2 - x1, y2 - y1)?
+                        // let width = (self.viewport.x2 - self.viewport.x1 + 1) & 0x1FF;
+                        // let height = self.viewport.y2 - self.viewport.y1 + 1;
+
+                        let screen_x =
+                            (((xx + ww) * width as i32) / (ww << 1)) + self.viewport.x1 as i32;
+                        let screen_y =
+                            (((-yy + ww) * height as i32) / (ww << 1)) + self.viewport.y2 as i32;
+
+                        final_x = screen_x & 0x1FF;
+                        final_y = screen_y & 0xFF;
+
+                        #[cfg(feature = "tracing")]
+                        tracing::info!("Screen shit: ({}, {})", final_x, final_y);
+
+                        if final_y < self.rend_poly[i].top_y as i32 {
+                            self.rend_poly[i].top_y = final_y as u16;
+                        }
+                        if final_y > self.rend_poly[i].bottom_y as i32 {
+                            self.rend_poly[i].bottom_y = final_y as u16;
+                        }
+
+                        self.rend_vert[vert_index + j].coords[0] = final_x;
+                        self.rend_vert[vert_index + j].coords[1] = final_y;
+                        if (self.flush_mode & 0x2) != 0 {
+                            self.rend_vert[vert_index + j].coords[2] = ww;
+                        }
+                    }
+                }
+            }
+
+            //Sort polygons by translucency
+            let mut index = 0;
+            let mut opaque_count = 0;
+            let mut temp: Vec<Polygon> = Vec::new(); // [2048]
+
+            for i in 0..self.rend_poly_count as usize {
+                if !self.rend_poly[i].translucent {
+                    temp[index] = self.rend_poly[i].clone();
+                    index += 1;
+                    opaque_count += 1;
+                }
+            }
+
+            for i in 0..self.rend_poly_count as usize {
+                if self.rend_poly[i].translucent {
+                    temp[index] = self.rend_poly[i].clone();
+                    index += 1;
+                }
+            }
+
+            safe_clone(
+                &mut self.rend_poly,
+                &mut temp,
+                self.rend_poly_count as usize,
+            );
+
+            // y-sorting: opaque = false -> translucent = true
+            if (self.flush_mode & 0x1) != 0 {
+                self.rend_poly[..opaque_count].sort_by(|a, b| {
+                    a.translucent
+                        .cmp(&b.translucent)
+                        .then(a.bottom_y.cmp(&b.bottom_y))
+                        .then(a.top_y.cmp(&b.top_y))
+                });
+            } else {
+                let index = self.rend_poly_count as usize;
+                self.rend_poly[..index].sort_by(|a, b| {
+                    a.translucent
+                        .cmp(&b.translucent)
+                        .then(a.bottom_y.cmp(&b.bottom_y))
+                        .then(a.top_y.cmp(&b.top_y))
+                });
+            }
+        }
+        self.swap_buffers = false;
     }
 
     // Moved to struct Emulator method (Because use emulator method)
     // pub fn check_fifo_irq(&mut self);
-
-    pub fn write_gxfifo(&mut self, word: u32) {
-        todo!()
-    }
-
-    pub fn write_fifo_direct(&mut self, address: u32, word: u32) {
-        todo!()
-    }
+    // pub fn write_gxfifo(&mut self, word: u32, cmd_param_amounts: &[u8; 256]);
+    // pub fn write_fifo_direct(&mut self, address: u32, word: u32);
 
     pub fn get_disp3dcnt(&self) -> u16 {
-        todo!()
+        self.disp3dcnt.get()
     }
 
     pub fn get_gxstat(&self) -> u32 {
-        todo!()
+        let mut reg: u32 = 0;
+
+        reg |= self.gxstat.box_pos_vec_busy as u32;
+        reg |= (self.gxstat.boxtest_result as u32) << 1;
+        reg |= ((self.model_view_sp & 0x1F) << 8) as u32;
+        reg |= (self.gxstat.mtx_stack_busy as u32) << 14;
+        reg |= (self.gxfifo.len() << 16) as u32;
+        reg |= ((self.gxfifo.len() < 128) as u32) << 25;
+        reg |= ((self.gxfifo.is_empty()) as u32) << 26;
+        reg |= (self.gxstat.geo_busy as u32) << 27;
+        reg |= (self.gxstat.gxfifo_irq_stat as u32) << 30;
+
+        reg
     }
 
     pub fn get_vert_count(&self) -> u16 {
-        todo!()
+        self.geo_vert_count as u16
     }
 
     pub fn get_poly_count(&self) -> u16 {
-        todo!()
+        self.geo_poly_count as u16
     }
 
-    pub fn read_clip_mtx(&self, address: u32) -> u32 {
-        todo!()
+    pub fn read_clip_mtx(&mut self, address: u32) -> u32 {
+        self.update_clip_matrix();
+        let x = ((address - 0x04000640) % 4) as usize;
+        let y = ((address - 0x04000640) / 4) as usize;
+        self.clip_mtx.m[y][x] as u32
     }
 
     pub fn read_vec_mtx(&self, address: u32) -> u32 {
-        todo!()
+        let addr = address - 0x04000680;
+        let x = (addr % 3) as usize;
+        let y = (addr / 3) as usize;
+        self.vector_mtx.m[y][x] as u32
     }
 
     pub fn read_vec_test(&self, address: u32) -> u16 {
-        todo!()
+        self.vec_test_result[((address - 0x04000630) / 2) as usize] as u16
     }
 
     pub fn set_disp3dcnt(&mut self, halfword: u16) {
-        todo!()
+        self.disp3dcnt.texture_mapping = (halfword & 1) != 0;
+        self.disp3dcnt.highlight_shading = (halfword & (1 << 1)) != 0;
+        self.disp3dcnt.alpha_test = (halfword & (1 << 2)) != 0;
+        self.disp3dcnt.alpha_blending = (halfword & (1 << 3)) != 0;
+        self.disp3dcnt.anti_aliasing = (halfword & (1 << 4)) != 0;
+        self.disp3dcnt.edge_marking = (halfword & (1 << 5)) != 0;
+        self.disp3dcnt.fog_color_mode = (halfword & (1 << 6)) != 0;
+        self.disp3dcnt.fog_enable = (halfword & (1 << 7)) != 0;
+        self.disp3dcnt.fog_depth_shift = ((halfword >> 8) & 0xF) as i32;
+
+        //TODO: Underflow/overflow: check me
+        self.disp3dcnt.color_buffer_underflow = (halfword & (1 << 12)) == 0;
+        self.disp3dcnt.ram_overflow = (halfword & (1 << 13)) == 0;
+        self.disp3dcnt.rear_plane_mode = (halfword & (1 << 14)) != 0;
     }
 
     pub fn set_clear_color(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Set clear_color: {word:08X}");
+        self.clear_color = word;
     }
 
     pub fn set_clear_depth(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Set clear_depth: {word:08X}");
+        self.clear_depth = word & 0x7FFF;
     }
 
     pub fn set_mtx_mode(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Set mtx_mode: {word:08X}");
+        self.mtx_mode = (word & 0x3) as u8;
     }
 
     pub fn mtx_push(&mut self) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("MTX_PUSH");
+
+        match self.mtx_mode {
+            0 => {
+                self.projection_stack.set(&self.projection_mtx);
+            }
+            1 | 2 => {
+                #[cfg(feature = "tracing")]
+                let model_view_sp = self.model_view_sp as usize;
+                tracing::debug!("self.model_view SP: {model_view_sp:02X}");
+
+                if model_view_sp < 0x1F {
+                    self.modelview_stack[model_view_sp].set(&self.modelview_mtx);
+                    self.vector_stack[model_view_sp].set(&self.vector_mtx);
+                } else {
+                    #[cfg(feature = "tracing")]
+                    tracing::error!("MTX_PUSH overflow!");
+                    self.gxstat.mtx_overflow = true;
+                }
+                self.model_view_sp = (self.model_view_sp + 1) & 0x1F;
+            }
+            3 => {
+                self.texture_stack.set(&self.texture_mtx);
+            }
+            unknown => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Unrecognized MTX_MODE {unknown}  for self.mtx_pop.");
+            }
+        }
     }
 
     pub fn mtx_pop(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::trace!("self.mtx_pop: {word:08X}");
+
+        let offset = ((word & 0x3F) << 2) >> 2;
+        match self.mtx_mode {
+            2 => {
+                self.model_view_sp -= offset as u8;
+                self.modelview_mtx
+                    .set(&self.modelview_stack[(self.model_view_sp & 0x1F) as usize]);
+            }
+            unknown => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Unrecognized MTX_MODE {unknown}  for self.mtx_pop.");
+            }
+        }
     }
 
     pub fn mtx_identity(&mut self) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::trace!("mtx_identity");
+
+        match self.mtx_mode {
+            0 => self.projection_mtx.set_identity(),
+            1 => self.modelview_mtx.set_identity(),
+            2 => {
+                self.modelview_mtx.set_identity();
+                self.vector_mtx.set_identity();
+            }
+            3 => self.texture_mtx.set_identity(),
+            unknown => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Unrecognized MTX_MODE {unknown} in mtx_identity.");
+            }
+        }
     }
 
     pub fn mtx_mult_4x4(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("MTX_MULT_4x4: {word:08X}");
+
+        self.add_mult_param(word);
+
+        if self.mult_params_index >= 16 {
+            self.mtx_mult(false);
+        }
     }
 
     pub fn mtx_mult_4x3(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("MTX_MULT_4x3: {word:08X}");
+
+        self.add_mult_param(word);
+
+        if (self.mult_params_index & 0x3) == 0x3 {
+            self.mult_params_index += 1;
+        }
+
+        if self.mult_params_index >= 16 {
+            self.mtx_mult(true);
+        }
     }
 
     pub fn mtx_mult_3x3(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("MTX_MULT_3x3: {word:08X}");
+
+        self.add_mult_param(word);
+
+        if (self.mult_params_index & 0x3) == 0x3 {
+            self.mult_params_index += 1;
+        }
+
+        if self.mult_params_index >= 11 {
+            self.mtx_mult(true);
+        }
     }
 
     pub fn mtx_trans(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("MTX_TRANS: {word:08X}");
+
+        if self.mult_params_index == 0 {
+            self.mult_params_index = 12;
+        }
+
+        self.add_mult_param(word);
+
+        if self.mult_params_index >= 15 {
+            self.mtx_mult(true);
+        }
     }
 
     pub fn color(&mut self, word: u32) {
-        todo!()
+        #[cfg(feature = "tracing")]
+        tracing::debug!("COLOR: {word:08X}");
     }
 
     // moved execute.rs: pub fn normal(&mut self)
@@ -549,7 +429,6 @@ impl Gpu3D {
 
     /// # Panics
     /// address : 0..32
-    #[expect(unused)]
     pub fn set_toon_table(&mut self, address: u32, color: u16) {
         self.toon_table[address as usize] = color;
     }
@@ -650,7 +529,7 @@ impl Gpu3D {
 
         let mut vertices;
 
-        //Front face
+        // Front face
         face[0] = cube[0].clone();
         face[1] = cube[1].clone();
         face[2] = cube[2].clone();
@@ -661,7 +540,7 @@ impl Gpu3D {
             return;
         }
 
-        //Back face
+        // Back face
         face[0] = cube[4].clone();
         face[1] = cube[5].clone();
         face[2] = cube[6].clone();
@@ -672,7 +551,7 @@ impl Gpu3D {
             return;
         }
 
-        //Left face
+        // Left face
         face[0] = cube[0].clone();
         face[1] = cube[3].clone();
         face[2] = cube[4].clone();
@@ -683,7 +562,7 @@ impl Gpu3D {
             return;
         }
 
-        //Right face
+        // Right face
         face[0] = cube[1].clone();
         face[1] = cube[2].clone();
         face[2] = cube[7].clone();
@@ -694,7 +573,7 @@ impl Gpu3D {
             return;
         }
 
-        //Bottom face
+        // Bottom face
         face[0] = cube[0].clone();
         face[1] = cube[1].clone();
         face[2] = cube[6].clone();
@@ -705,7 +584,7 @@ impl Gpu3D {
             return;
         }
 
-        //Top face
+        // Top face
         face[0] = cube[2].clone();
         face[1] = cube[3].clone();
         face[2] = cube[4].clone();
@@ -722,22 +601,6 @@ impl Gpu3D {
 
     // Moved to struct Emulator method (Because use emulator method)
     // pub fn set_gxstat(&mut self, word: u32)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_initialize_gpu3d() {
-        // Initialize the Gpu3D struct with basic values
-        let gpu = Gpu3D::new();
-
-        // Example: test if initialization works without overflow
-        assert_eq!(gpu.cycles, 100);
-        assert_eq!(gpu.geo_vert.len(), 6188);
-        assert_eq!(gpu.geo_poly.len(), 2048);
-    }
 }
 
 // to run exec_command
@@ -897,5 +760,21 @@ impl Gpu3D {
         }
 
         self.current_color = r + (g << 5) + (b << 10);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_initialize_gpu3d() {
+        // Initialize the Gpu3D struct with basic values
+        let gpu = Gpu3D::new();
+
+        // Example: test if initialization works without overflow
+        assert_eq!(gpu.cycles, 100);
+        assert_eq!(gpu.geo_vert.len(), 6188);
+        assert_eq!(gpu.geo_poly.len(), 2048);
     }
 }

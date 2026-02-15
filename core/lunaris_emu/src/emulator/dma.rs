@@ -246,7 +246,7 @@ impl Emulator {
     }
 
     /// Request GXFIFO DMA transfer
-    pub fn gfxfifo_request(&mut self) {
+    pub fn gxfifo_request(&mut self) {
         for i in 0..4 {
             let dma = &self.dma.dmas[i];
             if dma.cnt.enabled && dma.cnt.timing == 7 {

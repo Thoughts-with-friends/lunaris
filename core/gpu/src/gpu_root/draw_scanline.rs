@@ -7,19 +7,11 @@ use lunaris_ds_mem_const::*;
 
 impl Gpu {
     pub fn draw_3d_scanline(&mut self, is_engine_a: bool, bg_priority: u8) {
-        let engine = match is_engine_a {
-            true => &mut self.engine_upper,
-            false => &mut self.engine_lower,
-        };
-
-        let framebuffer = &mut engine.framebuffer;
-        let bg_priorities = &mut engine.final_bg_priority;
-        self.engine_3d
-            .render_scanline(framebuffer, bg_priorities, bg_priority);
+        self.render_scanline(is_engine_a, bg_priority);
     }
 
     /// Draws one scanline.
-    pub fn draw_scanline(&mut self, bg_enable: [bool; 4]) {
+    pub fn draw_scanline(&mut self) {
         let is_engine_a = if self.power_control_reg.engine_upper {
             true
         } else if self.power_control_reg.engine_lower {
@@ -75,8 +67,15 @@ impl Gpu {
 
         // Draw BG layers by priority
         for priority in (0..=3).rev() {
+            let bg_enable = {
+                let engine = match is_engine_a {
+                    true => &mut self.engine_upper,
+                    false => &mut self.engine_lower,
+                };
+                engine.bgcnt
+            };
             for (bg_index, bg_enable_value) in bg_enable.iter().enumerate() {
-                if !bg_enable_value {
+                if *bg_enable_value == 0 {
                     continue;
                 }
                 let engine = match is_engine_a {

@@ -6,6 +6,7 @@
 /// Handles 2D and 3D rendering, VRAM management, and display output
 pub(crate) mod arm_rw;
 pub(crate) mod draw_scanline;
+pub(crate) mod draw_scanline_3d;
 pub(crate) mod draw_sprite;
 pub(crate) mod getter;
 pub(crate) mod matrix;
@@ -18,7 +19,7 @@ pub(crate) mod writer;
 
 use crate::gpu_2d::Gpu2DEngine;
 use crate::gpu_3d::structs::Gpu3D;
-use crate::gpu_root::register::{DispStatReg, PowerCtrlReg, SchedulerEvent, VramBankCfg};
+use crate::gpu_root::register::{DispStatReg, PowerCtrlReg, VramBankCfg};
 use lunaris_ds_mem_const::{
     VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE, VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE,
     VRAM_H_SIZE, VRAM_I_SIZE,
@@ -29,16 +30,16 @@ use lunaris_ds_mem_const::{
 #[derive(Debug)]
 pub struct Gpu {
     /// 2D Engine upper screen
-    engine_upper: Gpu2DEngine,
+    pub engine_upper: Gpu2DEngine,
     /// 2D Engine lower screen
-    engine_lower: Gpu2DEngine,
+    pub engine_lower: Gpu2DEngine,
 
     pub engine_3d: Gpu3D,
 
     /// Frame rendering complete flag
-    frame_complete: bool,
+    pub frame_complete: bool,
     /// Number of frames skipped for frame skip
-    frames_skipped: u32,
+    pub frames_skipped: u32,
 
     /// Cycle counter
     cycles: u64,
@@ -63,12 +64,12 @@ pub struct Gpu {
     oam: Vec<u8>,
 
     /// Display status register for ARM7
-    display_status_arm7: DispStatReg,
+    pub display_status_arm7: DispStatReg,
     /// Display status register for ARM9
-    display_status_arm9: DispStatReg,
+    pub display_status_arm9: DispStatReg,
 
     /// Current vertical line counter
-    vertical_count: u16,
+    pub vertical_count: u16,
 
     /// VRAM bank configuration A-I
     vramcnt_a: VramBankCfg,
@@ -154,13 +155,16 @@ pub fn read_palette_value(bytes: &[u8], address: u32) -> u16 {
 
 impl Gpu {
     pub fn draw_bg_txt_line(&self, index: i32, engine_a: bool) {
-        todo!()
+        let (_, _) = (index, engine_a);
+        unimplemented!("C++ code is empty.")
     }
     pub fn draw_bg_extended_line(&self, index: i32, engine_a: bool) {
-        todo!()
+        let (_, _) = (index, engine_a);
+        unimplemented!("C++ code is empty.")
     }
     pub fn draw_sprite_line(&self, engine_a: bool) {
-        todo!()
+        let _ = engine_a;
+        unimplemented!("C++ code is empty.")
     }
 
     // moved draw_scanline.rs
@@ -205,9 +209,8 @@ impl Gpu {
         self.vram_i.clear();
     }
 
-    pub fn handle_event(&self, event: &SchedulerEvent) {
-        todo!()
-    }
+    // moved struct Emulator;
+    // pub fn handle_event(&self, event: &SchedulerEvent);
 
     /// Get upper screen framebuffer data
     #[inline]
@@ -238,12 +241,10 @@ impl Gpu {
     pub fn end_frame(&mut self) {
         self.frame_complete = true;
     }
-    pub fn check_gxfifo_dma(&self) {
-        todo!()
-    }
-    pub fn check_gxfifo_irq(&self) {
-        todo!()
-    }
+
+    // moved gpu_3d.rs in lunaris_emu/gpu
+    // fn check_gxfifo_dma(&self)
+    // fn check_gxfifo_irq(&self)
 
     /// Check if current frame is complete
     pub fn is_frame_complete(&self) -> bool {
@@ -292,14 +293,14 @@ impl Gpu {
     // ===== Helpers =====
 
     pub fn read_vec_test(&self, address: u32) -> u16 {
-        todo!()
+        self.engine_3d.read_vec_test(address)
     }
 
-    pub fn read_clip_mtx(&self, address: u32) -> u32 {
-        todo!()
+    pub fn read_clip_mtx(&mut self, address: u32) -> u32 {
+        self.engine_3d.read_clip_mtx(address)
     }
 
     pub fn read_vec_mtx(&self, address: u32) -> u32 {
-        todo!()
+        self.engine_3d.read_vec_mtx(address)
     }
 }

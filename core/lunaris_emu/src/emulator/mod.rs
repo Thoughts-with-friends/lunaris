@@ -484,13 +484,17 @@ impl Emulator {
     }
 
     /// Request GX FIFO DMA.
+    // GPU::check_GXFIFO_DMA() -> eng_3D.check_FIFO_DMA()
     pub fn gxfifo_dma_request(&mut self) {
-        self.gfxfifo_request(); // wrapping
+        self.gxfifo_request(); // wrapping
     }
 
     /// Check GX FIFO DMA status.
+    // GPU::check_GXFIFO_DMA() -> eng_3D.check_FIFO_DMA()
     pub fn check_gxfifo_dma(&mut self) {
-        self.gpu.check_gxfifo_dma();
+        if self.gpu.engine_3d.gxfifo.len() < 128 {
+            self.gxfifo_dma_request();
+        }
     }
 
     /* ===== add and sys stamp (public) ===== */

@@ -85,7 +85,7 @@ impl Emulator {
             0x0400_0210 => self.int9_reg.irq_enable = word,
             0x0400_0214 => {
                 self.int9_reg.irq_flags &= !word;
-                self.gpu.check_gxfifo_irq();
+                self.check_gxfifo_irq();
             }
             0x0400_0240 => {
                 self.gpu.set_vramcnt_a((word & 0xFF) as u8);
@@ -106,8 +106,8 @@ impl Emulator {
                 self.gpu
                     .set_toon_table(((address + 2) & 0x3F) >> 1, (word >> 16) as u16);
             }
-            0x0400_0400..0x0400_0440 => self.gpu.write_gxfifo(word),
-            0x0400_0440..0x0400_05CC => self.gpu.write_fifo_direct(address, word),
+            0x0400_0400..0x0400_0440 => self.write_gxfifo(word),
+            0x0400_0440..0x0400_05CC => self.write_fifo_direct(address, word),
             PALETTE_START..VRAM_BGA_START => {
                 if (address & 0x7FF) < 0x400 {
                     self.gpu.write_palette_a(address, (word & 0xFFFF) as u16);

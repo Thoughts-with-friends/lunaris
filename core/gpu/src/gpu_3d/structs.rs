@@ -22,6 +22,27 @@ pub struct Disp3DCntReg {
     pub rear_plane_mode: bool,
 }
 
+impl Disp3DCntReg {
+    pub fn get(&self) -> u16 {
+        let mut reg: u16 = 0;
+
+        reg |= self.texture_mapping as u16;
+        reg |= (self.highlight_shading as u16) << 1;
+        reg |= (self.alpha_test as u16) << 2;
+        reg |= (self.alpha_blending as u16) << 3;
+        reg |= (self.anti_aliasing as u16) << 4;
+        reg |= (self.edge_marking as u16) << 5;
+        reg |= (self.fog_color_mode as u16) << 6;
+        reg |= (self.fog_enable as u16) << 7;
+        reg |= (self.fog_depth_shift as u16) << 8;
+        reg |= (self.color_buffer_underflow as u16) << 12;
+        reg |= (self.ram_overflow as u16) << 13;
+        reg |= (self.rear_plane_mode as u16) << 14;
+
+        reg
+    }
+}
+
 /// Texture Image Parameter Register
 #[derive(Debug, Default, Clone)]
 pub struct TexImageParamReg {
@@ -247,8 +268,9 @@ pub struct Gpu3D {
     /// Render polygons
     /// - `[Polygon; 2048]`
     pub rend_poly: Vec<Polygon>,
-    /// Last strip polygon position
-    /// - `Option<*mut Polygon>`
+    /// Last strip polygon position (self.geo_poly index)
+    ///
+    /// - C++ type `*mut Polygon`
     pub last_poly_strip: Option<usize>,
 
     /// Temporary vertex list

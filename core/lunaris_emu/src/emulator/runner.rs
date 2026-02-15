@@ -25,7 +25,7 @@ impl Emulator {
             }
 
             if self.system_timestamp >= self.gpu_event.activation_time {
-                self.gpu.handle_event(&self.gpu_event);
+                self.gpu_handle_event();
             }
 
             if self.system_timestamp >= self.dma_event.activation_time && self.dma_event.processing
