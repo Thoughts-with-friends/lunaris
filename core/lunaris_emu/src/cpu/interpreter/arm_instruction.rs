@@ -612,27 +612,28 @@ pub fn swap(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
 
     if is_byte {
         // SWPB
-        // let byte = emu.get_cpu_mut(cpu_type).read_byte(address);
-        let byte = 0;
-        // emu.get_cpu_mut(cpu_type).write_byte(address, (emu.get_cpu_mut(cpu_type).get_register(source) & 0xFF) as u8);
-        emu.get_cpu_mut(cpu_type)
-            .set_register(destination, byte as u32);
+        let byte = emu.read_byte(address, cpu_type);
 
-        emu.get_cpu_mut(cpu_type).add_n16_data(address, 2);
+        let value = (emu.get_cpu_mut(cpu_type).get_register(source) & 0xFF) as u8;
+        emu.write_byte(address, value, cpu_type);
+
+        let arm = emu.get_cpu_mut(cpu_type);
+        arm.set_register(destination, byte as u32);
+        arm.add_n16_data(address, 2);
     } else {
         // SWP (word)
         let aligned = address & !0x3;
         let rotate = (address & 0x3) * 8;
 
-        let word = emu.get_cpu_mut(cpu_type).rotr32(
-            // emu.get_cpu_mut(cpu_type).read_word(aligned),
-            0, rotate, false,
-        );
+        let value = emu.read_word(aligned, cpu_type);
+        let word = emu.get_cpu_mut(cpu_type).rotr32(value, rotate, false);
 
-        // emu.get_cpu_mut(cpu_type).write_word(address, emu.get_cpu_mut(cpu_type).get_register(source));
-        emu.get_cpu_mut(cpu_type).set_register(destination, word);
+        let value = emu.get_cpu_mut(cpu_type).get_register(source);
+        emu.write_word(address, value, cpu_type);
 
-        emu.get_cpu_mut(cpu_type).add_n32_data(address, 2);
+        let arm = emu.get_cpu_mut(cpu_type);
+        arm.set_register(destination, word);
+        arm.add_n32_data(address, 2);
     }
 }
 
@@ -774,24 +775,21 @@ pub fn store_byte(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
 
     if is_preindexing {
-        if is_adding_offset {
-            address = address.wrapping_add(offset);
-        } else {
-            address = address.wrapping_sub(offset);
+        match is_adding_offset {
+            true => address = address.wrapping_add(offset),
+            false => address = address.wrapping_sub(offset),
         }
 
         if is_writing_back {
             emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
         }
-
         emu.write_byte(address, value, cpu_type);
     } else {
         emu.write_byte(address, value, cpu_type);
 
-        if is_adding_offset {
-            address = address.wrapping_add(offset);
-        } else {
-            address = address.wrapping_sub(offset);
+        match is_adding_offset {
+            true => address = address.wrapping_add(offset),
+            false => address = address.wrapping_sub(offset),
         }
 
         emu.get_cpu_mut(cpu_type).set_register(base as i32, address);

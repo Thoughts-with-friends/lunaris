@@ -118,6 +118,8 @@ impl Emulator {
 
 #[cfg(test)]
 mod tests {
+    use crate::Config;
+
     use super::*;
     use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
 
@@ -199,7 +201,13 @@ mod tests {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
-        let mut emu = Box::new(Emulator::new());
+        let mut emu = Box::new(Emulator {
+            config: Config {
+                test: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
         // let rom_path = std::path::Path::new("../test_rom/hello_world.nds");
         let rom_path = std::path::Path::new("../test_rom/test.nds");
         emu.load_rom(rom_path).unwrap();

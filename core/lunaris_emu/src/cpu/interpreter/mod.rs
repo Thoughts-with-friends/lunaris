@@ -38,7 +38,7 @@ pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
         let cpu = emu.get_cpu_mut(cpu_type);
         let disasm = crate::cpu::disassemble::disasm_arm(cpu, instruction, pc);
         #[cfg(feature = "tracing")]
-        tracing::trace!(" {disasm}");
+        tracing::trace!("disasm: {disasm}");
     }
 
     // Build opcode
@@ -92,21 +92,25 @@ pub const fn arm_decode(instruction: u32) -> ARMInstr {
             return ARMInstr::SaturatedOp;
         }
     }
+
     // Data processing / multiply / halfword hell
     if ((instruction >> 26) & 0x3) == 0 {
         if (instruction & (1 << 25)) == 0 {
             // SWP
-            if ((instruction >> 4) & 0xFF) == 0x9 {
-                if ((instruction >> 23) & 0x1F) == 0x2 && ((instruction >> 20) & 0x3) == 0 {
-                    return ARMInstr::Swap;
-                }
+            if ((instruction >> 4) & 0xFF) == 0x9
+                && ((instruction >> 23) & 0x1F) == 0x2
+                && ((instruction >> 20) & 0x3) == 0
+            {
+                return ARMInstr::Swap;
             }
 
             // Signed halfword multiply
-            if (instruction & (1 << 7)) != 0 && (instruction & (1 << 4)) == 0 {
-                if (instruction & (1 << 20)) == 0 && ((instruction >> 23) & 0x3) == 0x2 {
-                    return ARMInstr::SignedHalfwordMultiply;
-                }
+            if (instruction & (1 << 7)) != 0
+                && (instruction & (1 << 4)) == 0
+                && (instruction & (1 << 20)) == 0
+                && ((instruction >> 23) & 0x3) == 0x2
+            {
+                return ARMInstr::SignedHalfwordMultiply;
             }
 
             // Multiply / halfword transfers
@@ -153,12 +157,10 @@ pub const fn arm_decode(instruction: u32) -> ARMInstr {
             } else {
                 return ARMInstr::StoreByte;
             }
+        } else if (instruction & (1 << 22)) == 0 {
+            return ARMInstr::LoadWord;
         } else {
-            if (instruction & (1 << 22)) == 0 {
-                return ARMInstr::LoadWord;
-            } else {
-                return ARMInstr::LoadByte;
-            }
+            return ARMInstr::LoadByte;
         }
     }
 

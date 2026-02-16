@@ -11,18 +11,8 @@ use crate::error::{EmuError, FailedReadFileSnafu};
 use snafu::ResultExt as _;
 
 impl Emulator {
-    /* ===== load (public) ===== */
-
-    /// Initialize emulator subsystems.
-    pub fn init(&mut self) -> i32 {
-        // self.arm9.set_cp15(&self.arm9_cp15);
-        // self.fifo7.receive_queue = &self.fifo7_queue;
-        // self.fifo7.send_queue = &self.fifo9_queue;
-
-        // self.fifo9.receive_queue = &self.fifo9_queue;
-        // self.fifo9.send_queue = &self.fifo7_queue;
-        0
-    }
+    // Initialize emulator subsystems.
+    // remove pub fn init(&mut self) -> i32
 
     /// Load firmware from internal source.
     pub fn load_firmware(&mut self) -> Result<(), EmuError> {

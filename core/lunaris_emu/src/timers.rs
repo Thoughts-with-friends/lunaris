@@ -16,7 +16,8 @@ pub enum Divisor {
 
 impl Divisor {
     /// Get the divisor value as integer
-    pub fn value(&self) -> u32 {
+    #[inline]
+    pub fn to_u32(self) -> u32 {
         match self {
             Divisor::F1 => 1,
             Divisor::F64 => 64,
@@ -26,14 +27,15 @@ impl Divisor {
     }
 
     /// Convert numeric value to Divisor
-    pub fn from_value(val: u32) -> Self {
-        match val & 0x3 {
+    #[inline]
+    pub fn from_u32(val: u32) -> Option<Self> {
+        Some(match val & 0x3 {
             0 => Divisor::F1,
             1 => Divisor::F64,
             2 => Divisor::F256,
             3 => Divisor::F1024,
-            _ => Divisor::F1,
-        }
+            _ => return None,
+        })
     }
 }
 
@@ -87,11 +89,27 @@ impl TimerReg {
     }
 
     /// Set control register value
-    pub fn set_control(&mut self, value: u16) {
-        self.clock_div = Divisor::from_value((value & 0x3) as u32);
+    #[inline]
+    fn set_control(&mut self, value: u16) {
+        match Divisor::from_u32((value & 0x3) as u32) {
+            Some(divisor) => {
+                self.clock_div = divisor;
+                self.cycles_left = divisor.to_u32() as i32;
+            }
+            None => {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Invalid NDSTiming Divisor value: None")
+            }
+        };
         self.count_up_timing = (value & (1 << 2)) != 0;
         self.irq_on_overflow = (value & (1 << 6)) != 0;
-        self.enabled = (value & (1 << 7)) != 0;
+        let enable = (value & (1 << 7)) != 0;
+
+        // If timer is being newly enabled, reload the counter
+        if !self.enabled && enable {
+            self.counter = self.reload_value;
+        }
+        self.enabled = enable;
     }
 }
 
@@ -169,37 +187,6 @@ impl NDSTiming {
     /// Write control register (high 16 bits)
     pub fn write_hi(&mut self, value: u16, index: usize) {
         let timer = &mut self.timers[index];
-
-        match value & 0x3 {
-            0 => {
-                timer.clock_div = Divisor::F1;
-                timer.cycles_left = 1;
-            }
-            1 => {
-                timer.clock_div = Divisor::F64;
-                timer.cycles_left = 64;
-            }
-            2 => {
-                timer.clock_div = Divisor::F256;
-                timer.cycles_left = 256;
-            }
-            3 => {
-                timer.clock_div = Divisor::F1024;
-                timer.cycles_left = 1024;
-            }
-            _ => unreachable!(),
-        }
-
-        timer.count_up_timing = (value & (1 << 2)) != 0;
-        timer.irq_on_overflow = (value & (1 << 6)) != 0;
-
-        let enable = (value & (1 << 7)) != 0;
-
-        // If timer is being newly enabled, reload the counter
-        if !timer.enabled && enable {
-            timer.counter = timer.reload_value;
-        }
-
-        timer.enabled = enable;
+        timer.set_control(value);
     }
 }

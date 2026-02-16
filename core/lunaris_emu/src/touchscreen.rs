@@ -115,6 +115,7 @@ impl TouchScreen {
     ///
     /// This resets the internal transfer position, exactly
     /// like the original C++ `deselect()` method.
+    #[cfg(test)]
     pub fn deselect(&mut self) {
         self.data_pos = 0;
     }

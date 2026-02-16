@@ -160,6 +160,7 @@ pub struct ArmCpu {
     /// Stack pointer for FIQ mode
     sp_fiq: u32,
     /// Stack pointer for abort mode
+    #[expect(unused)]
     sp_abt: u32,
     /// Stack pointer for undefined mode
     sp_und: u32,
@@ -172,6 +173,7 @@ pub struct ArmCpu {
     /// Link register for FIQ mode
     lr_fiq: u32,
     /// Link register for abort mode
+    #[expect(unused)]
     lr_abt: u32,
     /// Link register for undefined mode
     lr_und: u32,
@@ -326,10 +328,9 @@ impl ArmCpu {
         }
     }
 
-    /// Attach a CP15 coprocessor
-    pub fn set_cp15(&mut self, cp15: ()) {
-        todo!()
-    }
+    // The cross-reference has been removed, so it is no longer required.
+    // Attach a CP15 coprocessor
+    // pub fn set_cp15(&mut self, cp15: ()) {}
 
     /// Reset CPU state
     pub fn power_on(&mut self) {
@@ -562,8 +563,24 @@ impl ArmCpu {
         }
     }
 
-    pub fn print_condition(&self, condition: i32) {
-        todo!()
+    pub fn print_condition(condition: u32) -> Option<&'static str> {
+        Some(match condition {
+            0x0 => "EQ",
+            0x1 => "NE",
+            0x2 => "CS",
+            0x3 => "CC",
+            0x4 => "MI",
+            0x5 => "PL",
+            0x6 => "VS",
+            0x7 => "VC",
+            0x8 => "HI",
+            0x9 => "LS",
+            0xA => "GE",
+            0xB => "LT",
+            0xC => "GT",
+            0xD => "LE",
+            _ => return None,
+        })
     }
 
     pub const fn get_timestamp(&self) -> u64 {

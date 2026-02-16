@@ -70,8 +70,8 @@ impl Gpu3D {
     // pub fn check_fifo_dma(&mut self);
 
     pub fn end_of_frame(&mut self) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("SWAP_BUFFERS");
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("SWAP_BUFFERS");
 
         if self.swap_buffers {
             let geo_vert_count = self.geo_vert_count as usize;
@@ -80,9 +80,9 @@ impl Gpu3D {
             safe_clone(&mut self.rend_vert, &mut self.geo_vert, geo_vert_count);
             safe_clone(&mut self.rend_poly, &mut self.geo_poly, geo_poly_count);
 
-            #[cfg(feature = "tracing")]
-            tracing::info!("Geo_vert_count: {}", geo_vert_count);
-            tracing::info!("Geo_poly_count: {}", geo_poly_count);
+            // #[cfg(feature = "tracing")]
+            // tracing::info!("Geo_vert_count: {}", geo_vert_count);
+            // tracing::info!("Geo_poly_count: {}", geo_poly_count);
 
             self.rend_vert_count = geo_vert_count as i32;
             self.rend_poly_count = geo_poly_count as i32;

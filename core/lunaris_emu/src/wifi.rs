@@ -48,31 +48,41 @@ impl WiFi {
         }
     }
 
+    /// Perform baseband read operation
+    fn bb_read(&mut self, index: u16) {
+        match index {
+            0 => self.w_bb_read = 0x6D,
+            _ => self.w_bb_read = 0,
+        }
+    }
+
+    /// Perform baseband write operation
+    fn bb_write(&mut self, index: u16) {
+        let _ = index;
+        todo!()
+    }
+
     /// Set power control register
     pub fn set_w_power_us(&mut self, value: u16) {
         self.w_power_us = value;
     }
 
-    /// Get power control register
-    pub fn get_w_power_us(&self) -> u16 {
-        self.w_power_us
-    }
-
     /// Set baseband control register
     pub fn set_w_bb_cnt(&mut self, value: u16) {
         // Baseband count/control
+        let index = value & 0xFF;
+        let direction = value >> 12;
+
+        if direction == 5 {
+            self.bb_write(index);
+        } else if direction == 6 {
+            self.bb_read(index);
+        }
     }
 
     /// Set baseband write register
     pub fn set_w_bb_write(&mut self, value: u16) {
         self.w_bb_write = value;
-        // Initiate baseband write operation
-        self.bb_busy = true;
-    }
-
-    /// Get baseband read register
-    pub fn get_w_bb_read(&self) -> u16 {
-        self.w_bb_read
     }
 
     /// Set baseband mode register
@@ -80,31 +90,14 @@ impl WiFi {
         self.w_bb_mode = value;
     }
 
-    /// Get baseband mode register
-    pub fn get_w_bb_mode(&self) -> u16 {
-        self.w_bb_mode
-    }
-
     /// Set baseband power register
     pub fn set_w_bb_power(&mut self, value: u16) {
         self.w_bb_power = value;
     }
 
-    /// Get baseband power register
-    pub fn get_w_bb_power(&self) -> u16 {
-        self.w_bb_power
-    }
-
     /// Set RF control register
     pub fn set_w_rf_cnt(&mut self, value: u16) {
         self.w_rf_cnt = value;
-        // Initiate RF operation
-        self.rf_busy = true;
-    }
-
-    /// Get RF control register
-    pub fn get_w_rf_cnt(&self) -> u16 {
-        self.w_rf_cnt
     }
 
     /// Check if RF is busy
@@ -112,42 +105,13 @@ impl WiFi {
         self.rf_busy
     }
 
+    /// Get baseband read register
+    pub fn get_w_bb_read(&self) -> u16 {
+        self.w_bb_read
+    }
+
     /// Check if baseband is busy
     pub fn get_w_bb_busy(&self) -> bool {
         self.bb_busy
-    }
-
-    /// Perform baseband read operation
-    fn bb_read(&mut self, index: usize) {
-        // Read from baseband memory at given index
-        // Result stored in w_bb_read register
-        {
-            self.w_bb_read = 0;
-        }
-        self.bb_busy = false;
-    }
-
-    /// Perform baseband write operation
-    fn bb_write(&mut self, index: usize) {
-        // Write to baseband memory at given index
-        // Data from w_bb_write register
-        {}
-        self.bb_busy = false;
-    }
-
-    /// Update WiFi hardware state (called each cycle)
-    pub fn update(&mut self) {
-        // Clear busy flags after sufficient cycles
-        // In real hardware, these would clear after operations complete
-    }
-
-    /// Power on WiFi hardware
-    pub fn power_on(&mut self) {
-        todo!()
-    }
-
-    /// Power off WiFi hardware
-    pub fn power_off(&mut self) {
-        todo!()
     }
 }

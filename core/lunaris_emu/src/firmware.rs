@@ -190,14 +190,15 @@ impl Firmware {
         ];
 
         // Process each byte
+        #[expect(clippy::needless_range_loop)]
         for i in 0..length {
             start ^= data[i] as u32;
 
             // Process each bit
-            for j in 0..8 {
+            for (j, &v) in stuff.iter().enumerate() {
                 if (start & 0x1) != 0 {
                     start >>= 1;
-                    start ^= (stuff[j] as u32) << (7 - j);
+                    start ^= (v as u32) << (7 - j);
                 } else {
                     start >>= 1;
                 }
@@ -263,70 +264,11 @@ impl Firmware {
     }
 
     /// Deselect firmware (end SPI transfer)
+    #[expect(unused)]
     pub fn deselect(&mut self) {
         self.command_id = FirmwareCommand::None;
         self.address = 0;
         self.total_args = 0;
-    }
-
-    /// Get current firmware byte at address
-    pub fn get_byte(&self, address: usize) -> u8 {
-        if address < self.raw_firmware.len() {
-            self.raw_firmware[address]
-        } else {
-            0x00
-        }
-    }
-
-    /// Set firmware byte at address
-    pub fn set_byte(&mut self, address: usize, value: u8) {
-        if address < self.raw_firmware.len() {
-            self.raw_firmware[address] = value;
-        }
-    }
-
-    /// Get status register value
-    pub fn get_status(&self) -> u8 {
-        self.status_reg
-    }
-
-    /// Set status register value
-    pub fn set_status(&mut self, value: u8) {
-        self.status_reg = value;
-    }
-
-    /// Get firmware data
-    pub fn get_firmware(&self) -> &[u8] {
-        &self.raw_firmware
-    }
-
-    /// Get mutable firmware data
-    pub fn get_firmware_mut(&mut self) -> &mut [u8] {
-        &mut self.raw_firmware
-    }
-
-    // CRC helper functions
-
-    /// Update CRC16 with new byte
-    fn crc_update(mut crc: u16, byte: u8) -> u16 {
-        for _ in 0..8 {
-            let carry = (crc ^ (byte as u16)) & 1;
-            crc >>= 1;
-            if carry != 0 {
-                crc ^= 0xA001;
-            }
-        }
-        crc
-    }
-
-    /// Get user data section
-    pub fn get_user_data(&self) -> i32 {
-        self.user_data
-    }
-
-    /// Set user data section
-    pub fn set_user_data(&mut self, value: i32) {
-        self.user_data = value;
     }
 }
 

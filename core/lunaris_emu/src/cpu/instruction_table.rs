@@ -69,5 +69,6 @@ pub enum ThumbInstr {
     LongBranchPrep,
     LongBranch,
     LongBlx,
+    #[expect(unused)]
     Swi,
 }

@@ -95,16 +95,16 @@ impl Gpu {
 
     pub fn read_bga_u32(&self, address: u32) -> u32 {
         let mut bytes = [0u8; 4];
-        for i in 0..4 {
-            bytes[i] = self.read_bga_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_bga_u8(address + i as u32);
         }
         u32::from_le_bytes(bytes)
     }
 
     pub fn read_bga_u64(&self, address: u32) -> u64 {
         let mut bytes = [0u8; 8];
-        for i in 0..8 {
-            bytes[i] = self.read_bga_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_bga_u8(address + i as u32);
         }
         u64::from_le_bytes(bytes)
     }
@@ -148,16 +148,16 @@ impl Gpu {
 
     pub fn read_bgb_u32(&self, address: u32) -> u32 {
         let mut bytes = [0u8; 4];
-        for i in 0..4 {
-            bytes[i] = self.read_bgb_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_bgb_u8(address + i as u32);
         }
         u32::from_le_bytes(bytes)
     }
 
     pub fn read_bgb_u64(&self, address: u32) -> u64 {
         let mut bytes = [0u8; 8];
-        for i in 0..8 {
-            bytes[i] = self.read_bgb_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_bgb_u8(address + i as u32);
         }
         u64::from_le_bytes(bytes)
     }
@@ -231,16 +231,16 @@ impl Gpu {
 
     pub fn read_obja_u32(&self, address: u32) -> u32 {
         let mut bytes = [0u8; 4];
-        for i in 0..4 {
-            bytes[i] = self.read_obja_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_obja_u8(address + i as u32);
         }
         u32::from_le_bytes(bytes)
     }
 
     pub fn read_obja_u64(&self, address: u32) -> u64 {
         let mut bytes = [0u8; 8];
-        for i in 0..8 {
-            bytes[i] = self.read_obja_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_obja_u8(address + i as u32);
         }
         u64::from_le_bytes(bytes)
     }
@@ -272,16 +272,16 @@ impl Gpu {
 
     pub fn read_objb_u32(&self, address: u32) -> u32 {
         let mut bytes = [0u8; 4];
-        for i in 0..4 {
-            bytes[i] = self.read_objb_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_objb_u8(address + i as u32);
         }
         u32::from_le_bytes(bytes)
     }
 
     pub fn read_objb_u64(&self, address: u32) -> u64 {
         let mut bytes = [0u8; 8];
-        for i in 0..8 {
-            bytes[i] = self.read_objb_u8(address + i as u32);
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = self.read_objb_u8(address + i as u32);
         }
         u64::from_le_bytes(bytes)
     }
