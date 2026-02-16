@@ -226,8 +226,8 @@ impl Firmware {
         let calculated_crc = Firmware::create_crc(&self.raw_firmware[offset..], length, start);
 
         // Debug output (matches C++ printf behavior)
-        println!("\nStored CRC: ${:04X}", stored_crc);
-        println!("Calc CRC: ${:04X}", calculated_crc);
+        // println!("\nStored CRC: ${:04X}", stored_crc);
+        // println!("Calc CRC: ${:04X}", calculated_crc);
 
         stored_crc == calculated_crc
     }

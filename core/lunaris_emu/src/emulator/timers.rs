@@ -28,7 +28,7 @@ impl Emulator {
             }
         }
 
-        //Count-up timing behavior
+        // Count-up timing behavior
         if index != 3 && index != 7 {
             let count_up_timing = self.nds_timing.timers[index + 1].count_up_timing;
             let enabled = self.nds_timing.timers[index + 1].enabled;
@@ -36,7 +36,7 @@ impl Emulator {
 
             if count_up {
                 if self.nds_timing.timers[index + 1].counter == 0xFFFF {
-                    self.overflow(index + 1); //recursion baby
+                    self.overflow(index + 1); // recursion baby
                 } else {
                     self.nds_timing.timers[index + 1].counter += 1;
                 }

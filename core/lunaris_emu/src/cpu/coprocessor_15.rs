@@ -219,9 +219,8 @@ impl Cp15 {
     /// Read byte from TCM/cache
     pub fn read_byte(&self, address: u32) -> u8 {
         // Check if address is in instruction TCM
-        if address < 0x08000000
-            || (address >= 0x08000000 && address < (0x08000000 + self.itcm_size))
-        {
+        let itcm_end = 0x0800_0000u32.saturating_add(self.itcm_size);
+        if address < itcm_end {
             let idx = (address & (self.itcm.len() as u32 - 1)) as usize;
             return self.itcm[idx];
         }
@@ -256,9 +255,7 @@ impl Cp15 {
         let byte_val = (byte & 0xFF) as u8;
 
         // Check if address is in instruction TCM
-        if address < 0x08000000
-            || (address >= 0x08000000 && address < (0x08000000 + self.itcm_size))
-        {
+        if address < 0x0800_0000 + self.itcm_size {
             let idx = (address & (self.itcm.len() as u32 - 1)) as usize;
             self.itcm[idx] = byte_val;
             return;
@@ -280,10 +277,7 @@ impl Cp15 {
     /// Moves coprocessor register to ARM register
     pub const fn mrc(&self, operation: i32, source_reg: i32, _info: i32, operand_reg: i32) -> u32 {
         match (operation, source_reg, operand_reg) {
-            (0, 0, 0) => {
-                // Read control register
-                self.control.get_values()
-            }
+            (0, 0, 0) => self.control.get_values(), // Read control register
             _ => 0,
         }
     }

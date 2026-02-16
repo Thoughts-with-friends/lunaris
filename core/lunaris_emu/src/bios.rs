@@ -80,11 +80,11 @@ impl Emulator {
         while addr < end {
             crc ^= self.read_halfword(addr, cpu_type);
 
-            for i in 0..8 {
+            for (i, crc_) in crcs.iter().enumerate() {
                 let carry = (crc & 1) != 0;
                 crc >>= 1;
                 if carry {
-                    crc ^= crcs[i] << (7 - i);
+                    crc ^= crc_ << (7 - i);
                 }
             }
 

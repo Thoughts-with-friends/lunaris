@@ -168,9 +168,9 @@ impl NDSDma {
     pub fn power_on(&mut self) {
         self.active_dmas = 0;
 
-        for i in 0..8 {
-            self.dmas[i].is_arm9 = i < 4;
-            self.dmas[i].cnt.set(0);
+        for (i, dma) in self.dmas.iter_mut().enumerate() {
+            dma.is_arm9 = i < 4;
+            dma.cnt.set(0);
         }
     }
 

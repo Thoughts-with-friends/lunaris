@@ -959,7 +959,6 @@ impl NDSCart {
     }
 
     /// Performs KEY1 decryption on data buffer.
-    #[expect(unused)]
     fn key1_decrypt(&mut self, data: &mut [u32]) {
         let mut y = data[0];
         let mut x = data[1];

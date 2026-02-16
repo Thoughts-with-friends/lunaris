@@ -4,7 +4,7 @@
 //!
 use lunaris_ds_mem_const::*;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Config {
     pub arm7_bios_path: String,
     pub arm9_bios_path: String,
@@ -29,6 +29,31 @@ pub struct Config {
 
     /// Test mode
     pub test: bool,
+}
+
+impl Default for Config {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Config {
+    pub fn new() -> Self {
+        Self {
+            arm7_bios_path: Default::default(),
+            arm9_bios_path: Default::default(),
+            firmware_path: Default::default(),
+            savelist_path: Default::default(),
+            direct_boot_enabled: true,
+            pause_when_unfocused: Default::default(),
+            bg_enable: Default::default(),
+            frameskip: Default::default(),
+            enable_framelimiter: Default::default(),
+            hle_bios: Default::default(),
+            test: Default::default(),
+        }
+    }
 }
 
 /// Button input register for standard DS buttons

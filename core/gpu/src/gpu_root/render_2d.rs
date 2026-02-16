@@ -268,7 +268,11 @@ impl Gpu {
                 true => &mut self.engine_upper,
                 false => &mut self.engine_lower,
             };
-            engine.framebuffer[base + x] = color;
+
+            // safe access
+            if (base + x) < PIXELS_PER_LINE * SCANLINES {
+                engine.framebuffer[base + x] = color;
+            }
         }
     }
 

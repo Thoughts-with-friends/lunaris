@@ -18,7 +18,7 @@ use crate::gpu_3d::structs::{
 impl Gpu3D {
     pub fn new() -> Self {
         Self {
-            cycles: 100,
+            cycles: 0,
             disp3dcnt: Disp3DCntReg::default(),
             polygon_attr: PolygonAttrReg::default(),
             teximage_param: TexImageParamReg::default(),

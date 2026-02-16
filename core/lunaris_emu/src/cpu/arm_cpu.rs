@@ -145,6 +145,8 @@ pub struct ArmCpu {
     pub cpu_type: CpuType,
 
     /// CPU ID (ARM9 / ARM7 etc.)
+    /// - Arm7: 1
+    /// - Arm9: 0
     pub cpu_id: i32,
 
     /// Halt state
@@ -330,7 +332,7 @@ impl ArmCpu {
     }
 
     /// Reset CPU state
-    pub const fn power_on(&mut self) {
+    pub fn power_on(&mut self) {
         self.halted = false;
         self.timestamp = 0;
         self.cpsr.thumb_on = false;
@@ -339,7 +341,7 @@ impl ArmCpu {
     }
 
     /// Boot directly to an entry point
-    pub const fn direct_boot(&mut self, entry_point: u32) {
+    pub fn direct_boot(&mut self, entry_point: u32) {
         self.jp(entry_point, true);
         self.regs[12] = entry_point;
         self.regs[13] = entry_point;
@@ -350,7 +352,9 @@ impl ArmCpu {
     // pub fn execute(&mut self)
 
     /// Jump to address, optionally changing Thumb state
-    pub const fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {
+    pub fn jp(&mut self, new_addr: u32, change_thumb_state: bool) {
+        // #[cfg(feature = "tracing")]
+        // tracing::trace!(%new_addr, %change_thumb_state);
         self.regs[15] = new_addr;
 
         self.add_n32_code(new_addr, 1);
@@ -471,7 +475,7 @@ impl ArmCpu {
 
     /// Debug helpers
     #[inline]
-    pub const fn get_reg_name(id: i32) -> &'static str {
+    pub const fn get_reg_name(id: u32) -> &'static str {
         match id {
             0 => "r0",
             1 => "r1",
@@ -495,7 +499,7 @@ impl ArmCpu {
     }
 
     #[inline]
-    pub const fn get_condition_name(id: i32) -> &'static str {
+    pub const fn get_condition_name(id: u32) -> &'static str {
         match id {
             0 => "eq",
             1 => "ne",
@@ -567,9 +571,12 @@ impl ArmCpu {
     }
 
     pub const fn cycles_ran(&self) -> i64 {
-        (self.timestamp - self.last_timestamp) as i64
+        self.timestamp.wrapping_sub(self.last_timestamp) as i64
     }
 
+    /// Get program counter (Current instruction pointer)
+    ///
+    /// Via register.15th
     pub const fn get_pc(&self) -> u32 {
         self.regs[REG_PC as usize]
     }

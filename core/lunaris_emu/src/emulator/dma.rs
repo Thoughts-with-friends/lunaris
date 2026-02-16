@@ -10,6 +10,9 @@ use crate::interrupts::Interrupt;
 impl Emulator {
     /// Handle scheduler event
     pub fn dma_handle_event(&mut self) {
+        #[cfg(feature = "tracing")]
+        tracing::trace!("Emulator::dma_handle_event has called.");
+
         self.dma_event.processing = false;
         let event_id = self.dma_event.id;
 

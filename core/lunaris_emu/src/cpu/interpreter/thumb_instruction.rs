@@ -16,10 +16,9 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     if cpu_id > 0 {
         #[cfg(feature = "tracing")]
         {
-            if !cpu_id > 0 {
-                tracing::error!("(9T)");
-            } else {
-                tracing::error!("(7T)");
+            match !cpu_id > 0 {
+                true => tracing::error!("(9T)"),
+                false => tracing::error!("(7T)"),
             }
 
             tracing::error!(
@@ -30,6 +29,7 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
         }
     }
 
+    // This value is only referenced by the Thumb decode.
     let opcode = thumb_decode(instruction);
 
     match opcode {

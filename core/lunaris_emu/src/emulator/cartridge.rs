@@ -217,8 +217,10 @@ impl Emulator {
     }
 
     /// Executes cartridge transfer logic for a given number of cycles.
-    #[cfg_attr(feature = "tracing", tracing::instrument)]
     pub fn cartridge_run(&mut self, cycles: i32) {
+        // #[cfg(feature = "tracing")]
+        // tracing::trace!(%self.cart.romctrl.block_busy,%self.cart.romctrl.word_ready);
+
         if self.cart.romctrl.block_busy && !self.cart.romctrl.word_ready {
             self.cart.cycles_left -= cycles;
 
@@ -277,9 +279,6 @@ impl Emulator {
                 _ => {
                     #[cfg(feature = "tracing")]
                     tracing::error!("Unknown cart command: {:02X?}", self.cart.command_buffer);
-
-                    #[cfg(not(feature = "tracing"))]
-                    eprintln!("Unknown cart command: {:02X?}", self.cart.command_buffer);
                 }
             }
 

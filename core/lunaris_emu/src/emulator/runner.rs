@@ -15,27 +15,14 @@ impl Emulator {
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
                 self.execute(CpuType::Arm9);
                 self.run_timers9((self.arm9.cycles_ran() >> 1) as i32);
-                self.run_3d((self.arm9.cycles_ran() >> 1) as u64);
+                self.run_3d(self.arm9.cycles_ran() >> 1);
             }
-
-            #[cfg(feature = "tracing")]
-            tracing::debug!("Complete: ARM9");
 
             // Now handle ARM7
             while self.arm7.get_timestamp() < self.system_timestamp {
                 self.execute(CpuType::Arm7);
                 self.run_timers7(self.arm7.cycles_ran() as i32);
             }
-
-            #[cfg(feature = "tracing")]
-            tracing::debug!("Complete: ARM7");
-
-            #[cfg(feature = "tracing")]
-            tracing::debug!(
-                "Sys. Time: {}, Act. Time: {}",
-                self.system_timestamp,
-                self.gpu_event.activation_time
-            );
 
             if self.system_timestamp >= self.gpu_event.activation_time {
                 self.gpu_handle_event();
@@ -64,21 +51,25 @@ impl Emulator {
             };
 
             arm.last_timestamp = arm.timestamp;
-
             arm.cpu_id
         };
 
-        let is_dma_active = self.dma_active();
-        let timestamp = self.get_timestamp() << (1 - cpu_id);
-        let is_interrupt = self.requesting_interrupt(cpu_id);
-
         {
             // ARM7 or ARM9
-            let arm = self.get_cpu_mut(cpu_type);
+            let halted = self.get_cpu_mut(cpu_type).halted;
+            let is_dma_active = self.dma_active();
 
-            if arm.halted || is_dma_active {
+            // #[cfg(feature = "tracing")]
+            // tracing::info!(%halted, %is_dma_active);
+
+            if halted || is_dma_active {
+                let timestamp = self.get_timestamp() << (1 - cpu_id);
+
                 // Wait until next event
+                let is_interrupt = self.requesting_interrupt(cpu_id);
+                let arm = self.get_cpu_mut(cpu_type);
                 arm.timestamp = timestamp;
+
                 if is_interrupt {
                     arm.halted = false;
                     if !arm.cpsr.irq_disabled && !is_dma_active {
@@ -91,40 +82,36 @@ impl Emulator {
 
         // Fetch and execute instruction
         let thumb_on = self.get_cpu_mut(cpu_type).cpsr.thumb_on;
-        let reg_15 = self.get_cpu(cpu_type).regs[15];
+        let pc = self.get_cpu(cpu_type).get_pc();
 
         if thumb_on {
             {
-                let value = self.read_halfword(reg_15 - 2, cpu_type) as u32;
-
+                let value = self.read_halfword(pc - 2, cpu_type) as u32;
                 let arm = self.get_cpu_mut(cpu_type);
+
                 arm.current_instr = value;
-                arm.add_s16_code(reg_15 - 2, 1);
-                arm.regs[15] += 2;
+                arm.add_s16_code(pc - 2, 1);
+                arm.regs[15] = pc.wrapping_add(2);
             }
             thumb_interpret(self, cpu_type);
         } else {
             {
-                let value = self.read_word(reg_15 - 4, cpu_type);
-
+                let addr = pc.wrapping_sub(4);
+                let value = self.read_word(addr, cpu_type);
                 let arm = self.get_cpu_mut(cpu_type);
+
                 arm.current_instr = value;
-                arm.add_s32_code(arm.regs[15] - 4, 1);
-                arm.regs[15] += 4;
+                arm.add_s32_code(addr, 1);
+                arm.regs[15] = pc.wrapping_add(4);
             }
             arm_interpret(self, cpu_type);
         }
 
-        let irq_disabled = match cpu_type {
-            CpuType::Arm7 => self.arm7.cpsr.irq_disabled,
-            CpuType::Arm9 => self.arm9.cpsr.irq_disabled,
-        };
+        let is_interrupt = self.requesting_interrupt(cpu_id);
+        let irq_disabled = self.get_cpu(cpu_type).cpsr.irq_disabled;
+
         if is_interrupt && !irq_disabled {
-            let arm = match cpu_type {
-                CpuType::Arm7 => &mut self.arm7,
-                CpuType::Arm9 => &mut self.arm9,
-            };
-            arm.handle_irq();
+            self.get_cpu_mut(cpu_type).handle_irq();
         }
     }
 }
@@ -135,14 +122,6 @@ mod tests {
     use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
 
     #[test]
-    fn test_initialize_emulator() {
-        // Initialize the Gpu3D struct with basic values
-        let emu = Box::new(Emulator::new());
-        dbg!(emu.bios_prot);
-        assert_eq!(emu.bios_prot, 0);
-    }
-
-    #[test]
     #[ignore = "Since need local nds file"]
     #[quick_tracing::init(test = "test_emulator", level = "trace")]
     fn test_emulator() {
@@ -150,6 +129,7 @@ mod tests {
         let mut emu = Box::new(Emulator::new());
         let rom_path = std::path::Path::new("../test_rom/hello_world.nds");
         // let rom_path = std::path::Path::new("../test_rom/test.nds");
+
         emu.load_rom(rom_path).unwrap();
 
         const PIXEL: usize = PIXELS_PER_LINE * SCANLINES;
@@ -210,5 +190,96 @@ mod tests {
         img.save(path)?;
 
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "Since need local nds file"]
+    #[quick_tracing::init(test = "test_emulator", level = "trace")]
+    fn test_emulator_mp4() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let mut emu = Box::new(Emulator::new());
+        // let rom_path = std::path::Path::new("../test_rom/hello_world.nds");
+        let rom_path = std::path::Path::new("../test_rom/test.nds");
+        emu.load_rom(rom_path).unwrap();
+
+        const PIXEL: usize = PIXELS_PER_LINE * SCANLINES;
+        let mut upper_buffer: [u32; PIXEL] = [0; PIXEL];
+        let mut lower_buffer: [u32; PIXEL] = [0; PIXEL];
+
+        const FPS: u32 = 60;
+        let width = PIXELS_PER_LINE as u32;
+        let height = SCANLINES as u32;
+        let combined_width = width * 2;
+        let end_frames = 600; // 10[s]
+
+        // FFmpeg process for side-by-side video
+        let mut ffmpeg = Command::new("ffmpeg")
+            .args([
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgba",
+                "-s",
+                &format!("{}x{}", combined_width, height),
+                "-r",
+                &FPS.to_string(),
+                "-i",
+                "-",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "../test_rom/display.mp4",
+            ])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let ffmpeg_stdin = ffmpeg.stdin.as_mut().unwrap();
+
+        let mut frames: u64 = 0;
+        let mut combined_buffer: Vec<u32> = vec![0; (PIXELS_PER_LINE * 2) * SCANLINES];
+
+        loop {
+            emu.run();
+            frames += 1;
+
+            emu.get_upper_frame(&mut upper_buffer);
+            emu.get_lower_frame(&mut lower_buffer);
+
+            for y in 0..SCANLINES {
+                let line_start = y * PIXELS_PER_LINE;
+                let combined_line_start = y * (PIXELS_PER_LINE * 2);
+
+                // lower display
+                combined_buffer[combined_line_start..combined_line_start + PIXELS_PER_LINE]
+                    .copy_from_slice(&lower_buffer[line_start..line_start + PIXELS_PER_LINE]);
+
+                // upper display
+                combined_buffer[combined_line_start + PIXELS_PER_LINE
+                    ..combined_line_start + PIXELS_PER_LINE * 2]
+                    .copy_from_slice(&upper_buffer[line_start..line_start + PIXELS_PER_LINE]);
+            }
+
+            // RGBA u32 -> u8
+            let combined_bytes: Vec<u8> = combined_buffer
+                .iter()
+                .flat_map(|px| px.to_le_bytes())
+                .collect();
+
+            // Write FFmpeg
+            if let Err(e) = ffmpeg_stdin.write_all(&combined_bytes) {
+                eprintln!("FFmpeg pipe broken: {e}");
+                break;
+            }
+
+            if frames >= end_frames {
+                break;
+            }
+        }
+
+        ffmpeg.wait().unwrap();
     }
 }

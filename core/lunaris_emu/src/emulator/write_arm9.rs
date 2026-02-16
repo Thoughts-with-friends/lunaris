@@ -378,7 +378,8 @@ impl Emulator {
             0x0400004C => self.gpu.set_mosaic_a(byte as u16),
             0x040001A1 => self.cart.set_hi_auxspicnt(byte),
             0x040001A2 => {
-                println!("\nAUXSPIDATA: ${:02X}", byte);
+                #[cfg(feature = "tracing")]
+                tracing::debug!("AUXSPIDATA: {byte:02X}");
                 self.cart.set_auxspidata(byte);
             }
             0x040001A8..=0x040001AF => {

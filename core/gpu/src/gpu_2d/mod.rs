@@ -262,7 +262,11 @@ impl Gpu2DEngine {
         assert!(buffer.len() >= SCANLINES * PIXELS_PER_LINE);
 
         for y in 0..SCANLINES {
-            buffer.copy_from_slice(&self.front_framebuffer[(y * PIXELS_PER_LINE)..PIXELS_PER_LINE]);
+            let line_start = y * PIXELS_PER_LINE;
+            let line_end = line_start + PIXELS_PER_LINE;
+
+            buffer[line_start..line_end]
+                .copy_from_slice(&self.front_framebuffer[line_start..line_end]);
         }
 
         // Debug output (commented out)
@@ -287,7 +291,17 @@ impl Gpu2DEngine {
 
     /// Called at the start of VBLANK.
     pub fn vblank_start(&mut self) {
-        todo!()
+        for i in 0..4 {
+            self.bg2p_internal[i] = self.bg2p[i];
+            self.bg3p_internal[i] = self.bg3p[i];
+        }
+
+        self.bg2x_internal = self.bg2x as i32;
+        self.bg2y_internal = self.bg2y as i32;
+        self.bg3x_internal = self.bg3x as i32;
+        self.bg3y_internal = self.bg3y as i32;
+
+        self.dispcapcnt.enable_busy = false;
     }
 
     // ============================================================

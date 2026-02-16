@@ -17,9 +17,11 @@ impl Emulator {
             self.gpu.engine_3d.cmd_params[param_index] = param;
             self.gpu.engine_3d.cmd_param_count += 1;
 
+            // Execute command once all parameters are available.
             if self.gpu.engine_3d.cmd_param_count >= CMD_PARAM_AMOUNTS[cmd_index] {
-                self.gpu.engine_3d.cycles += CMD_CYCLE_AMOUNTS[cmd_index] as u64;
+                self.gpu.engine_3d.cycles += CMD_CYCLE_AMOUNTS[cmd_index] as i64;
 
+                // Update GEO_BUSY flag:
                 self.gpu.engine_3d.gxstat.geo_busy =
                     self.gpu.engine_3d.cycles > 0 && !self.gpu.engine_3d.gxpipe.is_empty();
 

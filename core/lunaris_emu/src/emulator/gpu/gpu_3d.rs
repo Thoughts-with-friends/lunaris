@@ -158,14 +158,16 @@ impl Emulator {
         match self.gpu_event.id {
             0 => {
                 // Start HBLANK
+                #[cfg(feature = "tracing")]
+                tracing::debug!("Start HBLANK");
+
+                // If the current line is within the visible screen
+                // and the frameskip condition is met, the GPU draws this line.
                 if (self.gpu.vertical_count as usize) < SCANLINES
                     && self.gpu.frames_skipped >= self.config.frameskip
                 {
                     self.gpu.draw_scanline();
                 }
-
-                #[cfg(feature = "tracing")]
-                tracing::debug!("Start HBLANK");
 
                 self.gpu.display_status_arm7.is_hblank = true;
                 self.gpu.display_status_arm9.is_hblank = true;

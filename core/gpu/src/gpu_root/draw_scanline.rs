@@ -28,8 +28,12 @@ impl Gpu {
                 true => &mut self.engine_upper,
                 false => &mut self.engine_lower,
             };
-            engine.framebuffer[line_start + i] = 0xFF000000;
-            engine.front_framebuffer[line_start + i] = 0xFF000000;
+
+            // safe access
+            if (line_start + i) < PIXELS_PER_LINE * SCANLINES {
+                engine.framebuffer[line_start + i] = 0xFF000000;
+                engine.front_framebuffer[line_start + i] = 0xFF000000;
+            }
         }
 
         {
@@ -143,7 +147,11 @@ impl Gpu {
                         true => &mut self.engine_upper,
                         false => &mut self.engine_lower,
                     };
-                    engine.front_framebuffer[line_start + i] = 0xFFF3F3F3;
+
+                    // safe access
+                    if (line_start + i) < PIXELS_PER_LINE * SCANLINES {
+                        engine.front_framebuffer[line_start + i] = 0xFFF3F3F3;
+                    }
                 }
             }
             1 => {
@@ -152,7 +160,12 @@ impl Gpu {
                         true => &mut self.engine_upper,
                         false => &mut self.engine_lower,
                     };
-                    engine.front_framebuffer[line_start + i] = engine.framebuffer[line_start + i];
+
+                    // safe access
+                    if (line_start + i) < PIXELS_PER_LINE * SCANLINES {
+                        engine.front_framebuffer[line_start + i] =
+                            engine.framebuffer[line_start + i];
+                    }
                 }
             }
             2 => {
@@ -261,7 +274,8 @@ impl Gpu {
                             )
                         }
                         _ => {
-                            println!(
+                            #[cfg(feature = "tracing")]
+                            tracing::error!(
                                 "Unrecognized capture source {}",
                                 engine.dispcapcnt.capture_source
                             );

@@ -166,7 +166,7 @@ impl Emulator {
             spu: Default::default(),
             nds_timing: Default::default(),
             wifi: Default::default(),
-            main_ram: Default::default(),
+            main_ram: vec![0; 1024 * 1024 * 4], // 4MB
             shared_wram: Default::default(),
             arm7_wram: Default::default(),
             arm9_bios: Default::default(),
@@ -323,9 +323,9 @@ impl Emulator {
         self.fifo7.recent_word = 0;
         self.fifo9.recent_word = 0;
 
-        self.main_ram.clear();
-        self.shared_wram.clear();
-        self.arm7_wram.clear();
+        // self.main_ram.clear();
+        // self.shared_wram.clear();
+        // self.arm7_wram.clear();
 
         self.int7_reg.ime = 0;
         self.int7_reg.irq_enable = 0;
@@ -501,6 +501,9 @@ impl Emulator {
 
     /// Add a DMA event.
     pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
+        #[cfg(feature = "tracing")]
+        tracing::debug!("mod.rs: add_dma_event");
+
         self.dma_event.id = event_id;
         self.dma_event.processing = true;
         self.dma_event.activation_time = self.system_timestamp + relative_time;
@@ -512,18 +515,12 @@ impl Emulator {
 
     /// Recalculate system timestamp.
     pub fn calculate_system_timestamp(&mut self) {
-        if self.next_event_time < self.system_timestamp {
-            #[cfg(feature = "tracing")]
-            tracing::error!(
-                "next_event_time < system_timestamp: {} < {}.",
-                self.next_event_time,
-                self.system_timestamp
-            );
-        }
+        // NOTE: It appears that next_event_time < system_timestamp is in accordance with CorgiDS specifications.
+        // (This is counterintuitive and the reason is unclear.)
 
-        let cycles = self.next_event_time as i64 - self.system_timestamp as i64;
+        let cycles = self.next_event_time.wrapping_sub(self.system_timestamp) as i32;
         match cycles {
-            ..0 | 20.. => self.system_timestamp += 20,
+            ..=0 | 20.. => self.system_timestamp += 20,
             _ => self.system_timestamp += cycles as u64,
         }
     }
