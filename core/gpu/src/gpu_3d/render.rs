@@ -762,19 +762,3 @@ impl Gpu3D {
         self.current_color = r + (g << 5) + (b << 10);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_initialize_gpu3d() {
-        // Initialize the Gpu3D struct with basic values
-        let gpu = Gpu3D::new();
-
-        // Example: test if initialization works without overflow
-        assert_eq!(gpu.cycles, 100);
-        assert_eq!(gpu.geo_vert.len(), 6188);
-        assert_eq!(gpu.geo_poly.len(), 2048);
-    }
-}

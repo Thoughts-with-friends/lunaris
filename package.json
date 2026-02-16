@@ -18,7 +18,8 @@
     "lint:fix-front": "npm --workspace gui/tauri run lint:fix",
     "lint:fix": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
     "tauri": "tauri",
-    "test": "npm --workspace gui/tauri run test"
+    "test:back": "cargo nextest run --workspace",
+    "test:front": "npm --workspace gui/tauri run test"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.9.6",
