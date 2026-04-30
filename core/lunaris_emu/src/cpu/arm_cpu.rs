@@ -747,7 +747,7 @@ impl ArmCpu {
     }
 
     pub const fn cmp(&mut self, x: u32, y: u32) {
-        let result = x - y;
+        let result = x.wrapping_sub(y);
         self.set_zero_neg_flags(result);
         self.set_cv_sub_flags(x, y, result);
     }

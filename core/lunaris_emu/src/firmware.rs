@@ -166,8 +166,18 @@ impl Firmware {
     }
 
     /// Read a little-endian u16 from firmware
-    fn read_u16(&self, offset: usize) -> u16 {
+    pub(crate) fn read_u16(&self, offset: usize) -> u16 {
         u16::from_le_bytes([self.raw_firmware[offset], self.raw_firmware[offset + 1]])
+    }
+
+    /// Read a little-endian u32 from firmware
+    pub(crate) fn read_u32(&self, offset: usize) -> u32 {
+        u32::from_le_bytes([
+            self.raw_firmware[offset],
+            self.raw_firmware[offset + 1],
+            self.raw_firmware[offset + 2],
+            self.raw_firmware[offset + 3],
+        ])
     }
 
     /// Write a little-endian u16 into firmware

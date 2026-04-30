@@ -9,3 +9,5 @@ node_modules/
 *.nds
 core/test_rom/
 *.log
+
+/config.json

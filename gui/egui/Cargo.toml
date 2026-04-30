@@ -1,0 +1,26 @@
+[package]
+name = "egui"
+authors.workspace = true
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+egui = "0.33.3"
+eframe = "0.33.3"
+bytemuck = "1.25.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# workspace dependencies
+lunaris_ds_emu = { workspace = true }
+lunaris_ds_mem_const = { workspace = true }
+
+[lints]
+workspace = true

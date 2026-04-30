@@ -12,11 +12,12 @@ version = "0.1.0"
 
 [workspace]
 members = [
-  "core/lunaris_emu",
-  "core/gpu",
   "core/audio",
   "core/free_bios",
+  "core/gpu",
+  "core/lunaris_emu",
   "core/mem_const",
+  "gui/egui",
   "gui/tauri/src-tauri"
 ]
 resolver = "3"
@@ -28,6 +29,7 @@ snafu = "0.8.9"
 
 # workspace members
 lunaris_ds_audio = { path = "./core/audio" }
+lunaris_ds_emu = { path = "./core/lunaris_emu" }
 lunaris_ds_free_bios = { path = "./core/free_bios" }
 lunaris_ds_gpu = { path = "./core/gpu" }
 lunaris_ds_mem_const = { path = "./core/mem_const" }

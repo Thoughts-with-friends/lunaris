@@ -54,7 +54,11 @@ impl Emulator {
     }
 
     /// Load a ROM file.
-    pub fn load_rom(&mut self, rom_path: &Path) -> Result<(), CartridgeError> {
+    pub fn load_rom<A>(&mut self, rom_path: A) -> Result<(), CartridgeError>
+    where
+        A: AsRef<Path>,
+    {
+        let rom_path = rom_path.as_ref();
         self.cartridge_load_rom(rom_path)?;
         self.power_on();
         Ok(())

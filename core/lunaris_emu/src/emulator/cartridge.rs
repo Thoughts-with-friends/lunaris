@@ -9,8 +9,6 @@ impl Emulator {
         use std::fs::File;
         use std::io::Read as _;
 
-        self.power_on();
-
         #[cfg(feature = "tracing")]
         tracing::info!("Loading ROM {}", rom_file.display());
 
@@ -133,6 +131,7 @@ impl Emulator {
             self.cart.save_type = 2;
         }
 
+        // Only re-encrypt the ROM if this is not a direct boot
         if self.config.direct_boot_enabled {
             return Ok(());
         }
@@ -271,6 +270,13 @@ impl Emulator {
                         self.cart.data_output =
                             self.cart.direct_read_word(self.cart.rom_data_index as u32);
                     }
+
+                    #[cfg(feature = "tracing")]
+                    tracing::error!(
+                        "ROM_READ [ROM_CMD] Addr: 0x{:08X} Value: 0x{:08X}",
+                        self.cart.rom_data_index,
+                        self.cart.data_output
+                    );
 
                     self.cart.rom_data_index += 4;
                     self.cart.romctrl.word_ready = true;

@@ -341,42 +341,110 @@ impl Emulator {
 
     /// Perform a direct boot sequence.
     pub fn direct_boot(&mut self) {
-        // Write zero to boot flag
-        self.arm7_write_word(0x027FF864, 0);
+        let mut boot_info = [0u32; 8];
+        for address in 0..0x200 {
+            let value = self.cart.direct_read(address);
 
-        // Write shifted value from firmware[0x20]
-        let value_0x20 = u16::from_le_bytes([
-            self.spi.firmware.raw_firmware[0x20],
-            self.spi.firmware.raw_firmware[0x21],
-        ]);
-        self.arm7_write_word(0x027FF868, (value_0x20 as u32) << 3);
+            #[cfg(feature = "tracing")]
+            tracing::error!("Read boot header byte {address}: 0x{value:08X} {}", {
+                if value.is_ascii_alphabetic() {
+                    value as char
+                } else {
+                    '.'
+                }
+            });
+            self.cart_write_header(address, value as u16);
+        }
 
-        // Write halfword from firmware[0x26]
-        let value_0x26 = u16::from_le_bytes([
-            self.spi.firmware.raw_firmware[0x26],
-            self.spi.firmware.raw_firmware[0x27],
-        ]);
-        self.arm7_write_halfword(0x027FF874, value_0x26);
+        // msh
+        for (i, info) in boot_info.iter_mut().enumerate() {
+            *info = self.arm9_read_word((0x27FFE20 + i * 4) as u32);
+            #[cfg(feature = "tracing")]
+            tracing::error!("Read boot header word {i}: 0x{info:08X}");
+        }
 
-        // Write halfword from firmware[0x04]
-        let value_0x04 = u16::from_le_bytes([
-            self.spi.firmware.raw_firmware[0x04],
-            self.spi.firmware.raw_firmware[0x05],
-        ]);
-        self.arm7_write_halfword(0x027FF876, value_0x04);
+        // ERROR  [0, 0, 0, 0, 0, 0, 0, 0]
+        tracing::error!("{boot_info:?}");
 
-        // Copy USER data block (0x70 bytes, word-aligned)
+        // Initialize CPUs and regs to after-boot values
+        self.arm9.direct_boot(boot_info[1]);
+        self.arm7.direct_boot(boot_info[5]);
+
+        // Write the ROM chip-id into main RAM
+        self.arm7_write_word(0x027FF800, 0x00003FC2);
+        self.arm7_write_word(0x027FF804, 0x00003FC2);
+        self.arm7_write_word(0x027FFC00, 0x00003FC2);
+        self.arm7_write_word(0x027FFC04, 0x00003FC2);
+
+        // other bullshit
+        self.arm7_write_halfword(0x027FF808, self.cart.direct_read_halfword(0x015E));
+        self.arm7_write_halfword(0x027FF80A, self.cart.direct_read_halfword(0x006C));
+        self.arm7_write_halfword(0x027FF850, 0x5835);
+
+        self.arm7_write_halfword(0x027FFC08, self.cart.direct_read_halfword(0x015E));
+        self.arm7_write_halfword(0x027FFC0A, self.cart.direct_read_halfword(0x006C));
+
+        self.arm7_write_halfword(0x027FFC10, 0x5835);
+        self.arm7_write_halfword(0x027FFC30, 0xFFFF);
+        self.arm7_write_halfword(0x027FFC40, 0x0001);
+
+        self.postflg7 = 1;
+        self.postflg9 = 1;
+        self.r_cnt = 0x8000;
+
+        self.bios_prot = 0x1204;
+        self.wram_cnt = 3;
+
+        // Load ROM into RAM
+        let mut i = 0;
+        while i < boot_info[3] {
+            // for (i, _) in (0..boot_info[3]).enumerate().step_by(4) {
+            // for i in (0..boot_info[3]).step_by(4) {
+            let rom_data: u32 = self.cart.direct_read_word(boot_info[0] + i);
+
+            #[cfg(feature = "tracing")]
+            tracing::error!(
+                "ROM_READ [ARM9_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
+                boot_info[0] + i
+            );
+            self.arm9_write_word(boot_info[2] + i, rom_data);
+            i += 4;
+        }
+
+        let mut i = 0;
+        while i < boot_info[7] {
+            let rom_data: u32 = self.cart.direct_read_word(boot_info[4] + i);
+
+            #[cfg(feature = "tracing")]
+            tracing::error!(
+                "ROM_READ [ARM7_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
+                boot_info[4] + i
+            );
+            self.arm7_write_word(boot_info[6] + i, rom_data);
+            i += 4;
+        }
+
+        self.firmware_direct_boot();
+        self.cycles = 0;
+    }
+
+    fn firmware_direct_boot(&mut self) {
+        self.arm7_write_word(0x27FF864, 0);
+
+        let data = self.spi.firmware.read_u16(0x20) << 3;
+        self.arm7_write_word(0x27FF868, data as u32);
+
+        let data = self.spi.firmware.read_u16(0x26);
+        self.arm7_write_halfword(0x027FF874, data);
+
+        let data = self.spi.firmware.read_u16(0x04);
+        self.arm7_write_halfword(0x027FF876, data);
+
         for i in (0..0x70).step_by(4) {
-            let offset = (self.spi.firmware.user_data as usize) + i;
-
-            let word = u32::from_le_bytes([
-                self.spi.firmware.raw_firmware[offset],
-                self.spi.firmware.raw_firmware[offset + 1],
-                self.spi.firmware.raw_firmware[offset + 2],
-                self.spi.firmware.raw_firmware[offset + 3],
-            ]);
-
-            self.arm7_write_word(0x027FFC80 + i as u32, word);
+            let user_data = self.spi.firmware.user_data;
+            let index = (user_data + i) as usize;
+            let data = self.spi.firmware.read_u32(index);
+            self.arm7_write_word((0x027FFC80 + i) as u32, data);
         }
     }
 
