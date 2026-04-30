@@ -2,11 +2,11 @@ name: Build
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
     paths-ignore:
       - "**/*.md"
   pull_request:
-    branches: ["*"]
+    branches: [ "*" ]
     paths-ignore:
       - "**/*.md"
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-latest, windows-latest]
+        platform: [ macos-latest, ubuntu-latest, windows-latest ]
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4.2.2
@@ -36,8 +36,10 @@ jobs:
           platform: ${{ matrix.platform }}
           build_profile: ${{ env.BUILD_PROFILE }}
 
-      - name: Build GUI
-        run: npm run build
+      # - name: Build GUI
+      #   run: npm run build
+      - name: build
+        run: cargo build -p lunaris_ds_egui --release
 
       - name: Move exe -> ./build
         uses: ./.github/actions/setup-release
