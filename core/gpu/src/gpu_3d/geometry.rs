@@ -453,8 +453,8 @@ impl Gpu3D {
         for (i, clipped) in clipped_list[0..clipped_count].iter().enumerate() {
             let v = i + self.geo_vert_count as usize;
             if v >= 6188 {
-                #[cfg(feature = "tracing")]
-                tracing::debug!("Vertex count exceeded!");
+                // #[cfg(feature = "tracing")]
+                // tracing::debug!("Vertex count exceeded!");
                 self.disp3dcnt.ram_overflow = true;
                 return;
             }
@@ -475,8 +475,8 @@ impl Gpu3D {
             self.geo_vert[v].coords[2] = self.geo_vert[v].coords[2].clamp(0, 0xFFFFFF);
 
             if self.geo_vert[v].coords[2] == 0xFFFFFF {
-                #[cfg(feature = "tracing")]
-                tracing::debug!("Poly{} max z!", self.geo_poly_count);
+                // #[cfg(feature = "tracing")]
+                // tracing::debug!("Poly{} max z!", self.geo_poly_count);
             }
 
             // NOTE: Unused in C++.

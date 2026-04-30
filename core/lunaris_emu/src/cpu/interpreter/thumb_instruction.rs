@@ -759,7 +759,7 @@ pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
 
         #[cfg(feature = "tracing")]
         if emu.get_cpu(cpu_type).get_id() > 0 {
-            tracing::debug!("LDRB {{{}}}, [{{{}}}, ${:02X}]", destination, base, offset);
+            tracing::trace!("LDRB {{{}}}, [{{{}}}, ${:02X}]", destination, base, offset);
         }
 
         emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);

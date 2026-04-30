@@ -77,7 +77,7 @@ impl Emulator {
 
     fn write_command(&mut self, cmd: GxCommand) {
         #[cfg(feature = "tracing")]
-        tracing::info!(?cmd.command, ?cmd.param);
+        tracing::trace!(?cmd.command, ?cmd.param);
 
         match self.gpu.engine_3d.gxfifo.is_empty() && self.gpu.engine_3d.gxpipe.len() < 4 {
             true => self.gpu.engine_3d.gxpipe.push_back(cmd),
@@ -159,7 +159,7 @@ impl Emulator {
             0 => {
                 // Start HBLANK
                 #[cfg(feature = "tracing")]
-                tracing::debug!("Start HBLANK");
+                tracing::trace!("Start HBLANK");
 
                 // If the current line is within the visible screen
                 // and the frameskip condition is met, the GPU draws this line.
@@ -183,14 +183,14 @@ impl Emulator {
                 }
 
                 #[cfg(feature = "tracing")]
-                tracing::debug!("Add_gpu_event: 1");
+                tracing::trace!("Add_gpu_event: 1");
 
                 self.add_gpu_event(1, 99 * 6);
             }
             1 => {
                 // End HBLANK
                 #[cfg(feature = "tracing")]
-                tracing::debug!("End HBLANK");
+                tracing::trace!("End HBLANK");
 
                 self.gpu.display_status_arm7.is_hblank = false;
                 self.gpu.display_status_arm9.is_hblank = false;
@@ -214,12 +214,12 @@ impl Emulator {
                 self.gpu.vertical_count += 1;
                 // VBLANK Counter
                 #[cfg(feature = "tracing")]
-                tracing::debug!("VBLANK Count: {}/{}", self.gpu.vertical_count, SCANLINES);
+                tracing::trace!("VBLANK Count: {}/{}", self.gpu.vertical_count, SCANLINES);
 
                 if self.gpu.vertical_count as usize == SCANLINES {
                     // VBLANK
                     #[cfg(feature = "tracing")]
-                    tracing::debug!("Start VBLANK");
+                    tracing::trace!("Start VBLANK");
 
                     self.gpu.engine_3d.end_of_frame();
                     self.gpu.frame_complete = true;

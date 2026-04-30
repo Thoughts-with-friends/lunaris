@@ -9,12 +9,12 @@ impl Emulator {
         use std::fs::File;
         use std::io::Read as _;
 
-        #[cfg(feature = "tracing")]
-        tracing::info!("Loading ROM {}", rom_file.display());
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("Loading ROM {}", rom_file.display());
 
         let mut file = File::open(rom_file).map_err(|source| {
-            #[cfg(feature = "tracing")]
-            tracing::error!("Failed to load {}", rom_file.display());
+            // #[cfg(feature = "tracing")]
+            // tracing::error!("Failed to load {}", rom_file.display());
 
             CartridgeError::OpenRom {
                 path: rom_file.to_path_buf(),
@@ -31,13 +31,13 @@ impl Emulator {
         let rom_size = metadata.len();
         self.cart.rom_size = rom_size;
 
-        #[cfg(feature = "tracing")]
-        tracing::info!("Allocating {} bytes for ROM", rom_size);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("Allocating {} bytes for ROM", rom_size);
 
         self.cart.rom.resize(rom_size as usize, 0);
 
-        #[cfg(feature = "tracing")]
-        tracing::info!("Loading ROM into memory");
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("Loading ROM into memory");
 
         file.read_exact(&mut self.cart.rom)
             .map_err(|source| CartridgeError::ReadRom {
@@ -72,12 +72,12 @@ impl Emulator {
 
                 self.cart.save_size = file_size;
 
-                #[cfg(feature = "tracing")]
-                tracing::info!(
-                    "Loaded save {} size {}",
-                    save_path.display(),
-                    self.cart.save_size
-                );
+                // #[cfg(feature = "tracing")]
+                // tracing::info!(
+                //     "Loaded save {} size {}",
+                //     save_path.display(),
+                //     self.cart.save_size
+                // );
             }
         } else {
             // Database fallback
@@ -97,8 +97,8 @@ impl Emulator {
                     }
 
                     if match_ok {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Found ROM entry in database");
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("Found ROM entry in database");
 
                         let size_index = self.cart.save_database[base + 18];
 
@@ -116,8 +116,8 @@ impl Emulator {
                             }
                         };
 
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Save size {}", self.cart.save_size);
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("Save size {}", self.cart.save_size);
                     }
                 }
             }
@@ -154,8 +154,8 @@ impl Emulator {
             let sig1 = read_u32(&self.cart.rom, arm_rom_base + 0x10);
 
             if sig0 == 0xE7FFDEFF && sig1 != 0xE7FFDEFF {
-                #[cfg(feature = "tracing")]
-                tracing::info!("Encrypting secure area");
+                // #[cfg(feature = "tracing")]
+                // tracing::info!("Encrypting secure area");
 
                 self.cart.rom[arm_rom_base..arm_rom_base + 8].copy_from_slice(b"encryObj");
 
@@ -271,12 +271,12 @@ impl Emulator {
                             self.cart.direct_read_word(self.cart.rom_data_index as u32);
                     }
 
-                    #[cfg(feature = "tracing")]
-                    tracing::error!(
-                        "ROM_READ [ROM_CMD] Addr: 0x{:08X} Value: 0x{:08X}",
-                        self.cart.rom_data_index,
-                        self.cart.data_output
-                    );
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!(
+                    //     "ROM_READ [ROM_CMD] Addr: 0x{:08X} Value: 0x{:08X}",
+                    //     self.cart.rom_data_index,
+                    //     self.cart.data_output
+                    // );
 
                     self.cart.rom_data_index += 4;
                     self.cart.romctrl.word_ready = true;

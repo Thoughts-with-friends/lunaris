@@ -89,8 +89,8 @@ impl Firmware {
             let copy_size = fw.len().min(Self::SIZE);
             self.raw_firmware[..copy_size].copy_from_slice(&fw[..copy_size]);
 
-            #[cfg(feature = "tracing")]
-            tracing::info!("Loaded free firmware.");
+            // #[cfg(feature = "tracing")]
+            // tracing::info!("Loaded free firmware.");
         } else {
             // Read firmware file directly into buffer (no bounds checking, same as C++)
             let mut file = firmware_file.take().unwrap();

@@ -28,16 +28,16 @@ impl Emulator {
                 match cmd_index {
                     0x00 => (),
                     0x10 => {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Command Parameter: {}", self.gpu.engine_3d.cmd_params[0]);
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("Command Parameter: {}", self.gpu.engine_3d.cmd_params[0]);
 
                         self.gpu.engine_3d.mtx_mode =
                             (self.gpu.engine_3d.cmd_params[0] & 0x3) as u8;
                     }
                     0x11 => self.gpu.engine_3d.mtx_push(),
                     0x12 => {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Command Parameter: {}", self.gpu.engine_3d.cmd_params[0]);
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("Command Parameter: {}", self.gpu.engine_3d.cmd_params[0]);
 
                         if self.gpu.engine_3d.mtx_mode != 3 {
                             self.gpu.engine_3d.clip_dirty = true;
@@ -55,7 +55,7 @@ impl Emulator {
 
                                 if self.gpu.engine_3d.model_view_sp >= 0x1F {
                                     #[cfg(feature = "tracing")]
-                                    tracing::info!("MTX_POP overflow!");
+                                    tracing::error!("MTX_POP overflow!");
                                     self.gpu.engine_3d.gxstat.mtx_overflow = true;
                                 } else {
                                     let stack_index =
@@ -87,7 +87,7 @@ impl Emulator {
                     }
                     0x13 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_STORE");
+                        tracing::trace!("MTX_STORE");
 
                         match self.gpu.engine_3d.mtx_mode {
                             0 => self
@@ -124,8 +124,8 @@ impl Emulator {
                         }
                     }
                     0x14 => {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_RESTORE {}", self.gpu.engine_3d.cmd_params[0] & 0xFF);
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("MTX_RESTORE {}", self.gpu.engine_3d.cmd_params[0] & 0xFF);
 
                         if self.gpu.engine_3d.mtx_mode != 3 {
                             self.gpu.engine_3d.clip_dirty = true;
@@ -145,8 +145,8 @@ impl Emulator {
                                     self.gpu.engine_3d.vector_stack[offset as usize]
                                         .set(&self.gpu.engine_3d.vector_mtx);
                                 } else {
-                                    #[cfg(feature = "tracing")]
-                                    tracing::info!("MTX_RESTORE overflow!");
+                                    // #[cfg(feature = "tracing")]
+                                    // tracing::info!("MTX_RESTORE overflow!");
                                     self.gpu.engine_3d.gxstat.mtx_overflow = true;
                                 }
                             }
@@ -166,8 +166,8 @@ impl Emulator {
                         self.gpu.engine_3d.mtx_identity();
                     }
                     0x16 => {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_LOAD_4x4");
+                        // #[cfg(feature = "tracing")]
+                        // tracing::trace!("MTX_LOAD_4x4");
 
                         if self.gpu.engine_3d.mtx_mode != 3 {
                             self.gpu.engine_3d.clip_dirty = true;
@@ -215,8 +215,8 @@ impl Emulator {
                         }
                     }
                     0x17 => {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_LOAD_4x3");
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("MTX_LOAD_4x3");
 
                         if self.gpu.engine_3d.mtx_mode != 3 {
                             self.gpu.engine_3d.clip_dirty = true;
@@ -265,7 +265,7 @@ impl Emulator {
                     }
                     0x18 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_MULT_4x4");
+                        tracing::trace!("MTX_MULT_4x4");
                         let cmd_pointer = 0;
                         for i in 0..4 {
                             for j in 0..4 {
@@ -277,7 +277,7 @@ impl Emulator {
                     }
                     0x19 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_MULT_4x3");
+                        tracing::trace!("MTX_MULT_4x3");
                         self.gpu.engine_3d.mult_params.m[0][0] =
                             self.gpu.engine_3d.cmd_params[0] as i32;
                         self.gpu.engine_3d.mult_params.m[0][1] =
@@ -310,7 +310,7 @@ impl Emulator {
                     }
                     0x1A => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_MULT_3x3");
+                        tracing::trace!("MTX_MULT_3x3");
                         self.gpu.engine_3d.mult_params.m[0][0] =
                             self.gpu.engine_3d.cmd_params[0] as i32;
                         self.gpu.engine_3d.mult_params.m[0][1] =
@@ -336,7 +336,7 @@ impl Emulator {
                     }
                     0x1B => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!(
+                        tracing::trace!(
                             "MTX_SCALE: {}, {}, {}",
                             self.gpu.engine_3d.cmd_params[0],
                             self.gpu.engine_3d.cmd_params[1],
@@ -352,7 +352,7 @@ impl Emulator {
                     }
                     0x1C => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("MTX_TRANS");
+                        tracing::trace!("MTX_TRANS");
                         self.gpu.engine_3d.mult_params.m[3][0] =
                             self.gpu.engine_3d.cmd_params[0] as i32;
                         self.gpu.engine_3d.mult_params.m[3][1] =
@@ -363,7 +363,7 @@ impl Emulator {
                     }
                     0x20 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("COLOR: {}", self.gpu.engine_3d.cmd_params[0]);
+                        tracing::trace!("COLOR: {}", self.gpu.engine_3d.cmd_params[0]);
                         self.gpu.engine_3d.current_color = self.gpu.engine_3d.cmd_params[0];
                     }
                     0x21 => {
@@ -371,7 +371,7 @@ impl Emulator {
                     }
                     0x22 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("CTEXCOORD: {}", self.gpu.engine_3d.cmd_params[0]);
+                        tracing::trace!("CTEXCOORD: {}", self.gpu.engine_3d.cmd_params[0]);
                         self.gpu.engine_3d.current_texcoords[0] =
                             (self.gpu.engine_3d.cmd_params[0] & 0xFFFF) as i16;
                         self.gpu.engine_3d.current_texcoords[1] =
@@ -401,7 +401,7 @@ impl Emulator {
                     }
                     0x23 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!(
+                        tracing::trace!(
                             "VTX_16: {}, {}",
                             self.gpu.engine_3d.cmd_params[0],
                             self.gpu.engine_3d.cmd_params[1]
@@ -416,7 +416,7 @@ impl Emulator {
                     }
                     0x24 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("VTX_10");
+                        tracing::trace!("VTX_10");
                         self.gpu.engine_3d.current_vertex[0] =
                             ((self.gpu.engine_3d.cmd_params[0] & 0x000003FF) << 6) as i16;
                         self.gpu.engine_3d.current_vertex[1] =
@@ -427,7 +427,7 @@ impl Emulator {
                     }
                     0x25 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("VTX_XY");
+                        tracing::trace!("VTX_XY");
                         self.gpu.engine_3d.current_vertex[0] =
                             (self.gpu.engine_3d.cmd_params[0] & 0xFFFF) as i16;
                         self.gpu.engine_3d.current_vertex[1] =
@@ -436,7 +436,7 @@ impl Emulator {
                     }
                     0x26 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("VTX_XZ");
+                        tracing::trace!("VTX_XZ");
                         self.gpu.engine_3d.current_vertex[0] =
                             (self.gpu.engine_3d.cmd_params[0] & 0xFFFF) as i16;
                         self.gpu.engine_3d.current_vertex[2] =
@@ -445,7 +445,7 @@ impl Emulator {
                     }
                     0x27 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("VTX_YZ");
+                        tracing::trace!("VTX_YZ");
                         self.gpu.engine_3d.current_vertex[1] =
                             (self.gpu.engine_3d.cmd_params[0] & 0xFFFF) as i16;
                         self.gpu.engine_3d.current_vertex[2] =
@@ -454,7 +454,7 @@ impl Emulator {
                     }
                     0x28 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("VTX_DIFF");
+                        tracing::trace!("VTX_DIFF");
                         self.gpu.engine_3d.current_vertex[2] =
                             ((self.gpu.engine_3d.cmd_params[0] & 0x000003FF) << 6) as i16;
                         self.gpu.engine_3d.current_vertex[1] =
@@ -475,12 +475,12 @@ impl Emulator {
                     }
                     0x2B => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("PLTT_BASE: {}", self.gpu.engine_3d.cmd_params[0]);
+                        tracing::trace!("PLTT_BASE: {}", self.gpu.engine_3d.cmd_params[0]);
                         self.gpu.engine_3d.pltt_base = self.gpu.engine_3d.cmd_params[0] & 0x1FFF;
                     }
                     0x30 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("VTX_DIFF");
+                        tracing::trace!("VTX_DIFF");
 
                         self.gpu.engine_3d.diffuse_color =
                             (self.gpu.engine_3d.cmd_params[0] & 0x7FFF) as u16;
@@ -503,7 +503,7 @@ impl Emulator {
                     }
                     0x32 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("LIGHT_VECTOR");
+                        tracing::trace!("LIGHT_VECTOR");
 
                         let light_vector = [
                             ((self.gpu.engine_3d.cmd_params[0] & 0x3FF) << 6) >> 6,
@@ -523,14 +523,14 @@ impl Emulator {
                     }
                     0x33 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("LIGHT_COLOR: {}", self.gpu.engine_3d.cmd_params[0]);
+                        tracing::trace!("LIGHT_COLOR: {}", self.gpu.engine_3d.cmd_params[0]);
                         let index = (self.gpu.engine_3d.cmd_params[0] >> 30) as usize;
                         self.gpu.engine_3d.light_color[index] =
                             (self.gpu.engine_3d.cmd_params[0] & 0x7FF) as u16;
                     }
                     0x34 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("SHININESS");
+                        tracing::trace!("SHININESS");
                         for i in 0..32 {
                             let index = i * 4;
                             self.gpu.engine_3d.shine_table[index] =
@@ -545,7 +545,7 @@ impl Emulator {
                     }
                     0x40 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("BEGIN_VTXS");
+                        tracing::trace!("BEGIN_VTXS");
                         self.gpu.engine_3d.polygon_type = self.gpu.engine_3d.cmd_params[0] & 0x3;
                         self.gpu.engine_3d.current_poly_attr =
                             self.gpu.engine_3d.polygon_attr.clone();
@@ -554,7 +554,7 @@ impl Emulator {
                     }
                     0x41 => {
                         #[cfg(feature = "tracing")]
-                        tracing::info!("END_VTXS");
+                        tracing::trace!("END_VTXS");
                     }
                     0x50 => {
                         let param = self.gpu.engine_3d.cmd_params[0];

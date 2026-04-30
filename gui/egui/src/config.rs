@@ -3,7 +3,8 @@ use std::{fs, path::PathBuf};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
-    pub rom_path: PathBuf,
+    pub rom_dir: PathBuf,
+    pub selected_rom: Option<PathBuf>,
     pub scale: f32,
     pub show_fps: bool,
 }
@@ -11,7 +12,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            rom_path: PathBuf::from(""),
+            rom_dir: PathBuf::from(""),
+            selected_rom: None,
             scale: 2.0,
             show_fps: true,
         }

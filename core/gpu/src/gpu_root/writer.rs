@@ -29,8 +29,8 @@ impl Gpu {
     }
 
     pub fn write_bga(&mut self, address: u32, halfword: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("BGA: Write to {} of {}", address, halfword);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("BGA: Write to {} of {}", address, halfword);
 
         // VRAM A-G
         if self.vramcnt_a.enabled
@@ -134,8 +134,8 @@ impl Gpu {
     }
 
     pub fn write_bgb(&mut self, address: u32, halfword: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("BGB: Write to {} of {}", address, halfword);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("BGB: Write to {} of {}", address, halfword);
 
         // VRAM C, H and I
         // NOTE: Why is only this self.vramcnt_c.mst value 4?
@@ -174,8 +174,8 @@ impl Gpu {
     }
 
     pub fn write_obja(&mut self, address: u32, halfword: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("OBJA WRITE: {}, {}", address, halfword);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("OBJA WRITE: {}, {}", address, halfword);
 
         // VRAM A-G
         if self.vramcnt_a.enabled
@@ -249,8 +249,8 @@ impl Gpu {
     }
 
     pub fn write_objb(&mut self, address: u32, halfword: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("OBJB WRITE: {}, {}", address, halfword);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("OBJB WRITE: {}, {}", address, halfword);
 
         // VRAM D and I
         if self.vramcnt_d.enabled
@@ -277,8 +277,8 @@ impl Gpu {
     }
 
     pub fn write_lcdc(&mut self, address: u32, halfword: u16) {
-        #[cfg(feature = "tracing")]
-        tracing::info!("LCDC WRITE: {}, {}", address, halfword);
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("LCDC WRITE: {}, {}", address, halfword);
 
         // VRAM A-I
         if self.vramcnt_a.enabled

@@ -9,8 +9,8 @@ impl Emulator {
         match address {
             // Debug print (kept from original C++)
             0x027E0014 => {
-                #[cfg(feature = "tracing")]
-                tracing::info!("(7) Write of {:08X} to {:08X}", word, address);
+                // #[cfg(feature = "tracing")]
+                // tracing::info!("(7) Write of {:08X} to {:08X}", word, address);
             }
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
@@ -204,8 +204,8 @@ impl Emulator {
             0x040001A0 => self.cart.set_auxspicnt(halfword),
 
             0x040001A2 => {
-                #[cfg(feature = "tracing")]
-                tracing::info!("AUXSPIDATA: {:04X}", halfword);
+                // #[cfg(feature = "tracing")]
+                // tracing::info!("AUXSPIDATA: {:04X}", halfword);
                 self.cart.set_auxspidata((halfword & 0xFF) as u8)
             }
 

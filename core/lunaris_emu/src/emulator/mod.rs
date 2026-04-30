@@ -167,8 +167,8 @@ impl Emulator {
             nds_timing: Default::default(),
             wifi: Default::default(),
             main_ram: vec![0; 1024 * 1024 * 4], // 4MB
-            shared_wram: Default::default(),
-            arm7_wram: Default::default(),
+            shared_wram: vec![0; 1024 * 32],    // 32KB
+            arm7_wram: vec![0; 1024 * 64],      // 64KB
             arm9_bios: Default::default(),
             arm7_bios: Default::default(),
             system_timestamp: Default::default(),
@@ -346,7 +346,7 @@ impl Emulator {
             let value = self.cart.direct_read(address);
 
             #[cfg(feature = "tracing")]
-            tracing::error!("Read boot header byte {address}: 0x{value:08X} {}", {
+            tracing::trace!("Read boot header byte {address}: 0x{value:08X} {}", {
                 if value.is_ascii_alphabetic() {
                     value as char
                 } else {
@@ -360,11 +360,11 @@ impl Emulator {
         for (i, info) in boot_info.iter_mut().enumerate() {
             *info = self.arm9_read_word((0x27FFE20 + i * 4) as u32);
             #[cfg(feature = "tracing")]
-            tracing::error!("Read boot header word {i}: 0x{info:08X}");
+            tracing::trace!("Read boot header word {i}: 0x{info:08X}");
         }
 
         // ERROR  [0, 0, 0, 0, 0, 0, 0, 0]
-        tracing::error!("{boot_info:?}");
+        tracing::trace!("{boot_info:?}");
 
         // Initialize CPUs and regs to after-boot values
         self.arm9.direct_boot(boot_info[1]);
@@ -403,7 +403,7 @@ impl Emulator {
             let rom_data: u32 = self.cart.direct_read_word(boot_info[0] + i);
 
             #[cfg(feature = "tracing")]
-            tracing::error!(
+            tracing::trace!(
                 "ROM_READ [ARM9_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
                 boot_info[0] + i
             );
@@ -416,7 +416,7 @@ impl Emulator {
             let rom_data: u32 = self.cart.direct_read_word(boot_info[4] + i);
 
             #[cfg(feature = "tracing")]
-            tracing::error!(
+            tracing::trace!(
                 "ROM_READ [ARM7_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
                 boot_info[4] + i
             );
@@ -455,12 +455,12 @@ impl Emulator {
             //arm7.set_disassembly(!arm7.can_disassemble());
             //arm9.print_info();
             self.config.test = !self.config.test;
-            tracing::debug!(
+            tracing::trace!(
                 "IE9: {:08X} IF9: {:08X}",
                 self.int9_reg.irq_enable,
                 self.int9_reg.irq_flags
             );
-            tracing::debug!(
+            tracing::trace!(
                 "IE7: {:08X} IF7: {:08X}",
                 self.int7_reg.irq_enable,
                 self.int7_reg.irq_flags
@@ -570,7 +570,7 @@ impl Emulator {
     /// Add a DMA event.
     pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
         #[cfg(feature = "tracing")]
-        tracing::debug!("mod.rs: add_dma_event");
+        tracing::trace!("mod.rs: add_dma_event");
 
         self.dma_event.id = event_id;
         self.dma_event.processing = true;

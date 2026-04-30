@@ -95,27 +95,27 @@ impl Gpu3D {
                 self.rend_poly[i].bottom_y = 0;
 
                 for j in 0..self.rend_poly[i].vertices as usize {
-                    #[cfg(feature = "tracing")]
-                    tracing::info!(
-                        "Color: (R, G, B) = ({}, {}, {})",
-                        self.rend_vert[vert_index + j].colors[0] & 0xFFFF,
-                        self.rend_vert[vert_index + j].colors[1] & 0xFFFF,
-                        self.rend_vert[vert_index + j].colors[2] & 0xFFFF
-                    );
+                    // #[cfg(feature = "tracing")]
+                    // tracing::info!(
+                    //     "Color: (R, G, B) = ({}, {}, {})",
+                    //     self.rend_vert[vert_index + j].colors[0] & 0xFFFF,
+                    //     self.rend_vert[vert_index + j].colors[1] & 0xFFFF,
+                    //     self.rend_vert[vert_index + j].colors[2] & 0xFFFF
+                    // );
 
                     let xx = self.rend_vert[vert_index + j].coords[0];
                     let yy = self.rend_vert[vert_index + j].coords[1];
                     let ww = self.rend_vert[vert_index + j].coords[3];
 
-                    #[cfg(feature = "tracing")]
-                    tracing::info!("Coords: (x, y, w) = ({}, {}, {})", xx, yy, ww);
+                    // #[cfg(feature = "tracing")]
+                    // tracing::info!("Coords: (x, y, w) = ({}, {}, {})", xx, yy, ww);
 
                     let final_x: i32;
                     let final_y: i32;
 
                     if ww == 0 {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Poly {} ww == 0?", i);
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("Poly {} ww == 0?", i);
                     } else {
                         let width = self.viewport.x2 - self.viewport.x1 + 1;
                         let height = self.viewport.y1 - self.viewport.y2 + 1;
@@ -134,8 +134,8 @@ impl Gpu3D {
                         final_x = screen_x & 0x1FF;
                         final_y = screen_y & 0xFF;
 
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Screen shit: ({}, {})", final_x, final_y);
+                        // #[cfg(feature = "tracing")]
+                        // tracing::info!("Screen shit: ({}, {})", final_x, final_y);
 
                         if final_y < self.rend_poly[i].top_y as i32 {
                             self.rend_poly[i].top_y = final_y as u16;
@@ -269,35 +269,35 @@ impl Gpu3D {
     }
 
     pub fn set_clear_color(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Set clear_color: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("Set clear_color: {word:08X}");
         self.clear_color = word;
     }
 
     pub fn set_clear_depth(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Set clear_depth: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("Set clear_depth: {word:08X}");
         self.clear_depth = word & 0x7FFF;
     }
 
     pub fn set_mtx_mode(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Set mtx_mode: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("Set mtx_mode: {word:08X}");
         self.mtx_mode = (word & 0x3) as u8;
     }
 
     pub fn mtx_push(&mut self) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("MTX_PUSH");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("MTX_PUSH");
 
         match self.mtx_mode {
             0 => {
                 self.projection_stack.set(&self.projection_mtx);
             }
             1 | 2 => {
-                #[cfg(feature = "tracing")]
+                // #[cfg(feature = "tracing")]
                 let model_view_sp = self.model_view_sp as usize;
-                tracing::debug!("self.model_view SP: {model_view_sp:02X}");
+                // tracing::debug!("self.model_view SP: {model_view_sp:02X}");
 
                 if model_view_sp < 0x1F {
                     self.modelview_stack[model_view_sp].set(&self.modelview_mtx);
@@ -320,8 +320,8 @@ impl Gpu3D {
     }
 
     pub fn mtx_pop(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::trace!("self.mtx_pop: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::trace!("self.mtx_pop: {word:08X}");
 
         let offset = ((word & 0x3F) << 2) >> 2;
         match self.mtx_mode {
@@ -338,8 +338,8 @@ impl Gpu3D {
     }
 
     pub fn mtx_identity(&mut self) {
-        #[cfg(feature = "tracing")]
-        tracing::trace!("mtx_identity");
+        // #[cfg(feature = "tracing")]
+        // tracing::trace!("mtx_identity");
 
         match self.mtx_mode {
             0 => self.projection_mtx.set_identity(),
@@ -357,8 +357,8 @@ impl Gpu3D {
     }
 
     pub fn mtx_mult_4x4(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("MTX_MULT_4x4: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("MTX_MULT_4x4: {word:08X}");
 
         self.add_mult_param(word);
 
@@ -368,8 +368,8 @@ impl Gpu3D {
     }
 
     pub fn mtx_mult_4x3(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("MTX_MULT_4x3: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("MTX_MULT_4x3: {word:08X}");
 
         self.add_mult_param(word);
 
@@ -383,8 +383,8 @@ impl Gpu3D {
     }
 
     pub fn mtx_mult_3x3(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("MTX_MULT_3x3: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("MTX_MULT_3x3: {word:08X}");
 
         self.add_mult_param(word);
 
@@ -398,8 +398,8 @@ impl Gpu3D {
     }
 
     pub fn mtx_trans(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("MTX_TRANS: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("MTX_TRANS: {word:08X}");
 
         if self.mult_params_index == 0 {
             self.mult_params_index = 12;
@@ -413,8 +413,9 @@ impl Gpu3D {
     }
 
     pub fn color(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("COLOR: {word:08X}");
+        let _ = word;
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("COLOR: {word:08X}");
     }
 
     // moved execute.rs: pub fn normal(&mut self)
@@ -434,8 +435,8 @@ impl Gpu3D {
     }
 
     pub fn begin_vtxs(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("BEGIN_VTXS: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("BEGIN_VTXS: {word:08X}");
 
         self.polygon_type = word & 0x3;
     }
@@ -446,8 +447,8 @@ impl Gpu3D {
     }
 
     pub fn viewport(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("VIEWPORT: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("VIEWPORT: {word:08X}");
 
         //viewport y-coords are upside down
         self.viewport.x1 = (word & 0xFF) as u8;
@@ -457,8 +458,8 @@ impl Gpu3D {
     }
 
     pub fn box_test(&mut self) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("BOX_TEST");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("BOX_TEST");
         self.gxstat.boxtest_result = true;
 
         let mut cube: [Vertex; 8] = core::array::from_fn(|_| Vertex::default());

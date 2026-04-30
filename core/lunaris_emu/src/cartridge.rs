@@ -1,7 +1,6 @@
 //! Game Cartridge controller for Nintendo DS
 //! Handles ROM loading, encryption/decryption, and cartridge access
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 /// Cartridge command types
@@ -394,8 +393,8 @@ impl NDSCart {
         self.save_database.clear();
         self.database_size = 0;
 
-        #[cfg(feature = "tracing")]
-        tracing::info!("Loading save database: {}", file_name.display());
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("Loading save database: {}", file_name.display());
 
         let mut file = File::open(file_name).map_err(|source| {
             #[cfg(feature = "tracing")]
@@ -448,8 +447,8 @@ impl NDSCart {
             }
         })?;
 
-        #[cfg(feature = "tracing")]
-        tracing::info!("Save database successfully loaded: {}", file_name.display());
+        // #[cfg(feature = "tracing")]
+        // tracing::info!("Save database successfully loaded: {}", file_name.display());
 
         Ok(())
     }
@@ -467,15 +466,10 @@ impl NDSCart {
 
         let path = PathBuf::from(format!("{}.sav", self.rom_name));
 
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Flushing save file: {}", path.display());
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("Flushing save file: {}", path.display());
 
-        let mut file = std::fs::File::create(&path).map_err(|source| CartridgeError::SaveOpen {
-            path: path.clone(),
-            source,
-        })?;
-
-        file.write_all(&self.spi_save)
+        std::fs::write(&path, &self.spi_save)
             .map_err(|source| CartridgeError::SaveWrite { path, source })?;
 
         Ok(())
@@ -571,44 +565,44 @@ impl NDSCart {
 
             match value {
                 0 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI derp");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI derp");
                 }
 
                 2 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI write");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI write");
                     self.spi_cmd = AuxSpiCommand::WriteMem;
                 }
 
                 3 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI read");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI read");
                     self.spi_cmd = AuxSpiCommand::ReadMem;
                 }
 
                 4 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI write disabled");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI write disabled");
                     self.spi_write_enabled = false;
                 }
 
                 5 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI read status reg");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI read status reg");
                     self.spi_cmd = AuxSpiCommand::ReadStatusReg;
                     self.spi_addr = 0;
                 }
 
                 6 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI write enabled");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI write enabled");
                     self.spi_write_enabled = true;
                 }
 
                 10 => {
-                    #[cfg(feature = "tracing")]
-                    tracing::debug!("AUXSPI page write");
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!("AUXSPI page write");
 
                     self.spi_cmd = if self.save_type == 2 {
                         AuxSpiCommand::PageWrite
@@ -626,10 +620,6 @@ impl NDSCart {
                 _ => {
                     #[cfg(feature = "tracing")]
                     tracing::error!("Unrecognized AUXSPI cmd {}", value);
-
-                    #[cfg(not(feature = "tracing"))]
-                    tracing::error!("Unrecognized AUXSPI cmd {}", value);
-
                     return;
                 }
             }
@@ -680,8 +670,8 @@ impl NDSCart {
                         _ => {}
                     }
 
-                    #[cfg(feature = "tracing")]
-                    tracing::trace!("WRITE_MEM {}", value);
+                    // #[cfg(feature = "tracing")]
+                    // tracing::trace!("WRITE_MEM {}", value);
                 }
 
                 AuxSpiCommand::ReadMem => {
@@ -720,8 +710,8 @@ impl NDSCart {
                         _ => {}
                     }
 
-                    #[cfg(feature = "tracing")]
-                    tracing::trace!("READ_MEM {}", value);
+                    // #[cfg(feature = "tracing")]
+                    // tracing::trace!("READ_MEM {}", value);
                 }
 
                 AuxSpiCommand::PageWrite => {
@@ -730,8 +720,8 @@ impl NDSCart {
                             self.spi_addr <<= 8;
                             self.spi_addr |= value as u32;
                         } else if self.spi_write_enabled {
-                            #[cfg(feature = "tracing")]
-                            tracing::trace!("Page write {:08X}", self.spi_addr);
+                            // #[cfg(feature = "tracing")]
+                            // tracing::trace!("Page write {:08X}", self.spi_addr);
 
                             self.dirty_save = true;
                             let idx = (self.spi_addr & (self.save_size as u32 - 1)) as usize;
@@ -777,8 +767,8 @@ impl NDSCart {
         self.spi_params += 1;
 
         if !self.auxspicnt.hold_chipselect {
-            #[cfg(feature = "tracing")]
-            tracing::trace!("Deselected AUXSPI");
+            // #[cfg(feature = "tracing")]
+            // tracing::trace!("Deselected AUXSPI");
 
             self.spi_params = 0;
             self.spi_addr = 0;
@@ -788,8 +778,8 @@ impl NDSCart {
 
     /// Updates ROMCTRL register and may trigger a new cartridge transfer.
     pub fn set_romctrl(&mut self, value: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Setting ROMCTRL: {value:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("Setting ROMCTRL: {value:08X}");
 
         let old_transfer_busy = self.romctrl.block_busy;
 
@@ -831,11 +821,11 @@ impl NDSCart {
                 ];
                 self.key1_decrypt(&mut data);
 
-                #[cfg(feature = "tracing")]
-                tracing::trace!(
-                    "Data sent {:02X?} decrypted {data:02X?}",
-                    self.command_buffer,
-                );
+                // #[cfg(feature = "tracing")]
+                // tracing::trace!(
+                //     "Data sent {:02X?} decrypted {data:02X?}",
+                //     self.command_buffer,
+                // );
 
                 // to bytes
                 let mut out = [0u8; 8];
@@ -1088,12 +1078,6 @@ pub enum CartridgeError {
     /// Save read failed.
     #[snafu(display("Failed to read save file: {}", path.display()))]
     ReadSave {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-
-    #[snafu(display("Failed to open save file: {}", path.display()))]
-    SaveOpen {
         path: PathBuf,
         source: std::io::Error,
     },

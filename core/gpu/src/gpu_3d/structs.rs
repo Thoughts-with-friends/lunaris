@@ -60,8 +60,8 @@ pub struct TexImageParamReg {
 
 impl TexImageParamReg {
     pub(crate) fn set(&mut self, word: u32) {
-        #[cfg(feature = "tracing")]
-        tracing::debug!("Set TEXIMAGE_PARAM: {word:08X}");
+        // #[cfg(feature = "tracing")]
+        // tracing::debug!("Set TEXIMAGE_PARAM: {word:08X}");
 
         self.vram_offset = (word & 0xFFFF) as i32;
         self.repeat_s = (word & (1 << 16)) != 0;

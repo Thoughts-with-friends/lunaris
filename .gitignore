@@ -7,7 +7,7 @@ dist/
 node_modules/
 
 *.nds
-core/test_rom/
 *.log
+logs/
 
 /config.json

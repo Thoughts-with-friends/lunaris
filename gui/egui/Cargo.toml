@@ -17,9 +17,11 @@ eframe = "0.33.3"
 bytemuck = "1.25.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tracing = { workspace = true }
+tracing_rotation = { git = "https://github.com/SARDONYX-sard/dar-to-oar", tag = "1.1.0" }
 
 # workspace dependencies
-lunaris_ds_emu = { workspace = true }
+lunaris_ds_emu = { workspace = true, features = ["tracing"] }
 lunaris_ds_mem_const = { workspace = true }
 
 [lints]
