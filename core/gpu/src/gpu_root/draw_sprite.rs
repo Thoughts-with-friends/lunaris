@@ -189,15 +189,13 @@ impl Gpu {
                                 false => self.read_objb_u32(tile_data),
                             };
 
-                            let mut index = x + (tile * 8);
-                            for i in 0..8 {
+                            for (index, i) in (x + (tile * 8)..).zip(0..8) {
                                 let color_index = if x_flip {
                                     (data >> ((7 - i) * 4)) & 0xF
                                 } else {
                                     (data >> (i * 4)) & 0xF
                                 };
                                 let idx = (index & 0x1FF) as usize;
-                                index += 1;
 
                                 if idx >= PIXELS_PER_LINE || color_index == 0 {
                                     continue;
@@ -230,15 +228,13 @@ impl Gpu {
                                 false => self.read_objb_u64(tile_data),
                             };
 
-                            let mut index = x + (tile * 8);
-                            for i in 0..8 {
+                            for (index, i) in (x + (tile * 8)..).zip(0..8) {
                                 let color_index = if x_flip {
                                     (data >> ((7 - i) * 8)) & 0xFF
                                 } else {
                                     (data >> (i * 8)) & 0xFF
                                 } as u32;
                                 let idx = index & 0x1FF;
-                                index += 1;
 
                                 if idx >= PIXELS_PER_LINE as u32 || color_index == 0 {
                                     continue;

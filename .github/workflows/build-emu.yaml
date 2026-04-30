@@ -42,7 +42,7 @@ jobs:
       - name: Move exe -> ./build
         uses: ./.github/actions/setup-release
         with:
-          app_name: lunaris
+          app_name: lunaris_ds_egui
           build_profile: ${{ env.BUILD_PROFILE }}
 
       - name: Upload a Build Artifact

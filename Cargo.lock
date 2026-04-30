@@ -1523,7 +1523,7 @@ dependencies = [
  "ahash 0.8.12",
  "bytemuck",
  "document-features",
- "egui 0.33.3",
+ "egui",
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
@@ -1547,19 +1547,6 @@ dependencies = [
  "web-time",
  "windows-sys 0.61.2",
  "winit",
-]
-
-[[package]]
-name = "egui"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "eframe",
- "egui 0.33.3",
- "lunaris_ds_emu",
- "lunaris_ds_mem_const",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1589,7 +1576,7 @@ dependencies = [
  "ahash 0.8.12",
  "bytemuck",
  "document-features",
- "egui 0.33.3",
+ "egui",
  "epaint",
  "log",
  "profiling",
@@ -1609,7 +1596,7 @@ dependencies = [
  "accesskit_winit",
  "arboard",
  "bytemuck",
- "egui 0.33.3",
+ "egui",
  "log",
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
@@ -1629,7 +1616,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6420863ea1d90e750f75075231a260030ad8a9f30a7cef82cdc966492dc4c4eb"
 dependencies = [
  "bytemuck",
- "egui 0.33.3",
+ "egui",
  "glow",
  "log",
  "memoffset",
@@ -3288,6 +3275,19 @@ dependencies = [
 [[package]]
 name = "lunaris_ds_audio"
 version = "0.1.0"
+
+[[package]]
+name = "lunaris_ds_egui"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "eframe",
+ "egui",
+ "lunaris_ds_emu",
+ "lunaris_ds_mem_const",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "lunaris_ds_emu"

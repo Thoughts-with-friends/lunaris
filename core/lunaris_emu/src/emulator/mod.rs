@@ -246,8 +246,8 @@ impl Emulator {
     /// Start hardware division unit.
     /// Start division operation
     pub fn start_division(&mut self) {
-        if self.div_denom != 0 {
-            self.div_result = self.div_numer / self.div_denom;
+        if let Some(div_result) = self.div_numer.checked_div(self.div_denom) {
+            self.div_result = div_result;
             self.div_remresult = self.div_numer % self.div_denom;
         }
     }
