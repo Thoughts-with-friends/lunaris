@@ -470,10 +470,47 @@ impl Gpu2DEngine {
         self.dispcnt.screen_base = ((word >> 27) & 0x7) as i32;
         self.dispcnt.bg_extended_palette = (word & (1 << 30)) != 0;
         self.dispcnt.obj_extended_palette = (word & (1 << 31)) != 0;
+
+        tracing::trace!(
+            target: "gpu_2d",
+            "DISPCNT updated: 0x{:08X}\n\
+            - display_mode: {}\n\
+            - vram_block: {}\n\
+            - tile_obj_1d_bound: {}\n\
+            - bitmap_obj_1d_bound: {}\n\
+            - hblank_obj: {}\n\
+            - char_base: {}\n\
+            - screen_base: {}\n\
+            - bg_ext_pal: {}\n\
+            - obj_ext_pal: {}",
+            word,
+            self.dispcnt.display_mode,
+            self.dispcnt.vram_block,
+            self.dispcnt.tile_obj_1d_bound,
+            self.dispcnt.bitmap_obj_1d_bound,
+            self.dispcnt.hblank_obj_processing,
+            self.dispcnt.char_base,
+            self.dispcnt.screen_base,
+            self.dispcnt.bg_extended_palette,
+            self.dispcnt.obj_extended_palette
+        );
     }
 
     pub fn set_bgcnt(&mut self, halfword: u16, index: usize) {
         self.bgcnt[index] = halfword;
+
+        let priority = halfword & 0x3;
+        let char_base = (halfword >> 2) & 0xF;
+        let mosaic = (halfword & (1 << 6)) != 0;
+        let color_mode_256 = (halfword & (1 << 7)) != 0;
+        let screen_base = (halfword >> 8) & 0x1F;
+        let screen_size = (halfword >> 14) & 0x3;
+
+        tracing::trace!(
+            target: "gpu_bg",
+            "[GPU BackGround] BG{}CNT Update: 0x{:04X} | Prio:{} CharBase:{} Mosaic: {} ScreenBase:{} 256Color:{} Size:{}",
+            index, halfword, priority, char_base, mosaic, screen_base, color_mode_256, screen_size
+        );
     }
 
     pub fn set_bghofs(&mut self, halfword: u16, index: usize) {

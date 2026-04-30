@@ -148,9 +148,11 @@ impl Gpu {
                         false => &mut self.engine_lower,
                     };
 
-                    // safe access
+                    // safe access (ABGR)
                     if (line_start + i) < PIXELS_PER_LINE * SCANLINES {
-                        engine.front_framebuffer[line_start + i] = 0xFFF3F3F3;
+                        // engine.front_framebuffer[line_start + i] = 0xFFF3F3F3;  // white
+                        // engine.front_framebuffer[line_start + i] = 0xFF00FFF3; // yellow
+                        engine.front_framebuffer[line_start + i] = 0xF3FF00FF; // magenta
                     }
                 }
             }

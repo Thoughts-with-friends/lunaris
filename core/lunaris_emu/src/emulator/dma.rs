@@ -11,7 +11,7 @@ impl Emulator {
     /// Handle scheduler event
     pub fn dma_handle_event(&mut self) {
         // #[cfg(feature = "tracing")]
-        // tracing::trace!("Emulator::dma_handle_event has called.");
+        // tracing::debug!("Emulator::dma_handle_event has called.");
 
         self.dma_event.processing = false;
         let event_id = self.dma_event.id;
@@ -97,6 +97,10 @@ impl Emulator {
             let (_value, offset) = if word_transfer {
                 let value = if is_arm9 {
                     let v = self.arm9_read_word(internal_source);
+                    // #[cfg(feature = "tracing")]
+                    // tracing::debug!(
+                    //     "DMA Access [ARM9_READ] Addr: 0x{internal_dest:08X} Word: 0x{v:08X}",
+                    // );
                     self.arm9_write_word(internal_dest, v);
                     v
                 } else {
@@ -215,6 +219,7 @@ impl Emulator {
     /// Request HBLANK-triggered DMA transfers
     pub fn hblank_request(&mut self) {
         for i in 0..4 {
+            // for ARM9
             let dma = &self.dma.dmas[i];
             if dma.cnt.enabled && dma.cnt.timing == 2 && self.dma.active_dmas == 0 {
                 self.dma.active_dmas |= 1 << i;

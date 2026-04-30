@@ -30,7 +30,7 @@ impl Emulator {
                 };
                 u32::from_le_bytes(self.shared_wram[offset..offset + 4].try_into().unwrap())
             }
-
+            // https://problemkaputt.de/gbatek.htm#dsiomaps
             0x04000000 => self.gpu.get_dispcnt_a(),
             0x04000010 => {
                 self.gpu.get_bghofs_a(0) as u32 | ((self.gpu.get_bgvofs_a(0) as u32) << 16)

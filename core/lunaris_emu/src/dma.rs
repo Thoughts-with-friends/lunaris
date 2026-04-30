@@ -69,6 +69,18 @@ impl DmaCnt {
         self.timing = ((value >> 11) & 0x3) as u32;
         self.irq_after_transfer = (value & (1 << 14)) != 0;
         self.enabled = (value & (1 << 15)) != 0;
+
+        tracing::debug!(
+            value = value,
+            dest_control = self.dest_control,
+            source_control = self.source_control,
+            repeat = self.repeat,
+            word_transfer = self.word_transfer,
+            timing = self.timing,
+            irq_after_transfer = self.irq_after_transfer,
+            enabled = self.enabled,
+            "DMA control register updated"
+        );
     }
 }
 

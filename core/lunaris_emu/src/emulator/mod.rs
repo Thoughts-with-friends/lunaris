@@ -363,8 +363,17 @@ impl Emulator {
             tracing::trace!("Read boot header word {i}: 0x{info:08X}");
         }
 
-        // ERROR  [0, 0, 0, 0, 0, 0, 0, 0]
-        tracing::trace!("{boot_info:?}");
+        // [BOOT INFO] Examples:
+        // boot_info[0] = 0x0004000: ROM offset for ARM9 code
+        // boot_info[1] = 0x2000800: ARM9 Entry Point
+        // boot_info[2] = 0x2000000: RAM offset for ARM9 code
+        // boot_info[3] = 0x00636EC: ARM9 code size
+        //
+        // boot_info[4] = 0x01DF800: ROM offset for ARM7 code
+        // boot_info[5] = 0x2380000: ARM7 Entry Point
+        // boot_info[6] = 0x2380000: RAM offset for ARM7 code
+        // boot_info[7] = 0x002642C: ARM7 code size
+        tracing::trace!("boot_info={boot_info:#08X?}");
 
         // Initialize CPUs and regs to after-boot values
         self.arm9.direct_boot(boot_info[1]);
@@ -395,29 +404,36 @@ impl Emulator {
         self.bios_prot = 0x1204;
         self.wram_cnt = 3;
 
-        // Load ROM into RAM
+        // Load ROM into Main RAM for ARM9
         let mut i = 0;
         while i < boot_info[3] {
             // for (i, _) in (0..boot_info[3]).enumerate().step_by(4) {
             // for i in (0..boot_info[3]).step_by(4) {
             let rom_data: u32 = self.cart.direct_read_word(boot_info[0] + i);
-
             #[cfg(feature = "tracing")]
             tracing::trace!(
                 "ROM_READ [ARM9_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
                 boot_info[0] + i
             );
+
             self.arm9_write_word(boot_info[2] + i, rom_data);
+            #[cfg(feature = "tracing")]
+            tracing::trace!(
+                "ROM_WRITE [ARM9_BOOT] Addr: 0x{:08X} Word: 0x{rom_data:08X}",
+                boot_info[2] + i
+            );
+
             i += 4;
         }
 
+        // Load ROM into Main RAM for ARM7
         let mut i = 0;
         while i < boot_info[7] {
             let rom_data: u32 = self.cart.direct_read_word(boot_info[4] + i);
 
             #[cfg(feature = "tracing")]
             tracing::trace!(
-                "ROM_READ [ARM7_BOOT] Addr: 0x{:08X} Value: 0x{rom_data:08X}",
+                "ROM_READ [ARM7_BOOT] Addr: 0x{:08X} Word: 0x{rom_data:08X}",
                 boot_info[4] + i
             );
             self.arm7_write_word(boot_info[6] + i, rom_data);

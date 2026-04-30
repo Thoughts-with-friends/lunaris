@@ -77,20 +77,25 @@ impl App {
 
             ui.separator();
 
-            ui.horizontal(|ui| {
-                if ui.button("Run").clicked() {
-                    self.run_emulator();
-                }
+            self.ui_run_button(ui);
+        });
+    }
 
-                if ui.button("Stop").clicked() {
-                    self.stop_emulator();
-                }
-            });
+    fn ui_run_button(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("Run").clicked() {
+                self.run_emulator();
+            }
 
-            ui.horizontal(|ui| {
-                ui.add(egui::Slider::new(&mut self.config.scale, 1.0..=5.0).text("Scale"));
-                ui.checkbox(&mut self.config.show_fps, "FPS");
-            });
+            if ui.button("Stop").clicked() {
+                self.stop_emulator();
+            }
+
+            ui.separator();
+
+            ui.add(egui::Slider::new(&mut self.config.scale, 1.0..=5.0).text("Scale"));
+
+            ui.checkbox(&mut self.config.show_fps, "FPS");
         });
     }
 
@@ -172,7 +177,7 @@ impl App {
     // ===== emulator control =====
     fn run_emulator(&mut self) {
         let Some(path) = &self.config.selected_rom else {
-            eprintln!("No ROM selected");
+            tracing::error!("No ROM selected");
             return;
         };
 
@@ -185,7 +190,7 @@ impl App {
                 save_config(&self.config);
             }
             Err(e) => {
-                eprintln!("Failed to load ROM: {:?}", e);
+                tracing::error!("Failed to load ROM: {e:?}");
                 self.is_running = false;
             }
         }
@@ -291,6 +296,9 @@ impl eframe::App for App {
 
 // ===== entry =====
 fn main() -> eframe::Result<()> {
+    let _ = tracing_rotation::init("./logs", "lunaris.log");
+    let _ = tracing_rotation::change_level("debug");
+
     let options = eframe::NativeOptions::default();
 
     eframe::run_native(

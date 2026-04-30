@@ -28,6 +28,18 @@ impl Emulator {
                 self.gpu_handle_event();
             }
 
+            let dma_event_ready = self.system_timestamp >= self.dma_event.activation_time
+                && self.dma_event.processing;
+            tracing::debug!(
+                "Event Flag: {}, Handling DMA event {} at timestamp {}, \
+activation {}, processing {}",
+                dma_event_ready,
+                self.dma_event.id,
+                self.system_timestamp,
+                self.dma_event.activation_time,
+                self.dma_event.processing
+            );
+
             if self.system_timestamp >= self.dma_event.activation_time && self.dma_event.processing
             {
                 self.dma_handle_event(); // DMA Method
