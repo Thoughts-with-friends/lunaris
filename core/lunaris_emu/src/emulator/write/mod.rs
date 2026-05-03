@@ -15,16 +15,20 @@ impl Emulator {
             );
         }
 
-        if self.get_cpu(cpu_type).cpu_id <= 0 {
+        if cpu_type == CpuType::Arm9 {
             // NOTE: inline CP15::write_word
             let dtcm_size = self.arm9_cp15.dtcm_size;
             let dtcm_base = self.arm9_cp15.dtcm_base;
 
-            if address < dtcm_size {
+            if address < self.arm9_cp15.itcm_size {
                 self.arm9_cp15.write_word(address & ITCM_MASK, word);
             } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
                 self.arm9_cp15.write_word(address & DTCM_MASK, word);
             } else {
+                #[cfg(feature = "tracing")]
+                if address < 0x04000000 {
+                    tracing::warn!("invalid address: {address:#x} < 0x04000000");
+                }
                 self.arm9_write_word(address, word);
             }
         } else {
@@ -38,7 +42,7 @@ impl Emulator {
             let dtcm_size = self.arm9_cp15.dtcm_size;
             let dtcm_base = self.arm9_cp15.dtcm_base;
 
-            if address < dtcm_size {
+            if address < self.arm9_cp15.itcm_size {
                 self.arm9_cp15.write_halfword(address & ITCM_MASK, halfword);
             } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
                 self.arm9_cp15.write_halfword(address & DTCM_MASK, halfword);
@@ -51,12 +55,12 @@ impl Emulator {
     }
 
     pub fn write_byte(&mut self, address: u32, byte: u8, cpu_type: CpuType) {
-        if self.get_cpu(cpu_type).cpu_id <= 0 {
+        if cpu_type == CpuType::Arm9 {
             // NOTE: inline CP15::write_byte
             let dtcm_size = self.arm9_cp15.dtcm_size;
             let dtcm_base = self.arm9_cp15.dtcm_base;
 
-            if address < dtcm_size {
+            if address < self.arm9_cp15.itcm_size {
                 self.arm9_cp15.write_byte(address & ITCM_MASK, byte as u32);
             } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
                 self.arm9_cp15.write_byte(address & DTCM_MASK, byte as u32);

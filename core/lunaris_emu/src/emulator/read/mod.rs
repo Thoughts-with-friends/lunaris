@@ -6,19 +6,33 @@ use crate::emulator::Emulator;
 
 impl Emulator {
     pub fn read_word(&mut self, address: u32, cpu_type: CpuType) -> u32 {
-        if self.get_cpu(cpu_type).cpu_id <= 0 {
+        if cpu_type == CpuType::Arm9 {
             // NOTE: inline CP15::read_word
             let dtcm_size = self.arm9_cp15.dtcm_size;
             let dtcm_base = self.arm9_cp15.dtcm_base;
+            let dtcm_write_only = self.arm9_cp15.dtcm_write_only();
 
-            if address < dtcm_size {
+            tracing::debug!(%dtcm_size, %dtcm_base, %self.arm9_cp15.itcm_size, %address, %dtcm_write_only);
+
+            if address < self.arm9_cp15.itcm_size {
                 self.arm9_cp15.read_word(address & ITCM_MASK)
             } else if address >= dtcm_base
                 && address < (dtcm_base + dtcm_size)
                 && !self.arm9_cp15.dtcm_write_only()
             {
+                //             0x2000800
+                #[cfg(feature = "tracing")]
+                if address == 0x2076EC0 {
+                    tracing::debug!("DERP")
+                }
+
                 self.arm9_cp15.read_word(address & DTCM_MASK)
             } else {
+                #[cfg(feature = "tracing")]
+                if address < 0x2000000 {
+                    tracing::warn!("invalid address: {address:#x} < 0x2000000");
+                }
+
                 self.arm9_read_word(address)
             }
         } else {
@@ -27,12 +41,12 @@ impl Emulator {
     }
 
     pub fn read_halfword(&self, address: u32, cpu_type: CpuType) -> u16 {
-        if self.get_cpu(cpu_type).cpu_id <= 0 {
+        if cpu_type == CpuType::Arm9 {
             // NOTE: inline CP15::read_halfword
             let dtcm_size = self.arm9_cp15.dtcm_size;
             let dtcm_base = self.arm9_cp15.dtcm_base;
 
-            if address < dtcm_size {
+            if address < self.arm9_cp15.itcm_size {
                 self.arm9_cp15.read_halfword(address & ITCM_MASK)
             } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
                 self.arm9_cp15.read_halfword(address & DTCM_MASK)
@@ -45,12 +59,12 @@ impl Emulator {
     }
 
     pub fn read_byte(&self, address: u32, cpu_type: CpuType) -> u8 {
-        if self.get_cpu(cpu_type).cpu_id <= 0 {
+        if cpu_type == CpuType::Arm9 {
             // NOTE: inline CP15::read_byte
             let dtcm_size = self.arm9_cp15.dtcm_size;
             let dtcm_base = self.arm9_cp15.dtcm_base;
 
-            if address < dtcm_size {
+            if address < self.arm9_cp15.itcm_size {
                 self.arm9_cp15.read_byte(address & ITCM_MASK)
             } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
                 self.arm9_cp15.read_byte(address & DTCM_MASK)

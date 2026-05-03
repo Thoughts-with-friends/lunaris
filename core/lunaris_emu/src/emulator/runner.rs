@@ -28,17 +28,17 @@ impl Emulator {
                 self.gpu_handle_event();
             }
 
-            // let dma_event_ready = self.system_timestamp >= self.dma_event.activation_time
-            //     && self.dma_event.processing;
-            // tracing::debug!(
-            //     "Event Flag: {}, Handling DMA event {} at timestamp {}, \
-            // activation {}, processing {}",
-            //     dma_event_ready,
-            //     self.dma_event.id,
-            //     self.system_timestamp,
-            //     self.dma_event.activation_time,
-            //     self.dma_event.processing
-            // );
+            let dma_event_ready = self.system_timestamp >= self.dma_event.activation_time
+                && self.dma_event.processing;
+            tracing::debug!(
+                "Event Flag: {}, Handling DMA event {} at timestamp {}, \
+            activation {}, processing {}",
+                dma_event_ready,
+                self.dma_event.id,
+                self.system_timestamp,
+                self.dma_event.activation_time,
+                self.dma_event.processing
+            );
 
             if self.system_timestamp >= self.dma_event.activation_time && self.dma_event.processing
             {
@@ -57,11 +57,7 @@ impl Emulator {
     pub fn execute(&mut self, cpu_type: CpuType) {
         let cpu_id = {
             // ARM7 or ARM9
-            let arm = match cpu_type {
-                CpuType::Arm7 => &mut self.arm7,
-                CpuType::Arm9 => &mut self.arm9,
-            };
-
+            let arm = self.get_cpu_mut(cpu_type);
             arm.last_timestamp = arm.timestamp;
             arm.cpu_id
         };
