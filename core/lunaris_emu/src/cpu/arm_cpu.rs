@@ -53,6 +53,9 @@ pub enum PsrMode {
 impl PsrMode {
     /// Const-safe conversion from raw CPSR.M value
     pub const fn from_u32(value: u32) -> Option<Self> {
+        // 2147483711
+        // 0b11101 = 0x1d
+        // 0b11111 = 0x1f
         Some(match value {
             0x10 => Self::User,
             0x11 => Self::Fiq,
@@ -112,6 +115,7 @@ impl PsrFlags {
 
     /// Load flags from a 32-bit CPSR/SPSR value
     pub fn set(&mut self, value: u32) {
+        // 1610612829
         self.negative = (value & (1 << 31)) != 0;
         self.zero = (value & (1 << 30)) != 0;
         self.carry = (value & (1 << 29)) != 0;
@@ -132,7 +136,7 @@ impl PsrFlags {
 }
 
 /// This type exists to avoid cross references between emu and cpu.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum CpuType {
     #[default]
     Arm7,

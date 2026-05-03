@@ -586,7 +586,7 @@ impl Emulator {
     /// Add a DMA event.
     pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
         #[cfg(feature = "tracing")]
-        tracing::trace!("mod.rs: add_dma_event");
+        tracing::trace!("call add_dma_event");
 
         self.dma_event.id = event_id;
         self.dma_event.processing = true;

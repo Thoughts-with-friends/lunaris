@@ -62,6 +62,7 @@ impl DmaCnt {
 
     /// Set register value from 16-bit halfword
     pub fn set(&mut self, value: u16) {
+        // 33088
         self.dest_control = ((value >> 5) & 0x3) as u32;
         self.source_control = ((value >> 7) & 0x3) as u32;
         self.repeat = (value & (1 << 9)) != 0;

@@ -10,8 +10,8 @@ use crate::interrupts::Interrupt;
 impl Emulator {
     /// Handle scheduler event
     pub fn dma_handle_event(&mut self) {
-        // #[cfg(feature = "tracing")]
-        // tracing::debug!("Emulator::dma_handle_event has called.");
+        #[cfg(feature = "tracing")]
+        tracing::debug!("Emulator::dma_handle_event has called.");
 
         self.dma_event.processing = false;
         let event_id = self.dma_event.id;
@@ -185,6 +185,9 @@ impl Emulator {
 
     /// Write control register to DMA channel
     pub fn dma_write_cnt(&mut self, index: usize, cnt: u16) {
+        #[cfg(feature = "tracing")]
+        tracing::debug!("call dma_write_cnt: index: {index}, cnt: {cnt}");
+
         let dma = &mut self.dma.dmas[index];
         let old_enabled = dma.cnt.enabled;
 

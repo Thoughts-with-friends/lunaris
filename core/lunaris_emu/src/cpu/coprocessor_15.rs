@@ -1,6 +1,8 @@
 //! ARM9 Coprocessor 15 (CP15) - System Control Coprocessor
 //! Manages ARM9 memory protection unit, caches, TCM, and control registers
 
+use lunaris_ds_mem_const::{DTCM_MASK, ITCM_MASK};
+
 /// CP15 Control Register
 #[derive(Debug, Clone, Copy)]
 pub struct ControlReg {
@@ -32,6 +34,7 @@ impl ControlReg {
     /// Create new control register with defaults
     pub const fn new() -> Self {
         Self {
+            // control.set_values(0);
             mmu_pu_enable: false,
             data_unified_cache_on: false,
             is_big_endian: false,
@@ -120,11 +123,11 @@ pub struct Cp15 {
     dtcm_data: u32,
 
     /// Instruction TCM size (cached value)
-    itcm_size: u32,
+    pub itcm_size: u32,
     /// Data TCM base address (cached value)
-    dtcm_base: u32,
+    pub dtcm_base: u32,
     /// Data TCM size (cached value)
-    dtcm_size: u32,
+    pub dtcm_size: u32,
 
     /// Instruction TCM memory (32 KB)
     itcm: Vec<u8>,
@@ -144,15 +147,20 @@ impl Default for Cp15 {
 }
 
 impl Cp15 {
+    const ITCM_SIZE: u32 = 0x0200_0000;
+    const DTCM_BASE: u32 = 0x0B00_0000;
+    const DTCM_SIZE: u32 = 16 * 1024;
+
     /// Create new CP15 controller
     pub fn new() -> Self {
         Self {
+            // Doesn't reflect true initial values, but does give us a basis when executing the BIOS
             control: ControlReg::new(),
             itcm_data: 0,
             dtcm_data: 0,
-            itcm_size: 0,
-            dtcm_base: 0,
-            dtcm_size: 0,
+            itcm_size: Self::ITCM_SIZE,
+            dtcm_base: Self::DTCM_BASE,
+            dtcm_size: 0x00010000, // NOTE: 64 KB, but only 16 KB is actually used by ARM9
             itcm: vec![0_u8; 1024 * 32],
             dtcm: vec![0_u8; 1024 * 16],
             dcache: vec![0_u8; 1024 * 4],
@@ -162,10 +170,22 @@ impl Cp15 {
 
     /// Power on CP15
     pub const fn power_on(&mut self) {
-        self.control = ControlReg::new();
-        self.itcm_size = 0;
-        self.dtcm_base = 0;
-        self.dtcm_size = 0;
+        self.control = ControlReg {
+            mmu_pu_enable: false,
+            data_unified_cache_on: false,
+            is_big_endian: false,
+            instruction_cache_on: false,
+            high_exception_vector: false,
+            predictable_cache_replacement: false,
+            pre_armv5_mode: false,
+            dtcm_enable: false,
+            dtcm_write_only: false,
+            itcm_enable: true,
+            itcm_write_only: true,
+        };
+        self.itcm_size = Self::ITCM_SIZE;
+        self.dtcm_base = Self::DTCM_BASE;
+        self.dtcm_size = Self::DTCM_SIZE;
     }
 
     // Removed
@@ -218,22 +238,21 @@ impl Cp15 {
 
     /// Read byte from TCM/cache
     pub fn read_byte(&self, address: u32) -> u8 {
-        // Check if address is in instruction TCM
-        let itcm_end = 0x0800_0000u32.saturating_add(self.itcm_size);
-        if address < itcm_end {
-            let idx = (address & (self.itcm.len() as u32 - 1)) as usize;
-            return self.itcm[idx];
-        }
+        let dtcm_size = self.dtcm_size;
+        let dtcm_base = self.dtcm_base;
 
-        // Check if address is in data TCM
-        if address >= self.dtcm_base && address < (self.dtcm_base + self.dtcm_size) {
-            let idx = (address - self.dtcm_base) as usize;
-            if idx < self.dtcm.len() {
-                return self.dtcm[idx];
-            }
+        if address < dtcm_size {
+            self.itcm[(address & ITCM_MASK) as usize]
+        } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
+            self.dtcm[(address & DTCM_MASK) as usize]
+        } else {
+            // self.arm9_read_byte(address, byte);
+            #[cfg(feature = "tracing")]
+            tracing::error!(
+                "Unreachable: Since `struct emulator` is inaccessible due to a circular reference issue, it is called at a higher level."
+            );
+            0x0
         }
-
-        0x00
     }
 
     /// Write word to TCM/cache
@@ -246,30 +265,28 @@ impl Cp15 {
 
     /// Write halfword to TCM/cache
     pub fn write_halfword(&mut self, address: u32, halfword: u16) {
+        // <---------->
+        // [0_u8, 1_u8]
+        // TODO: or unsafe { core::mem::transmute(src) }
         self.write_byte(address, (halfword & 0xFF) as u32);
         self.write_byte(address + 1, ((halfword >> 8) & 0xFF) as u32);
     }
 
     /// Write byte to TCM/cache
     pub fn write_byte(&mut self, address: u32, byte: u32) {
-        let byte_val = (byte & 0xFF) as u8;
+        let dtcm_size = self.dtcm_size;
+        let dtcm_base = self.dtcm_base;
 
-        // Check if address is in instruction TCM
-        if address < 0x0800_0000 + self.itcm_size {
-            let idx = (address & (self.itcm.len() as u32 - 1)) as usize;
-            self.itcm[idx] = byte_val;
-            return;
-        }
-
-        // Check if address is in data TCM
-        if address >= self.dtcm_base && address < (self.dtcm_base + self.dtcm_size) {
-            // Skip if write-only mode is disabled for reads
-            if !self.control.dtcm_write_only {
-                let idx = (address - self.dtcm_base) as usize;
-                if idx < self.dtcm.len() {
-                    self.dtcm[idx] = byte_val;
-                }
-            }
+        if address < dtcm_size {
+            self.itcm[(address & ITCM_MASK) as usize] = byte as u8;
+        } else if address >= dtcm_base && address < (dtcm_base + dtcm_size) {
+            self.dtcm[(address & DTCM_MASK) as usize] = byte as u8;
+        } else {
+            // self.arm9_write_byte(address, byte);
+            #[cfg(feature = "tracing")]
+            tracing::error!(
+                "Unreachable: Since `struct emulator` is inaccessible due to a circular reference issue, it is called at a higher level."
+            );
         }
     }
 
