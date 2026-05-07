@@ -17,7 +17,7 @@ pub enum Divisor {
 impl Divisor {
     /// Get the divisor value as integer
     #[inline]
-    pub fn to_u32(self) -> u32 {
+    pub fn cycles_left(self) -> i32 {
         match self {
             Divisor::F1 => 1,
             Divisor::F64 => 64,
@@ -94,7 +94,7 @@ impl TimerReg {
         match Divisor::from_u32((value & 0x3) as u32) {
             Some(divisor) => {
                 self.clock_div = divisor;
-                self.cycles_left = divisor.to_u32() as i32;
+                self.cycles_left = divisor.cycles_left();
             }
             None => {
                 #[cfg(feature = "tracing")]
@@ -139,7 +139,7 @@ impl NDSTiming {
     /// Create new timing system
     pub fn new() -> Self {
         NDSTiming {
-            timer_clock_divs: [0; 4],
+            timer_clock_divs: [1, 64, 256, 1024],
             timers: [TimerReg::new(); 8],
         }
     }
@@ -147,7 +147,8 @@ impl NDSTiming {
     /// Power on timing system
     pub fn power_on(&mut self) {
         for timer in &mut self.timers {
-            *timer = TimerReg::new();
+            timer.enabled = false;
+            timer.irq_on_overflow = false;
         }
     }
 

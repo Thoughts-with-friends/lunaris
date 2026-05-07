@@ -60,6 +60,8 @@ impl Emulator {
     {
         let rom_path = rom_path.as_ref();
         self.cartridge_load_rom(rom_path)?;
+        #[cfg(feature = "tracing")]
+        tracing::error!("self.cart.rom bytes: {:08X}", self.cart.rom.len());
         self.power_on();
         Ok(())
     }

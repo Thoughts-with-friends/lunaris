@@ -604,8 +604,8 @@ impl Emulator {
 
         let cycles = self.next_event_time.wrapping_sub(self.system_timestamp) as i32;
         match cycles {
-            ..=0 | 20.. => self.system_timestamp += 20,
-            _ => self.system_timestamp += cycles as u64,
+            1..=20 => self.system_timestamp += cycles as u64,
+            _ => self.system_timestamp += 20,
         }
     }
 

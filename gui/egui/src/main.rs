@@ -1,4 +1,5 @@
 mod config;
+mod font;
 
 use self::config::{Config, load_config, save_config};
 use eframe::egui;
@@ -93,9 +94,11 @@ impl App {
 
             ui.separator();
 
-            ui.add(egui::Slider::new(&mut self.config.scale, 1.0..=5.0).text("Scale"));
+            ui.label("Scale: ");
+            ui.add(egui::Slider::new(&mut self.config.scale, 1.0..=5.0));
 
             ui.checkbox(&mut self.config.show_fps, "FPS");
+            self.update_fps(ui);
         });
     }
 
@@ -164,7 +167,6 @@ impl App {
                         &mut self.lower_tex,
                         self.config.scale,
                     );
-                    self.update_fps(ctx);
                 }
             } else {
                 ui.centered_and_justified(|ui| {
@@ -182,6 +184,7 @@ impl App {
         };
 
         let mut emu = Emulator::new();
+        // emu.config.test = true; // enable disassemble
 
         match emu.load_rom(path) {
             Ok(_) => {
@@ -259,7 +262,7 @@ impl App {
     }
 
     // ===== fps =====
-    fn update_fps(&mut self, ctx: &egui::Context) {
+    fn update_fps(&mut self, ui: &mut egui::Ui) {
         self.frame_count += 1;
 
         let now = Instant::now();
@@ -272,11 +275,7 @@ impl App {
         }
 
         if self.config.show_fps {
-            egui::Area::new("fps_overlay".into())
-                .fixed_pos([10.0, 10.0])
-                .show(ctx, |ui| {
-                    ui.label(format!("FPS: {:.1}", self.fps));
-                });
+            ui.label(format!(": {:.1}", self.fps));
         }
     }
 }
@@ -296,14 +295,17 @@ impl eframe::App for App {
 
 // ===== entry =====
 fn main() -> eframe::Result<()> {
-    let _ = tracing_rotation::init("./logs", "lunaris.log");
-    let _ = tracing_rotation::change_level("debug");
+    // let _ = tracing_rotation::init("./logs", "lunaris.log");
+    // let _ = tracing_rotation::change_level("trace");
 
     let options = eframe::NativeOptions::default();
 
     eframe::run_native(
         "NDS Emulator",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|cc| {
+            self::font::setup_custom_fonts::<&std::path::Path>(&cc.egui_ctx, None);
+            Ok(Box::new(App::new()))
+        }),
     )
 }

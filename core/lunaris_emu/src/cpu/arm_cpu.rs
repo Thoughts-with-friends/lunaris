@@ -692,7 +692,7 @@ impl ArmCpu {
         }
     }
     pub fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let unsigned_result: u64 = (src + operand) as u64;
+        let unsigned_result: u64 = src.wrapping_add(operand) as u64; // FIXME?: It overflowed, but for now we'll just go along with how Cogi behaves
 
         if dst == REG_PC {
             if set_condition_codes {
@@ -709,7 +709,7 @@ impl ArmCpu {
         }
     }
     pub fn sub(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let unsigned_result: u64 = (src - operand) as u64;
+        let unsigned_result: u64 = src.wrapping_sub(operand) as u64; // FIXME?: It overflowed, but for now we'll just go along with how Cogi behaves
 
         if dst == REG_PC {
             if set_condition_codes {

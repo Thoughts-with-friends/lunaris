@@ -33,7 +33,12 @@ impl Emulator {
                     tracing::warn!("invalid address: {address:#x} < 0x2000000");
                 }
 
-                self.arm9_read_word(address)
+                let word = self.arm9_read_word(address);
+
+                #[cfg(feature = "tracing")]
+                tracing::debug!(%self.system_timestamp, %address, %word);
+
+                word
             }
         } else {
             self.arm7_read_word(address)
