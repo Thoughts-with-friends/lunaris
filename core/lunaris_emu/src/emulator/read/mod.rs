@@ -1,4 +1,7 @@
 //! cpu.cpp:157
+mod read_arm7;
+mod read_arm9;
+
 use lunaris_ds_mem_const::{DTCM_MASK, ITCM_MASK};
 
 use crate::cpu::arm_cpu::CpuType;
@@ -23,7 +26,7 @@ impl Emulator {
                 //             0x2000800
                 #[cfg(feature = "tracing")]
                 if address == 0x2076EC0 {
-                    tracing::debug!("DERP")
+                    tracing::debug!("DERP");
                 }
 
                 self.arm9_cp15.read_word(address & DTCM_MASK)

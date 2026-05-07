@@ -2,7 +2,8 @@
 //! Manages communication with Firmware, Touchscreen, and other SPI devices
 
 use crate::error::EmuError;
-use crate::{firmware::Firmware, touchscreen::TouchScreen};
+use crate::firmware::Firmware;
+use lunaris_ds_touchscreen::TouchScreen;
 
 /// SPI Control Register
 #[derive(Debug, Clone, Copy)]
@@ -26,7 +27,7 @@ pub struct RegSpiCnt {
 impl RegSpiCnt {
     /// Create new SPI control register
     pub fn new() -> Self {
-        RegSpiCnt {
+        Self {
             bandwidth: 0,
             busy: false,
             device: 0,
@@ -39,7 +40,7 @@ impl RegSpiCnt {
 
     /// Get register value as 16-bit halfword
     pub fn get(&self) -> u16 {
-        let mut value = 0u16;
+        let mut value = 0_u16;
         value |= (self.bandwidth & 0x3) as u16;
         if self.busy {
             value |= 1 << 7;
@@ -96,7 +97,7 @@ pub struct SPIBus {
 impl SPIBus {
     /// Create new SPI bus
     pub fn new() -> Self {
-        SPIBus {
+        Self {
             firmware: Firmware::new(),
             touchscreen: TouchScreen::new(),
             spicnt: RegSpiCnt::new(),

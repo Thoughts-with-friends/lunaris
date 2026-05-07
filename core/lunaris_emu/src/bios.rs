@@ -100,7 +100,7 @@ impl Emulator {
         match opcode {
             0x03 => {
                 let reg = self.arm7.get_register(0);
-                self.arm7.add_internal_cycles((reg * 4) as i32)
+                self.arm7.add_internal_cycles((reg * 4) as i32);
             }
             0x06 => self.arm7.halt(),
             0x0B => self.cpu_set(CpuType::Arm7),

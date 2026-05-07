@@ -26,18 +26,16 @@ pub enum CartCommand {
 
 impl CartCommand {
     /// Convert numeric value to CartCommand
-    #[expect(unused)]
-    pub fn from_value(val: u32) -> Self {
+    pub const fn from_value(val: u32) -> Self {
         match val {
-            0 => CartCommand::Empty,
-            1 => CartCommand::Dummy,
-            2 => CartCommand::GetHeader,
-            3 => CartCommand::GetChipId,
-            4 => CartCommand::EnableKey1,
-            5 => CartCommand::EnableKey2,
-            6 => CartCommand::GetSecureAreaBlock,
-            7 => CartCommand::ReadRom,
-            _ => CartCommand::Empty,
+            1 => Self::Dummy,
+            2 => Self::GetHeader,
+            3 => Self::GetChipId,
+            4 => Self::EnableKey1,
+            5 => Self::EnableKey2,
+            6 => Self::GetSecureAreaBlock,
+            7 => Self::ReadRom,
+            _ => Self::Empty,
         }
     }
 }
@@ -63,17 +61,15 @@ pub enum AuxSpiCommand {
 
 impl AuxSpiCommand {
     /// Convert numeric value to AuxSpiCommand
-    #[expect(unused)]
-    pub fn from_value(val: u32) -> Self {
+    pub const fn from_value(val: u32) -> Self {
         match val {
-            0 => AuxSpiCommand::Empty,
-            1 => AuxSpiCommand::WriteMem,
-            2 => AuxSpiCommand::ReadMem,
-            3 => AuxSpiCommand::ReadStatusReg,
-            4 => AuxSpiCommand::PageWrite,
-            5 => AuxSpiCommand::WriteHi,
-            6 => AuxSpiCommand::ReadHi,
-            _ => AuxSpiCommand::Empty,
+            1 => Self::WriteMem,
+            2 => Self::ReadMem,
+            3 => Self::ReadStatusReg,
+            4 => Self::PageWrite,
+            5 => Self::WriteHi,
+            6 => Self::ReadHi,
+            _ => Self::Empty,
         }
     }
 }
@@ -105,8 +101,8 @@ pub struct RegRomCtrl {
 
 impl RegRomCtrl {
     /// Create new ROM control register
-    pub fn new() -> Self {
-        RegRomCtrl {
+    pub const fn new() -> Self {
+        Self {
             key1_gap: 0,
             key2_data_enabled: false,
             key2_apply_seed: false,
@@ -121,7 +117,7 @@ impl RegRomCtrl {
     }
 
     /// Get register value as 32-bit word
-    pub fn get(&self) -> u32 {
+    pub const fn get(&self) -> u32 {
         let mut value = 0;
         value |= self.key1_gap;
         if self.key2_data_enabled {
@@ -155,8 +151,7 @@ impl RegRomCtrl {
     }
 
     /// Set register value from 32-bit word
-    #[expect(unused)]
-    pub fn set(&mut self, value: u32) {
+    pub const fn set(&mut self, value: u32) {
         self.key1_gap = value & 0x3F;
         self.key2_data_enabled = (value & (1 << 6)) != 0;
         self.key2_apply_seed = (value & (1 << 7)) != 0;
@@ -195,8 +190,8 @@ pub struct RegAuxSpiCnt {
 
 impl RegAuxSpiCnt {
     /// Create new auxiliary SPI control register
-    pub fn new() -> Self {
-        RegAuxSpiCnt {
+    pub const fn new() -> Self {
+        Self {
             bandwidth: 0,
             hold_chipselect: false,
             is_busy: false,
@@ -207,9 +202,8 @@ impl RegAuxSpiCnt {
     }
 
     /// Get register value as 16-bit halfword
-    #[expect(unused)]
-    pub fn get(&self) -> u16 {
-        let mut value = 0u16;
+    pub const fn get(&self) -> u16 {
+        let mut value = 0_u16;
         value |= (self.bandwidth & 0x3) as u16;
         if self.hold_chipselect {
             value |= 1 << 3;
@@ -230,8 +224,7 @@ impl RegAuxSpiCnt {
     }
 
     /// Set register value from 16-bit halfword
-    #[expect(unused)]
-    pub fn set(&mut self, value: u16) {
+    pub const fn set(&mut self, value: u16) {
         self.bandwidth = (value & 0x3) as u32;
         self.hold_chipselect = (value & (1 << 3)) != 0;
         self.serial_transfer = (value & (1 << 13)) != 0;
@@ -253,48 +246,48 @@ pub struct NDSCart {
     /// KEY1 encryption buffer (0x1048 bytes)
     pub key1_buffer: Vec<u8>,
     /// Encryption mode (0=normal, 1=encrypted)
-    pub(crate) cmd_encrypt_mode: u32,
+    pub cmd_encrypt_mode: u32,
 
     /// ROM data
-    pub(crate) rom: Vec<u8>,
+    pub rom: Vec<u8>,
     /// Save database
-    pub(crate) save_database: Vec<u8>,
+    pub save_database: Vec<u8>,
     /// ROM filename
-    pub(crate) rom_name: String,
+    pub rom_name: String,
     /// SPI save data (8MB)
-    pub(crate) spi_save: Vec<u8>,
+    pub spi_save: Vec<u8>,
     /// Save size in bytes
-    pub(crate) save_size: usize,
+    pub save_size: usize,
     /// Save type
-    pub(crate) save_type: u32,
+    pub save_type: u32,
     /// Save data has been modified
-    pub(crate) dirty_save: bool,
+    pub dirty_save: bool,
     /// Database size
-    pub(crate) database_size: u64,
+    pub database_size: u64,
     /// ROM size
-    pub(crate) rom_size: u64,
+    pub rom_size: u64,
 
     /// Command buffer
-    pub(crate) command_buffer: [u8; 8],
+    pub command_buffer: [u8; 8],
     /// Data output from cartridge
-    pub(crate) data_output: u32,
+    pub data_output: u32,
     /// Current index in ROM data
-    pub(crate) rom_data_index: usize,
+    pub rom_data_index: usize,
     /// Current command being executed
-    pub(crate) command_id: CartCommand,
+    pub command_id: CartCommand,
 
     /// Secure area block index
-    pub(crate) secure_area_index: u32,
+    pub secure_area_index: u32,
 
     /// Cycles remaining for current operation
-    pub(crate) cycles_left: i32,
+    pub cycles_left: i32,
     /// Bytes remaining to transfer
-    pub(crate) bytes_left: i32,
+    pub bytes_left: i32,
 
     /// ROM control register
-    pub(crate) romctrl: RegRomCtrl,
+    pub romctrl: RegRomCtrl,
     /// Auxiliary SPI control register
-    pub(crate) auxspicnt: RegAuxSpiCnt,
+    pub auxspicnt: RegAuxSpiCnt,
     /// Current SPI command
     spi_cmd: AuxSpiCommand,
     /// SPI data byte
@@ -312,7 +305,7 @@ pub struct NDSCart {
     encrypt_seed1: u64,
 
     /// Keycode for encryption (3 words)
-    pub(crate) keycode: [u32; 3],
+    pub keycode: [u32; 3],
 }
 
 impl Default for NDSCart {
@@ -324,19 +317,19 @@ impl Default for NDSCart {
 impl NDSCart {
     /// Create new cartridge controller
     pub fn new() -> Self {
-        NDSCart {
-            key1_buffer: vec![0u8; 0x1048],
+        Self {
+            key1_buffer: vec![0_u8; 0x1048],
             cmd_encrypt_mode: 0,
             rom: Vec::new(),
             save_database: Vec::new(),
             rom_name: String::new(),
-            spi_save: vec![0u8; 1024 * 1024 * 8],
+            spi_save: vec![0_u8; 1024 * 1024 * 8],
             save_size: 0,
             save_type: 0,
             dirty_save: false,
             database_size: 0,
             rom_size: 0,
-            command_buffer: [0u8; 8],
+            command_buffer: [0_u8; 8],
             data_output: 0,
             rom_data_index: 0,
             command_id: CartCommand::Empty,
@@ -352,7 +345,7 @@ impl NDSCart {
             spi_write_enabled: false,
             encrypt_seed0: 0,
             encrypt_seed1: 0,
-            keycode: [0u32; 3],
+            keycode: [0_u32; 3],
         }
     }
 
@@ -386,6 +379,8 @@ impl NDSCart {
     }
 
     /// Loads save database file into memory.
+    ///
+    /// # Errors
     pub fn load_database(&mut self, file_name: &Path) -> Result<(), CartridgeError> {
         use std::fs::File;
         use std::io::Read;
@@ -458,6 +453,8 @@ impl NDSCart {
     // pub fn load_rom( &mut self, file_name: &Path, is_direct_boot_enabled: bool,) -> Result<(), CartridgeError>;
 
     /// Writes save data to disk if modified.
+    ///
+    /// # Errors
     pub fn save_check(&mut self) -> Result<(), CartridgeError> {
         if !self.dirty_save {
             return Ok(());
@@ -497,7 +494,7 @@ impl NDSCart {
 
     /// Reads raw byte from ROM without timing effects.
     pub fn direct_read(&self, address: u32) -> u8 {
-        self.rom.get(address as usize).copied().unwrap_or_else(|| {
+        self.rom.get(address as usize).copied().unwrap_or({
             #[cfg(feature = "tracing")]
             tracing::warn!("Direct read out of bounds: {address:08X}");
             0
@@ -519,12 +516,12 @@ impl NDSCart {
     }
 
     /// Returns ROM CTRL register value.
-    pub fn get_romctrl(&self) -> u32 {
+    pub const fn get_romctrl(&self) -> u32 {
         self.romctrl.get()
     }
 
     /// Returns cartridge output register value.
-    pub fn get_output(&mut self) -> u32 {
+    pub const fn get_output(&mut self) -> u32 {
         if self.romctrl.word_ready {
             self.romctrl.word_ready = false;
             self.cycles_left = 8;
@@ -539,19 +536,19 @@ impl NDSCart {
     }
 
     /// Reads AUXSPIDATA register value.
-    pub fn read_auxspidata(&self) -> u8 {
+    pub const fn read_auxspidata(&self) -> u8 {
         self.spi_data
     }
 
     /// Sets high byte of AUXSPICNT register.
-    pub fn set_hi_auxspicnt(&mut self, value: u8) {
+    pub const fn set_hi_auxspicnt(&mut self, value: u8) {
         self.auxspicnt.serial_transfer = (value & (1 << 5)) != 0;
         self.auxspicnt.irq_after_transfer = (value & (1 << 6)) != 0;
         self.auxspicnt.enabled = (value & (1 << 7)) != 0;
     }
 
     /// Sets AUXSPICNT register value.
-    pub fn set_auxspicnt(&mut self, value: u16) {
+    pub const fn set_auxspicnt(&mut self, value: u16) {
         self.auxspicnt.bandwidth = (value & 0x3) as u32;
         self.auxspicnt.hold_chipselect = (value & (1 << 6)) != 0;
         self.set_hi_auxspicnt((value >> 8) as u8);
@@ -559,6 +556,7 @@ impl NDSCart {
 
     /// Handles AUX SPI data write and updates SPI state machine.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
+    #[expect(clippy::cognitive_complexity)]
     pub fn set_auxspidata(&mut self, value: u8) {
         if self.spi_cmd == AuxSpiCommand::Empty {
             self.spi_params = 0;
@@ -777,6 +775,8 @@ impl NDSCart {
     }
 
     /// Updates ROMCTRL register and may trigger a new cartridge transfer.
+    ///
+    /// # Panics
     pub fn set_romctrl(&mut self, value: u32) {
         // #[cfg(feature = "tracing")]
         // tracing::debug!("Setting ROMCTRL: {value:08X}");
@@ -809,12 +809,13 @@ impl NDSCart {
             if self.cmd_encrypt_mode == 1 {
                 self.cycles_left += self.romctrl.key1_gap as i32;
 
-                let mut data = [0u8; 8];
+                let mut data = [0_u8; 8];
                 for (data, buffer) in data.iter_mut().zip(self.command_buffer) {
                     *data = buffer;
                 }
 
                 // To [u32; 2]
+                #[expect(clippy::unwrap_used)]
                 let mut data = [
                     u32::from_le_bytes(data[0..4].try_into().unwrap()),
                     u32::from_le_bytes(data[4..8].try_into().unwrap()),
@@ -828,7 +829,7 @@ impl NDSCart {
                 // );
 
                 // to bytes
-                let mut out = [0u8; 8];
+                let mut out = [0_u8; 8];
                 out[0..4].copy_from_slice(&data[0].to_le_bytes());
                 out[4..8].copy_from_slice(&data[1].to_le_bytes());
 
@@ -845,7 +846,7 @@ impl NDSCart {
                     self.command_id = CartCommand::GetHeader;
                     self.rom_data_index = 0;
                 }
-                0x90 => self.command_id = CartCommand::GetChipId,
+                0x90 | 0xB8 => self.command_id = CartCommand::GetChipId,
                 0x3C => self.command_id = CartCommand::EnableKey1,
                 0xB7 => {
                     self.command_id = CartCommand::ReadRom;
@@ -861,7 +862,6 @@ impl NDSCart {
                         tracing::error!("ROM read bytes_left > 0x1000");
                     }
                 }
-                0xB8 => self.command_id = CartCommand::GetChipId,
 
                 _ => match self.command_buffer[0] & 0xF0 {
                     0x40 => self.command_id = CartCommand::Dummy,
@@ -881,21 +881,21 @@ impl NDSCart {
     }
 
     /// Sets low 32 bits of KEY2 seed 0.
-    pub fn set_lo_key2_seed0(&mut self, word: u32) {
+    pub const fn set_lo_key2_seed0(&mut self, word: u32) {
         self.encrypt_seed0 >>= 32;
         self.encrypt_seed0 <<= 32;
         self.encrypt_seed0 |= word as u64;
     }
 
     /// Sets low 32 bits of KEY2 seed 1.
-    pub fn set_lo_key2_seed1(&mut self, word: u32) {
+    pub const fn set_lo_key2_seed1(&mut self, word: u32) {
         self.encrypt_seed1 >>= 32;
         self.encrypt_seed1 <<= 32;
         self.encrypt_seed1 |= word as u64;
     }
 
     /// Sets high 32 bits of KEY2 seed 0.
-    pub fn set_hi_key2_seed0(&mut self, word: u32) {
+    pub const fn set_hi_key2_seed0(&mut self, word: u32) {
         let word = word & 0x7F;
         self.encrypt_seed0 <<= 32;
         self.encrypt_seed0 >>= 32;
@@ -903,7 +903,7 @@ impl NDSCart {
     }
 
     /// Sets high 32 bits of KEY2 seed 1.
-    pub fn set_hi_key2_seed1(&mut self, word: u32) {
+    pub const fn set_hi_key2_seed1(&mut self, word: u32) {
         let word = word & 0x7F;
         self.encrypt_seed1 <<= 32;
         self.encrypt_seed1 >>= 32;
@@ -934,7 +934,7 @@ impl NDSCart {
     /// Performs KEY1 encryption on data buffer.
     #[must_use]
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "trace"))]
-    pub(crate) fn key1_encrypt(&mut self, mut y: u32, mut x: u32) -> [u32; 2] {
+    pub fn key1_encrypt(&mut self, mut y: u32, mut x: u32) -> [u32; 2] {
         // #[cfg(feature = "tracing")]
         // tracing::info!(?y, ?x);
 
@@ -945,7 +945,7 @@ impl NDSCart {
             x ^= self.read_keybuf_u32(0x212 + ((z >> 8) & 0xFF));
             x = x.wrapping_add(self.read_keybuf_u32(0x312 + (z & 0xFF)));
             x ^= y;
-            y = z as u32
+            y = z as u32;
         }
 
         [
@@ -955,7 +955,7 @@ impl NDSCart {
     }
 
     /// Performs KEY1 decryption on data buffer.
-    fn key1_decrypt(&mut self, data: &mut [u32]) {
+    fn key1_decrypt(&self, data: &mut [u32]) {
         let mut y = data[0];
         let mut x = data[1];
 
@@ -976,7 +976,7 @@ impl NDSCart {
     }
 
     /// Applies keycode transformation.
-    pub(crate) fn apply_keycode(&mut self, modulo: u32) {
+    pub fn apply_keycode(&mut self, modulo: u32) {
         {
             let y = self.keycode[1];
             let x = self.keycode[2];
@@ -1017,7 +1017,7 @@ impl NDSCart {
     // fn init_keycode(&mut self, _idcode: u32, _level: i32, _modulo: u32) ;
 }
 
-fn byteswap_word(word: u32) -> u32 {
+const fn byteswap_word(word: u32) -> u32 {
     let mut result = 0;
     result |= word >> 24;
     result |= (word & 0xFF0000) >> 8;

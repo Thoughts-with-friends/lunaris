@@ -17,23 +17,23 @@ pub enum Divisor {
 impl Divisor {
     /// Get the divisor value as integer
     #[inline]
-    pub fn cycles_left(self) -> i32 {
+    pub const fn cycles_left(self) -> i32 {
         match self {
-            Divisor::F1 => 1,
-            Divisor::F64 => 64,
-            Divisor::F256 => 256,
-            Divisor::F1024 => 1024,
+            Self::F1 => 1,
+            Self::F64 => 64,
+            Self::F256 => 256,
+            Self::F1024 => 1024,
         }
     }
 
     /// Convert numeric value to Divisor
     #[inline]
-    pub fn from_u32(val: u32) -> Option<Self> {
+    pub const fn from_u32(val: u32) -> Option<Self> {
         Some(match val & 0x3 {
-            0 => Divisor::F1,
-            1 => Divisor::F64,
-            2 => Divisor::F256,
-            3 => Divisor::F1024,
+            0 => Self::F1,
+            1 => Self::F64,
+            2 => Self::F256,
+            3 => Self::F1024,
             _ => return None,
         })
     }
@@ -60,8 +60,8 @@ pub struct TimerReg {
 
 impl TimerReg {
     /// Create new timer register
-    pub fn new() -> Self {
-        TimerReg {
+    pub const fn new() -> Self {
+        Self {
             counter: 0,
             reload_value: 0,
             cycles_left: 0,
@@ -73,8 +73,8 @@ impl TimerReg {
     }
 
     /// Get control register value
-    pub fn get_control(&self) -> u16 {
-        let mut value = 0u16;
+    pub const fn get_control(&self) -> u16 {
+        let mut value = 0_u16;
         value |= (self.clock_div as u16) & 0x3;
         if self.count_up_timing {
             value |= 1 << 2;
@@ -90,16 +90,10 @@ impl TimerReg {
 
     /// Set control register value
     #[inline]
-    fn set_control(&mut self, value: u16) {
-        match Divisor::from_u32((value & 0x3) as u32) {
-            Some(divisor) => {
-                self.clock_div = divisor;
-                self.cycles_left = divisor.cycles_left();
-            }
-            None => {
-                #[cfg(feature = "tracing")]
-                tracing::error!("Invalid NDSTiming Divisor value: None")
-            }
+    const fn set_control(&mut self, value: u16) {
+        if let Some(divisor) = Divisor::from_u32((value & 0x3) as u32) {
+            self.clock_div = divisor;
+            self.cycles_left = divisor.cycles_left();
         };
         self.count_up_timing = (value & (1 << 2)) != 0;
         self.irq_on_overflow = (value & (1 << 6)) != 0;
@@ -123,10 +117,10 @@ impl Default for TimerReg {
 #[derive(Debug)]
 pub struct NDSTiming {
     /// Timer clock divisor values for each of 4 timers
-    pub(crate) timer_clock_divs: [i32; 4],
+    pub timer_clock_divs: [i32; 4],
 
     /// Timer registers (0-3 for ARM9, 4-7 for ARM7)
-    pub(crate) timers: [TimerReg; 8],
+    pub timers: [TimerReg; 8],
 }
 
 impl Default for NDSTiming {
@@ -137,8 +131,8 @@ impl Default for NDSTiming {
 
 impl NDSTiming {
     /// Create new timing system
-    pub fn new() -> Self {
-        NDSTiming {
+    pub const fn new() -> Self {
+        Self {
             timer_clock_divs: [1, 64, 256, 1024],
             timers: [TimerReg::new(); 8],
         }
@@ -153,7 +147,7 @@ impl NDSTiming {
     }
 
     /// Read timer counter low byte (0x4000100 + index*4)
-    pub fn read_lo(&self, index: usize) -> u16 {
+    pub const fn read_lo(&self, index: usize) -> u16 {
         if index < 8 {
             self.timers[index].counter
         } else {
@@ -164,6 +158,7 @@ impl NDSTiming {
     }
 
     /// Read timer control high byte
+    #[expect(clippy::missing_const_for_fn)]
     pub fn read_hi(&self, index: usize) -> u16 {
         if index < 8 {
             self.timers[index].get_control()
@@ -175,18 +170,18 @@ impl NDSTiming {
     }
 
     /// Write 32-bit word to timer
-    pub fn write(&mut self, value: u32, index: usize) {
+    pub const fn write(&mut self, value: u32, index: usize) {
         self.write_lo((value & 0xFFFF) as u16, index);
         self.write_hi((value >> 16) as u16, index);
     }
 
     /// Write counter value (low 16 bits)
-    pub fn write_lo(&mut self, value: u16, index: usize) {
+    pub const fn write_lo(&mut self, value: u16, index: usize) {
         self.timers[index].reload_value = value;
     }
 
     /// Write control register (high 16 bits)
-    pub fn write_hi(&mut self, value: u16, index: usize) {
+    pub const fn write_hi(&mut self, value: u16, index: usize) {
         let timer = &mut self.timers[index];
         timer.set_control(value);
     }

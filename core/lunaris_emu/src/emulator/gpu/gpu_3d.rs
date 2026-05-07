@@ -4,19 +4,19 @@
 //! gpu3d.hpp
 
 use crate::Emulator;
-use crate::interrupts::Interrupt;
 use lunaris_ds_gpu::gpu_3d::consts::{CMD_PARAM_AMOUNTS, SCANLINES};
 use lunaris_ds_gpu::gpu_3d::structs::GxCommand;
+use lunaris_ds_interrupts::Interrupt;
 
 impl Emulator {
     /// - Instead of
     pub fn check_fifo_irq(&mut self) {
         match self.gpu.engine_3d.gxstat.gxfifo_irq_stat {
             1 if self.gpu.engine_3d.gxfifo.len() < 128 => {
-                self.request_interrupt9(Interrupt::GeometryFifo)
+                self.request_interrupt9(Interrupt::GeometryFifo);
             }
             2 if self.gpu.engine_3d.gxfifo.is_empty() => {
-                self.request_interrupt9(Interrupt::GeometryFifo)
+                self.request_interrupt9(Interrupt::GeometryFifo);
             }
             _ => {} //Never send IRQ requests
         }
@@ -79,16 +79,15 @@ impl Emulator {
         #[cfg(feature = "tracing")]
         tracing::trace!(?cmd.command, ?cmd.param);
 
-        match self.gpu.engine_3d.gxfifo.is_empty() && self.gpu.engine_3d.gxpipe.len() < 4 {
-            true => self.gpu.engine_3d.gxpipe.push_back(cmd),
-            false => {
-                if self.gpu.engine_3d.gxfifo.len() >= 256 {
-                    while self.gpu.engine_3d.gxfifo.len() >= 256 {
-                        self.exec_command();
-                    }
+        if self.gpu.engine_3d.gxfifo.is_empty() && self.gpu.engine_3d.gxpipe.len() < 4 {
+            self.gpu.engine_3d.gxpipe.push_back(cmd);
+        } else {
+            if self.gpu.engine_3d.gxfifo.len() >= 256 {
+                while self.gpu.engine_3d.gxfifo.len() >= 256 {
+                    self.exec_command();
                 }
-                self.gpu.engine_3d.gxfifo.push_back(cmd);
             }
+            self.gpu.engine_3d.gxfifo.push_back(cmd);
         }
     }
 

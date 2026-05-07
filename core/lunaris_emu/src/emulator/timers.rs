@@ -1,5 +1,5 @@
 use crate::emulator::Emulator;
-use crate::interrupts::Interrupt;
+use lunaris_ds_interrupts::Interrupt;
 
 impl Emulator {
     /// Handle timer overflow

@@ -17,8 +17,8 @@ pub struct Alarm {
 
 impl Alarm {
     /// Create new alarm
-    pub fn new() -> Self {
-        Alarm {
+    pub const fn new() -> Self {
+        Self {
             day_of_week: 0,
             hour: 0,
             minute: 0,
@@ -33,7 +33,7 @@ impl Default for Alarm {
 }
 
 // https://stackoverflow.com/questions/1408361/unsigned-integer-to-bcd-conversion
-fn byte_to_bcd(byte: u8) -> u8 {
+const fn byte_to_bcd(byte: u8) -> u8 {
     (byte / 10 * 16) + (byte % 10)
 }
 
@@ -94,8 +94,8 @@ impl Default for RealTimeClock {
 
 impl RealTimeClock {
     /// Create new RTC
-    pub fn new() -> Self {
-        RealTimeClock {
+    pub const fn new() -> Self {
+        Self {
             stat1_reg: 0,
             stat2_reg: 0,
 
@@ -112,7 +112,7 @@ impl RealTimeClock {
             alarm2: Alarm::new(),
 
             io_reg: 0,
-            internal_output: [0u8; 7],
+            internal_output: [0_u8; 7],
             command: 0,
             input: 0,
             input_bit_num: 0,
@@ -123,7 +123,7 @@ impl RealTimeClock {
     }
 
     /// Initialize RTC with default values
-    pub fn init(&mut self) {
+    pub const fn init(&mut self) {
         // Initialize to default date/time (2000-01-01 00:00:00)
 
         //Place a hardcoded date into the RTC
@@ -230,13 +230,13 @@ impl RealTimeClock {
                         self.alarm1.minute = self.input as u8;
                     }
                 }
-                2 => {} // do nothing
+                #[allow(clippy::match_same_arms)]
+                2 => {} // do nothing for now
+                #[allow(clippy::match_same_arms)]
                 3 => {} // TODO: clock adjustment
 
-                4 => {
-                    if self.input_index == 1 {
-                        self.stat2_reg = self.input as u8;
-                    }
+                4 if self.input_index == 1 => {
+                    self.stat2_reg = self.input as u8;
                 }
 
                 5 => match self.input_index {
@@ -260,7 +260,7 @@ impl RealTimeClock {
     }
 
     /// Read from RTC
-    pub fn read(&self) -> u16 {
+    pub const fn read(&self) -> u16 {
         self.io_reg
     }
 

@@ -930,8 +930,9 @@ impl ArmCpu {
 
         value << shift
     }
+    #[expect(clippy::needless_pass_by_ref_mut)]
     pub fn lsl_32(&mut self, _value: u32, _flags: bool) -> u32 {
-        todo!()
+        unimplemented!("")
     }
 
     pub const fn lsr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {

@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::Emulator;
-use crate::interrupts::Interrupt;
+use lunaris_ds_interrupts::Interrupt;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
     /// ARM7 read 32-bit word
     ///
     /// FIXME: return Result?
+    ///
+    /// # Panics
+    #[expect(clippy::unwrap_used)]
     pub fn arm7_read_word(&mut self, address: u32) -> u32 {
         match address {
             // Main RAM
@@ -27,7 +30,7 @@ impl Emulator {
                 u32::from_le_bytes(self.arm7_wram[off..off + 4].try_into().unwrap())
             }
 
-            0x04000120 => 0,
+            0x04000120 | 0x04000400..0x04000500 => 0,
             0x04000180 => self.ipc_sync_nds7.read().into(),
             0x040001A4 => self.cart.get_romctrl(),
             0x040001C0 => (self.spi.get_spicnt() as u32) | (self.spi.read_spidata() as u32) << 16,
@@ -54,7 +57,6 @@ impl Emulator {
                 let end = (address + 4) as usize;
                 u32::from_le_bytes(self.arm7_bios[start..end].try_into().unwrap())
             }
-            0x04000400..0x04000500 => 0,
             0x06000000..0x07000000 => self.gpu.read_arm7_u32(address),
             GBA_ROM_START.. => 0xFFFF_FFFF,
 
@@ -67,6 +69,8 @@ impl Emulator {
     }
 
     /// ARM7 read 16-bit halfword
+    /// # Panics
+    #[expect(clippy::unwrap_used, clippy::match_same_arms)]
     pub fn arm7_read_halfword(&self, address: u32) -> u16 {
         match address {
             // BIOS (0x00000000..0x00003FFF)
@@ -207,8 +211,7 @@ impl Emulator {
             // Direct IO byte reads
             0x04000138 => self.rtc.read() as u8,
             0x040001C2 => self.spi.read_spidata(),
-            0x04000218 => 0, // DSi IE2
-            0x0400021C => 0, // DSi IF2
+            0x04000218 | 0x0400021C => 0, // DSi IE2 | DSi IF2
             0x04000241 => self.wram_cnt & 0x3,
             0x04000300 => self.postflg7,
             0x04000501 => (self.spu.get_soundcnt() >> 8) as u8,

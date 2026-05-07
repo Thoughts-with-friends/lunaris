@@ -8,6 +8,7 @@ use lunaris_ds_gpu::gpu_3d::consts::{CMD_CYCLE_AMOUNTS, CMD_PARAM_AMOUNTS};
 use lunaris_ds_gpu::gpu_3d::structs::Matrix;
 
 impl Emulator {
+    #[expect(clippy::cognitive_complexity)]
     pub fn exec_command(&mut self) {
         if let Some(cmd) = self.read_command() {
             let param = cmd.param;
@@ -223,7 +224,7 @@ impl Emulator {
                         }
 
                         match self.gpu.engine_3d.mtx_mode {
-                            1 => {}
+                            1 | 3 => {}
                             2 => {
                                 self.gpu.engine_3d.vector_mtx.m[0][0] =
                                     self.gpu.engine_3d.cmd_params[0] as i32;
@@ -253,7 +254,6 @@ impl Emulator {
                                 self.gpu.engine_3d.vector_mtx.m[3][2] =
                                     self.gpu.engine_3d.cmd_params[11] as i32;
                             }
-                            3 => {}
                             _ => {
                                 #[cfg(feature = "tracing")]
                                 tracing::error!(
@@ -558,11 +558,11 @@ impl Emulator {
                     }
                     0x50 => {
                         let param = self.gpu.engine_3d.cmd_params[0];
-                        self.gpu.engine_3d.swap_buffers(param)
+                        self.gpu.engine_3d.swap_buffers(param);
                     }
                     0x60 => {
                         let param = self.gpu.engine_3d.cmd_params[0];
-                        self.gpu.engine_3d.viewport(param)
+                        self.gpu.engine_3d.viewport(param);
                     }
                     0x70 => self.gpu.engine_3d.box_test(),
                     0x72 => self.gpu.engine_3d.vec_test(),

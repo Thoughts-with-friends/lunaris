@@ -5,7 +5,7 @@
 //! Direct Memory Access (DMA) controller for Nintendo DS
 //! Manages high-speed memory transfers between memory regions
 use crate::emulator::Emulator;
-use crate::interrupts::Interrupt;
+use lunaris_ds_interrupts::Interrupt;
 
 impl Emulator {
     /// Handle scheduler event
@@ -127,7 +127,7 @@ impl Emulator {
                 let active_dma = &mut self.dma.dmas[event_id as usize];
                 match active_dma.cnt.dest_control {
                     0 | 3 => {
-                        active_dma.internal_dest = active_dma.internal_dest.wrapping_add(offset)
+                        active_dma.internal_dest = active_dma.internal_dest.wrapping_add(offset);
                     }
                     1 => active_dma.internal_dest = active_dma.internal_dest.wrapping_sub(offset),
                     2 => {}
@@ -143,10 +143,12 @@ impl Emulator {
                 let active_dma = &mut self.dma.dmas[event_id as usize];
                 match active_dma.cnt.source_control {
                     0 => {
-                        active_dma.internal_source = active_dma.internal_source.wrapping_add(offset)
+                        active_dma.internal_source =
+                            active_dma.internal_source.wrapping_add(offset);
                     }
                     1 => {
-                        active_dma.internal_source = active_dma.internal_source.wrapping_sub(offset)
+                        active_dma.internal_source =
+                            active_dma.internal_source.wrapping_sub(offset);
                     }
                     2 => {}
                     v => {
@@ -175,6 +177,7 @@ impl Emulator {
 
     /// Placeholder for DMA event processing.
     /// Currently does nothing.
+    /// # Panics
     pub fn dma_event(&mut self, _index: u32) {
         // let active_dma = &self.dma.dmas[index as usize];
         // while active_dma.internal_len > active_dma.length {

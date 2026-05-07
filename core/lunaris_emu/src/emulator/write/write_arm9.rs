@@ -1,8 +1,7 @@
-use crate::interrupts::Interrupt;
-
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
+use lunaris_ds_interrupts::Interrupt;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
@@ -15,6 +14,7 @@ impl Emulator {
     /// - DMA registers
     /// - IPC, FIFO
     /// - Cartridge AUX SPI registers
+    #[expect(clippy::match_same_arms)]
     pub fn arm9_write_word(&mut self, address: u32, word: u32) {
         // GPU / DMA / IPC / cartridge / I/O registers
         match address {
@@ -158,6 +158,7 @@ impl Emulator {
     /// # Parameters
     /// - `address`: 32-bit ARM9 memory address to write to.
     /// - `halfword`: 16-bit value to write.
+    #[expect(clippy::match_same_arms)]
     pub fn arm9_write_halfword(&mut self, address: u32, halfword: u16) {
         // IO registers
         match address {

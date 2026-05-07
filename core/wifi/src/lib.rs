@@ -35,8 +35,8 @@ impl Default for WiFi {
 
 impl WiFi {
     /// Create new WiFi controller
-    pub fn new() -> Self {
-        WiFi {
+    pub const fn new() -> Self {
+        Self {
             w_power_us: 0,
             w_bb_write: 0,
             w_bb_read: 0,
@@ -49,21 +49,25 @@ impl WiFi {
     }
 
     /// Perform baseband read operation
-    fn bb_read(&mut self, index: u16) {
+    const fn bb_read(&mut self, index: u16) {
         match index {
             0 => self.w_bb_read = 0x6D,
             _ => self.w_bb_read = 0,
         }
     }
 
-    /// Perform baseband write operation
+    /// Perform base band write operation
+    #[expect(
+        clippy::missing_const_for_fn,
+        clippy::needless_pass_by_ref_mut,
+        clippy::unused_self
+    )]
     fn bb_write(&mut self, index: u16) {
         let _ = index;
-        todo!()
     }
 
     /// Set power control register
-    pub fn set_w_power_us(&mut self, value: u16) {
+    pub const fn set_w_power_us(&mut self, value: u16) {
         self.w_power_us = value;
     }
 
@@ -81,37 +85,37 @@ impl WiFi {
     }
 
     /// Set baseband write register
-    pub fn set_w_bb_write(&mut self, value: u16) {
+    pub const fn set_w_bb_write(&mut self, value: u16) {
         self.w_bb_write = value;
     }
 
     /// Set baseband mode register
-    pub fn set_w_bb_mode(&mut self, value: u16) {
+    pub const fn set_w_bb_mode(&mut self, value: u16) {
         self.w_bb_mode = value;
     }
 
     /// Set baseband power register
-    pub fn set_w_bb_power(&mut self, value: u16) {
+    pub const fn set_w_bb_power(&mut self, value: u16) {
         self.w_bb_power = value;
     }
 
     /// Set RF control register
-    pub fn set_w_rf_cnt(&mut self, value: u16) {
+    pub const fn set_w_rf_cnt(&mut self, value: u16) {
         self.w_rf_cnt = value;
     }
 
     /// Check if RF is busy
-    pub fn get_w_rf_busy(&self) -> bool {
+    pub const fn get_w_rf_busy(&self) -> bool {
         self.rf_busy
     }
 
     /// Get baseband read register
-    pub fn get_w_bb_read(&self) -> u16 {
+    pub const fn get_w_bb_read(&self) -> u16 {
         self.w_bb_read
     }
 
     /// Check if baseband is busy
-    pub fn get_w_bb_busy(&self) -> bool {
+    pub const fn get_w_bb_busy(&self) -> bool {
         self.bb_busy
     }
 }

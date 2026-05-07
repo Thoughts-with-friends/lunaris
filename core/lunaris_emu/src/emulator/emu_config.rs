@@ -74,7 +74,7 @@ pub struct KeyInputReg {
 impl KeyInputReg {
     /// Get the current key input register value (bit-packed format)
     pub fn get_value(&self) -> u16 {
-        let mut value = 0u16;
+        let mut value = 0_u16;
         if self.button_a {
             value |= 0x0001;
         }
@@ -135,7 +135,7 @@ pub struct ExtKeyInReg {
 impl ExtKeyInReg {
     /// Get the extended key input register value
     pub fn get_value(&self) -> u16 {
-        let mut value = 0u16;
+        let mut value = 0_u16;
         if self.button_x {
             value |= 0x0001;
         }
@@ -172,7 +172,7 @@ pub struct PowCnt2Reg {
 impl PowCnt2Reg {
     /// Get the power control register value
     pub fn get_value(&self) -> u16 {
-        let mut value = 0u16;
+        let mut value = 0_u16;
         if self.speakers {
             value |= 0x0001;
         }

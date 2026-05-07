@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
-use crate::interrupts::Interrupt;
+use lunaris_ds_interrupts::Interrupt;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
+    /// # Panics
+    #[expect(clippy::unwrap_used)]
     pub fn arm9_read_word(&mut self, address: u32) -> u32 {
         match address {
             // ARM9 BIOS
@@ -139,6 +141,9 @@ impl Emulator {
     /// - VRAM for OBJ and LCDC
     /// - I/O registers (GPU, DMA, timers, input, etc.)
     /// - Cartridge SPI and ROM
+    ///
+    /// # Panics
+    #[expect(clippy::unwrap_used)]
     pub fn arm9_read_halfword(&self, address: u32) -> u16 {
         // I/O registers
         match address {

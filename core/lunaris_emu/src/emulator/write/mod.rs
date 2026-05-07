@@ -1,3 +1,6 @@
+mod write_arm7;
+mod write_arm9;
+
 use lunaris_ds_mem_const::{DTCM_MASK, ITCM_MASK};
 
 use crate::cpu::arm_cpu::CpuType;
@@ -32,7 +35,7 @@ impl Emulator {
                 self.arm9_write_word(address, word);
             }
         } else {
-            self.arm7_write_word(address, word)
+            self.arm7_write_word(address, word);
         }
     }
 
@@ -50,7 +53,7 @@ impl Emulator {
                 self.arm9_write_halfword(address, halfword);
             }
         } else {
-            self.arm7_write_halfword(address, halfword)
+            self.arm7_write_halfword(address, halfword);
         }
     }
 
@@ -68,7 +71,7 @@ impl Emulator {
                 self.arm9_write_byte(address, byte);
             }
         } else {
-            self.arm7_write_byte(address, byte)
+            self.arm7_write_byte(address, byte);
         }
     }
 }

@@ -12,13 +12,9 @@ mod gpu;
 mod interrupt;
 mod load;
 mod read;
-mod read_arm7;
-mod read_arm9;
 mod runner;
 mod timers;
 mod write;
-mod write_arm7;
-mod write_arm9;
 
 use crate::cpu::arm_cpu::ArmCpu;
 use crate::cpu::coprocessor_15::Cp15;
@@ -27,16 +23,16 @@ use lunaris_ds_gpu::gpu_root::{Gpu, register::SchedulerEvent};
 use lunaris_ds_mem_const::*;
 use std::collections::VecDeque;
 
-use crate::cartridge::NDSCart;
 use crate::cpu::arm_cpu::CpuType;
 use crate::dma::NDSDma;
-use crate::interrupts::InterruptRegs;
-use crate::ipc::{IpcFifo, IpcSync};
-use crate::rtc::RealTimeClock;
 use crate::spi::SPIBus;
-use crate::timers::NDSTiming;
-use crate::wifi::WiFi;
 use emu_config::{BiosMem, Config, ExtKeyInReg, KeyInputReg, PowCnt2Reg};
+use lunaris_ds_cartridge::NDSCart;
+use lunaris_ds_interrupts::InterruptRegs;
+use lunaris_ds_ipc::{IpcFifo, IpcSync};
+use lunaris_ds_rtc::RealTimeClock;
+use lunaris_ds_timers::NDSTiming;
+use lunaris_ds_wifi::WiFi;
 
 /// Core Nintendo DS emulator system
 /// Manages dual ARM CPUs, memory, and all peripheral devices
@@ -231,7 +227,7 @@ impl Emulator {
     ///
     /// NOTE: It is not used in C++ and has no definition.
     #[expect(unused)]
-    fn check_fifo7_interrupt(&mut self) {
+    fn check_fifo7_interrupt(self) {
         unimplemented!("It is not used in C++ and has no definition.");
     }
 
@@ -239,13 +235,13 @@ impl Emulator {
     ///
     /// NOTE: It is not used in C++ and has no definition.
     #[expect(unused)]
-    fn check_fifo9_interrupt(&mut self) {
+    fn check_fifo9_interrupt(self) {
         unimplemented!("It is not used in C++ and has no definition.");
     }
 
     /// Start hardware division unit.
     /// Start division operation
-    pub fn start_division(&mut self) {
+    pub const fn start_division(&mut self) {
         if let Some(div_result) = self.div_numer.checked_div(self.div_denom) {
             self.div_result = div_result;
             self.div_remresult = self.div_numer % self.div_denom;
@@ -341,7 +337,7 @@ impl Emulator {
 
     /// Perform a direct boot sequence.
     pub fn direct_boot(&mut self) {
-        let mut boot_info = [0u32; 8];
+        let mut boot_info = [0_u32; 8];
         for address in 0..0x200 {
             let value = self.cart.direct_read(address);
 
@@ -549,12 +545,12 @@ impl Emulator {
 
     /// Request HBLANK DMA.
     pub fn hblank_dma_request(&mut self) {
-        self.hblank_request() // inline
+        self.hblank_request(); // inline
     }
 
     /// Request game cartridge DMA.
     pub fn gamecart_dma_request(&mut self) {
-        self.gamecart_request() // wrapping
+        self.gamecart_request(); // wrapping
     }
 
     /// Request GX FIFO DMA.

@@ -21,10 +21,9 @@ impl FirmwareCommand {
     /// Convert numeric value to FirmwareCommand
     pub fn from_value(val: u32) -> Self {
         match val {
-            0 => FirmwareCommand::None,
-            1 => FirmwareCommand::ReadStatusReg,
-            2 => FirmwareCommand::ReadStream,
-            _ => FirmwareCommand::None,
+            1 => Self::ReadStatusReg,
+            2 => Self::ReadStream,
+            _ => Self::None,
         }
     }
 }
@@ -54,8 +53,8 @@ impl Firmware {
 
     /// Create new Firmware controller
     pub fn new() -> Self {
-        Firmware {
-            raw_firmware: vec![0u8; Self::SIZE],
+        Self {
+            raw_firmware: vec![0_u8; Self::SIZE],
             status_reg: 0,
             user_data: 0,
             command_id: FirmwareCommand::None,
@@ -93,6 +92,7 @@ impl Firmware {
             // tracing::info!("Loaded free firmware.");
         } else {
             // Read firmware file directly into buffer (no bounds checking, same as C++)
+            #[expect(clippy::unwrap_used)]
             let mut file = firmware_file.take().unwrap();
             file.read_exact(&mut self.raw_firmware)
                 .with_context(|_| FailedReadFileSnafu { path: file_name })?;
@@ -234,7 +234,7 @@ impl Firmware {
         ]);
 
         // Calculate CRC from firmware data
-        let calculated_crc = Firmware::create_crc(&self.raw_firmware[offset..], length, start);
+        let calculated_crc = Self::create_crc(&self.raw_firmware[offset..], length, start);
 
         // Debug output (matches C++ printf behavior)
         // println!("\nStored CRC: ${:04X}", stored_crc);

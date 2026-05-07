@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
-use crate::interrupts::Interrupt;
+use lunaris_ds_interrupts::Interrupt;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
+    /// # Panics
+    #[expect(clippy::match_same_arms)]
     pub fn arm7_write_word(&mut self, address: u32, word: u32) {
         match address {
             // Debug print (kept from original C++)
@@ -15,7 +17,7 @@ impl Emulator {
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let off = (address & MAIN_RAM_MASK) as usize;
-                self.main_ram[off..off + 4].copy_from_slice(&word.to_le_bytes())
+                self.main_ram[off..off + 4].copy_from_slice(&word.to_le_bytes());
             }
 
             // Shared WRAM
@@ -28,13 +30,13 @@ impl Emulator {
                     _ => return,
                 } as usize;
 
-                self.arm7_wram[off..off + 4].copy_from_slice(&word.to_le_bytes())
+                self.arm7_wram[off..off + 4].copy_from_slice(&word.to_le_bytes());
             }
 
             // ARM7 WRAM
             ARM7_WRAM_START..IO_REGS_START => {
                 let off = (address & ARM7_WRAM_MASK) as usize;
-                self.arm7_wram[off..off + 4].copy_from_slice(&word.to_le_bytes())
+                self.arm7_wram[off..off + 4].copy_from_slice(&word.to_le_bytes());
             }
 
             // Direct IO write (word)
@@ -57,23 +59,22 @@ impl Emulator {
             // Timers: LO/HIGH packed in one word
             0x04000100 => {
                 self.nds_timing.write_lo((word & 0xFFFF) as u16, 0);
-                self.nds_timing.write_hi((word >> 16) as u16, 0)
+                self.nds_timing.write_hi((word >> 16) as u16, 0);
             }
             0x04000104 => {
                 self.nds_timing.write_lo((word & 0xFFFF) as u16, 1);
-                self.nds_timing.write_hi((word >> 16) as u16, 1)
+                self.nds_timing.write_hi((word >> 16) as u16, 1);
             }
             0x04000108 => {
                 self.nds_timing.write_lo((word & 0xFFFF) as u16, 2);
-                self.nds_timing.write_hi((word >> 16) as u16, 2)
+                self.nds_timing.write_hi((word >> 16) as u16, 2);
             }
             0x0400010C => {
                 self.nds_timing.write_lo((word & 0xFFFF) as u16, 3);
-                self.nds_timing.write_hi((word >> 16) as u16, 3)
+                self.nds_timing.write_hi((word >> 16) as u16, 3);
             }
 
-            0x04000120 => {} // SIODATA32 ignored
-            0x04000128 => {} // write ignored
+            0x04000120 | 0x04000128 => {} // SIODATA32 ignored | write ignored
 
             0x04000180 => {
                 self.ipc_sync_nds7.write(word as u16);
@@ -81,7 +82,7 @@ impl Emulator {
 
                 // IPCSYNC interrupt
                 if (word & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
-                    self.request_interrupt9(Interrupt::IpcSync)
+                    self.request_interrupt9(Interrupt::IpcSync);
                 }
             }
 
@@ -126,12 +127,13 @@ impl Emulator {
         }
     }
 
+    #[expect(clippy::match_same_arms)]
     pub fn arm7_write_halfword(&mut self, address: u32, halfword: u16) {
         match address {
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let off = (address & MAIN_RAM_MASK) as usize;
-                self.main_ram[off..off + 2].copy_from_slice(&halfword.to_le_bytes())
+                self.main_ram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
             }
 
             // Shared WRAM
@@ -144,13 +146,13 @@ impl Emulator {
                     _ => return,
                 } as usize;
 
-                self.arm7_wram[off..off + 2].copy_from_slice(&halfword.to_le_bytes())
+                self.arm7_wram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
             }
 
             // ARM7 WRAM
             ARM7_WRAM_START..IO_REGS_START => {
                 let off = (address & ARM7_WRAM_MASK) as usize;
-                self.arm7_wram[off..off + 2].copy_from_slice(&halfword.to_le_bytes())
+                self.arm7_wram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
             }
 
             // IO register halfword writes
@@ -181,7 +183,7 @@ impl Emulator {
 
                 // Trigger IPCSYNC interrupt if enabled
                 if (halfword & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
-                    self.request_interrupt9(Interrupt::IpcSync)
+                    self.request_interrupt9(Interrupt::IpcSync);
                 }
             }
 
@@ -206,7 +208,7 @@ impl Emulator {
             0x040001A2 => {
                 // #[cfg(feature = "tracing")]
                 // tracing::info!("AUXSPIDATA: {:04X}", halfword);
-                self.cart.set_auxspidata((halfword & 0xFF) as u8)
+                self.cart.set_auxspidata((halfword & 0xFF) as u8);
             }
 
             0x040001B8 => self.cart.set_hi_key2_seed0(halfword.into()),
@@ -231,7 +233,7 @@ impl Emulator {
 
             0x04000508 => {
                 self.spu.set_sndcap0((halfword & 0xFF) as u8);
-                self.spu.set_sndcap1((halfword >> 8) as u8)
+                self.spu.set_sndcap1((halfword >> 8) as u8);
             }
 
             0x04000514 => {}
@@ -270,12 +272,12 @@ impl Emulator {
         match address {
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
-                self.main_ram[(address & MAIN_RAM_MASK) as usize] = byte
+                self.main_ram[(address & MAIN_RAM_MASK) as usize] = byte;
             }
 
             // ARM7 WRAM
             ARM7_WRAM_START..IO_REGS_START => {
-                self.arm7_wram[(address & ARM7_WRAM_MASK) as usize] = byte
+                self.arm7_wram[(address & ARM7_WRAM_MASK) as usize] = byte;
             }
 
             // Shared WRAM
@@ -288,7 +290,7 @@ impl Emulator {
                     _ => return,
                 } as usize;
 
-                self.shared_wram[off] = byte
+                self.shared_wram[off] = byte;
             }
 
             // IO register byte writes
@@ -315,7 +317,7 @@ impl Emulator {
                 match byte {
                     0x80 => {
                         // ARM7 halt request
-                        self.arm7.halt()
+                        self.arm7.halt();
                     }
                     _ => {
                         #[cfg(feature = "tracing")]

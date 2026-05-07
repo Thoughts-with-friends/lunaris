@@ -27,7 +27,7 @@ pub struct DmaCnt {
 impl DmaCnt {
     /// Create new DMA control register
     pub fn new() -> Self {
-        DmaCnt {
+        Self {
             dest_control: 0,
             source_control: 0,
             repeat: false,
@@ -40,7 +40,7 @@ impl DmaCnt {
 
     /// Get register value as 16-bit halfword
     pub fn get(&self) -> u16 {
-        let mut value = 0u16;
+        let mut value = 0_u16;
         value |= ((self.dest_control & 0x3) as u16) << 5;
         value |= ((self.source_control & 0x3) as u16) << 7;
 
@@ -122,7 +122,7 @@ pub struct Dma {
 impl Dma {
     /// Create new DMA channel
     pub fn new(index: u32, is_arm9: bool) -> Self {
-        Dma {
+        Self {
             source: 0,
             internal_source: 0,
             destination: 0,
@@ -169,7 +169,7 @@ impl NDSDma {
             dma.index = index as u32;
         }
 
-        NDSDma {
+        Self {
             dmas,
             // active_dma7: None,
             // active_dma9: None,
@@ -191,6 +191,7 @@ impl NDSDma {
     // pub fn dma_event(&mut self, index: u32);
 
     /// Update and process DMA transfer
+    #[expect(clippy::needless_pass_by_ref_mut)]
     pub fn update_dma(&mut self) {
         unimplemented!("C++ code is empty.")
     }

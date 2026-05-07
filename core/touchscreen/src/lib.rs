@@ -24,7 +24,7 @@ impl TouchScreen {
     ///
     /// Initializes all internal state exactly as the original
     /// C++ constructor.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             data_pos: 0,
             control_byte: 0,
@@ -38,7 +38,7 @@ impl TouchScreen {
     ///
     /// This resets all internal state and latched coordinates,
     /// matching the original C++ `power_on()` behavior.
-    pub fn power_on(&mut self) {
+    pub const fn power_on(&mut self) {
         self.data_pos = 0;
         self.control_byte = 0;
         self.output_coords = 0;
@@ -54,7 +54,7 @@ impl TouchScreen {
     /// exactly like the original implementation.
     ///
     /// A Y value of `0xFFF` indicates "no touch".
-    pub fn press_event(&mut self, x: i32, y: i32) {
+    pub const fn press_event(&mut self, x: i32, y: i32) {
         self.press_x = x as u16;
         self.press_y = y as u16;
 
@@ -76,7 +76,7 @@ impl TouchScreen {
     /// - Channel selection
     /// - ADC result shifting
     /// - Data position tracking
-    pub fn transfer_data(&mut self, input: u8) -> u8 {
+    pub const fn transfer_data(&mut self, input: u8) -> u8 {
         // Output previously prepared data
         let data = if self.data_pos == 0 {
             ((self.output_coords >> 5) & 0xFF) as u8
@@ -115,8 +115,7 @@ impl TouchScreen {
     ///
     /// This resets the internal transfer position, exactly
     /// like the original C++ `deselect()` method.
-    #[expect(unused)]
-    pub fn deselect(&mut self) {
+    pub const fn deselect(&mut self) {
         self.data_pos = 0;
     }
 }

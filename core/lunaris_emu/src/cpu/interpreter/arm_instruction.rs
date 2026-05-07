@@ -1124,7 +1124,7 @@ pub fn load_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
 
     let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
 
-    let offset: i32 = if is_adding_offset { 4 } else { -4 };
+    let offset = if is_adding_offset { 4 } else { -4 };
 
     // Switch to USER bank if required
     let old_mode = emu.get_cpu_mut(cpu_type).get_cpsr().mode;
@@ -1254,7 +1254,7 @@ pub fn store_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
 
     let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
 
-    let offset: i32 = if is_adding_offset { 4 } else { -4 };
+    let offset: u32 = if is_adding_offset { 4 } else { -4 } as u32;
 
     // Handle user-mode banked register transfer
     let old_mode = emu.get_cpu_mut(cpu_type).get_cpsr().mode;
@@ -1273,13 +1273,13 @@ pub fn store_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
                 regs += 1;
 
                 if is_preindexing {
-                    address = address.wrapping_add(offset as u32);
+                    address = address.wrapping_add(offset);
                     let value = emu.get_cpu(cpu_type).get_register(i);
                     emu.write_word(address, value, cpu_type);
                 } else {
                     let value = emu.get_cpu(cpu_type).get_register(i);
                     emu.write_word(address, value, cpu_type);
-                    address = address.wrapping_add(offset as u32);
+                    address = address.wrapping_add(offset);
                 }
             }
         }
@@ -1290,13 +1290,13 @@ pub fn store_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
                 regs += 1;
 
                 if is_preindexing {
-                    address = address.wrapping_add(offset as u32);
+                    address = address.wrapping_add(offset);
                     let value = emu.get_cpu(cpu_type).get_register(i);
                     emu.write_word(address, value, cpu_type);
                 } else {
                     let value = emu.get_cpu(cpu_type).get_register(i);
                     emu.write_word(address, value, cpu_type);
-                    address = address.wrapping_add(offset as u32);
+                    address = address.wrapping_add(offset);
                 }
             }
         }

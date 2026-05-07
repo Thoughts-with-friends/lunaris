@@ -4,10 +4,10 @@
 //!
 use std::path::Path;
 
-use crate::cartridge::CartridgeError;
 use crate::emulator::Emulator;
 use crate::emulator::emu_config::BiosMem;
 use crate::error::{EmuError, FailedReadFileSnafu};
+use lunaris_ds_cartridge::CartridgeError;
 use snafu::ResultExt as _;
 
 impl Emulator {
@@ -15,6 +15,7 @@ impl Emulator {
     // remove pub fn init(&mut self) -> i32
 
     /// Load firmware from internal source.
+    /// # Errors
     pub fn load_firmware(&mut self) -> Result<(), EmuError> {
         let bin =
             std::fs::read(&self.config.arm9_bios_path).with_context(|_| FailedReadFileSnafu {
@@ -49,11 +50,13 @@ impl Emulator {
     }
 
     /// Load save database by name.
+    /// # Errors
     pub fn load_save_database(&mut self, name: &Path) -> Result<(), CartridgeError> {
         self.cart.load_database(name)
     }
 
     /// Load a ROM file.
+    /// # Errors
     pub fn load_rom<A>(&mut self, rom_path: A) -> Result<(), CartridgeError>
     where
         A: AsRef<Path>,

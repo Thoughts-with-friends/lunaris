@@ -19,8 +19,8 @@ pub struct IpcSync {
 
 impl IpcSync {
     /// Create new IPC sync register
-    pub fn new() -> Self {
-        IpcSync {
+    pub const fn new() -> Self {
+        Self {
             input: 0,
             output: 0,
             irq_enable: false,
@@ -28,8 +28,8 @@ impl IpcSync {
     }
 
     /// Read sync register value
-    pub fn read(&self) -> u16 {
-        let mut value = 0u16;
+    pub const fn read(&self) -> u16 {
+        let mut value = 0_u16;
         value |= ((self.input & 0xF) as u16) << 8;
         value |= (self.output & 0xF) as u16;
         if self.irq_enable {
@@ -39,12 +39,12 @@ impl IpcSync {
     }
 
     /// Receive input from other CPU
-    pub fn receive_input(&mut self, halfword: u16) {
+    pub const fn receive_input(&mut self, halfword: u16) {
         self.input = ((halfword >> 8) & 0xF) as u32;
     }
 
     /// Write to sync register
-    pub fn write(&mut self, halfword: u16) {
+    pub const fn write(&mut self, halfword: u16) {
         self.output = (halfword & 0xF) as u32;
         self.irq_enable = (halfword & (1 << 14)) != 0;
     }
@@ -88,7 +88,7 @@ pub struct IpcFifo {
 impl IpcFifo {
     /// Create new IPC FIFO
     pub fn new() -> Self {
-        IpcFifo {
+        Self {
             send_queue: VecDeque::with_capacity(16),
             receive_queue: VecDeque::with_capacity(16),
             recent_word: 0,
@@ -103,7 +103,7 @@ impl IpcFifo {
 
     /// Read control register
     pub fn read_cnt(&self) -> u16 {
-        let mut value = 0u16;
+        let mut value = 0_u16;
         if self.send_queue.is_empty() {
             value |= 1 << 0;
         }
@@ -138,7 +138,7 @@ impl IpcFifo {
     }
 
     /// Write control register
-    pub fn write_cnt(&mut self, value: u16) {
+    pub const fn write_cnt(&mut self, value: u16) {
         self.send_empty_irq = (value & (1 << 2)) != 0;
         self.request_empty_irq = (value & (1 << 3)) != 0;
         self.receive_nempty_irq = (value & (1 << 10)) != 0;
@@ -153,19 +153,16 @@ impl IpcFifo {
             return self.recent_word;
         }
 
-        match self.send_queue.front() {
-            Some(&word) => {
-                self.send_queue.pop_back();
-                if self.send_queue.is_empty() && self.send_empty_irq {
-                    self.request_empty_irq = true;
-                }
+        if let Some(&word) = self.send_queue.front() {
+            self.send_queue.pop_back();
+            if self.send_queue.is_empty() && self.send_empty_irq {
+                self.request_empty_irq = true;
+            }
 
-                word
-            }
-            None => {
-                self.error = true;
-                self.recent_word
-            }
+            word
+        } else {
+            self.error = true;
+            self.recent_word
         }
     }
 
@@ -216,7 +213,7 @@ impl IpcFifo {
     }
 
     /// Clear error flag
-    pub fn clear_error(&mut self) {
+    pub const fn clear_error(&mut self) {
         self.error = false;
     }
 }

@@ -1,10 +1,11 @@
 use std::path::Path;
 
 use crate::Emulator;
-use crate::cartridge::{CartCommand, CartridgeError};
+use lunaris_ds_cartridge::{CartCommand, CartridgeError};
 
 impl Emulator {
     /// Loads ROM image and optional save data.
+    /// # Errors
     pub fn cartridge_load_rom(&mut self, rom_file: &Path) -> Result<(), CartridgeError> {
         use std::fs::File;
         use std::io::Read as _;
@@ -297,9 +298,9 @@ impl Emulator {
 
                 if self.cart.auxspicnt.irq_after_transfer {
                     if self.arm7_has_cart_rights() {
-                        self.request_interrupt7(crate::interrupts::Interrupt::CartTransfer);
+                        self.request_interrupt7(lunaris_ds_interrupts::Interrupt::CartTransfer);
                     } else {
-                        self.request_interrupt9(crate::interrupts::Interrupt::CartTransfer);
+                        self.request_interrupt9(lunaris_ds_interrupts::Interrupt::CartTransfer);
                     }
                 }
             }

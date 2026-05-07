@@ -3277,6 +3277,14 @@ name = "lunaris_ds_audio"
 version = "0.1.0"
 
 [[package]]
+name = "lunaris_ds_cartridge"
+version = "0.1.0"
+dependencies = [
+ "snafu",
+ "tracing",
+]
+
+[[package]]
 name = "lunaris_ds_egui"
 version = "0.1.0"
 dependencies = [
@@ -3295,14 +3303,20 @@ dependencies = [
 name = "lunaris_ds_emu"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "image",
  "lunaris_ds_audio",
+ "lunaris_ds_cartridge",
  "lunaris_ds_free_bios",
  "lunaris_ds_gpu",
+ "lunaris_ds_interrupts",
+ "lunaris_ds_ipc",
  "lunaris_ds_mem_const",
+ "lunaris_ds_rtc",
+ "lunaris_ds_timers",
+ "lunaris_ds_touchscreen",
+ "lunaris_ds_wifi",
  "quick_tracing",
- "snafu 0.8.9",
+ "snafu",
  "tracing",
 ]
 
@@ -3319,7 +3333,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "lunaris_ds_interrupts"
+version = "0.1.0"
+
+[[package]]
+name = "lunaris_ds_ipc"
+version = "0.1.0"
+
+[[package]]
 name = "lunaris_ds_mem_const"
+version = "0.1.0"
+
+[[package]]
+name = "lunaris_ds_rtc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "tracing",
+]
+
+[[package]]
+name = "lunaris_ds_timers"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "lunaris_ds_touchscreen"
+version = "0.1.0"
+
+[[package]]
+name = "lunaris_ds_wifi"
 version = "0.1.0"
 
 [[package]]
@@ -5599,32 +5644,11 @@ dependencies = [
 
 [[package]]
 name = "snafu"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
-dependencies = [
- "snafu-derive 0.8.9",
-]
-
-[[package]]
-name = "snafu"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1d4bced6a69f90b2056c03dcff2c4737f98d6fb9e0853493996e1d253ca29c6"
 dependencies = [
- "snafu-derive 0.9.0",
-]
-
-[[package]]
-name = "snafu-derive"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.108",
+ "snafu-derive",
 ]
 
 [[package]]
@@ -6630,7 +6654,7 @@ source = "git+https://github.com/SARDONYX-sard/dar-to-oar?tag=1.1.0#1846783cd38d
 dependencies = [
  "chrono",
  "once_cell",
- "snafu 0.9.0",
+ "snafu",
  "tracing",
  "tracing-subscriber",
 ]
