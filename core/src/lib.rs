@@ -1,14 +1,20 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![cfg_attr(feature = "nightly", feature(core_intrinsics))]
+#![expect(clippy::duplicate_mod)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[cfg(feature = "nightly")]
+use core::intrinsics::{likely, unlikely};
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+#[cfg(not(feature = "nightly"))]
+use likely_stable::{likely, unlikely};
+
+#[macro_use]
+pub extern crate log;
+
+use num_traits as num;
+pub use simplelog;
+
+mod arm;
+mod hw;
+
+pub mod nds;
+pub use nds::NDS;

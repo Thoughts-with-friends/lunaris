@@ -11,22 +11,14 @@ rust-version = "1.91"
 version = "0.1.0" 
 
 [workspace]
-default-members = ["gui/tauri/src-tauri"]
+default-members = ["gui"]
 members = [
   "bitfield",
   "core",
-  "core/free_bios",
-  "gui/egui",
-  "gui/tauri/src-tauri",
+  "free_bios",
+  "gui",
 ]
 resolver = "3"
-
-[workspace.dependencies]
-snafu = "0.9.0"
-tracing = "0.1.44"
-
-# workspace members
-lunaris_ds_free_bios = {path = "./core/free_bios"}
 
 [workspace.lints.clippy]
 all = {level = "warn", priority = -1}

@@ -1,17 +1,16 @@
 [package]
-authors.workspace = true
-categories.workspace = true
-description.workspace = true
-edition.workspace = true
-keywords.workspace = true
-license.workspace = true
 name = "bitfield"
-readme.workspace = true
-repository.workspace = true
-rust-version.workspace = true
-version.workspace = true
+version = "0.1.0"
+authors = ["Akash Munagala <akash.munagala@gmail.com>"]
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dev-dependencies]
+trybuild = "1.0"
 
 [dependencies]
-
-[lints]
-workspace = true
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version="1.0", features=["full"] }
