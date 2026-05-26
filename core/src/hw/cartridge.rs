@@ -71,7 +71,7 @@ impl Cartridge {
 
         let secure_area_range = || start..start + Self::SECURE_AREA_SIZE;
         let secure_area = &mut self.rom[secure_area_range()];
-        let secure_area_32: &[u32] = bytemuck::cast_slice(&secure_area);
+        let secure_area_32: &[u32] = bytemuck::cast_slice(secure_area);
         // Check secure area exists
         for i in 0..3 {
             if secure_area_32[i] != Self::DESTROYED_SECURE_AREA_ID {

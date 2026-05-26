@@ -39,12 +39,12 @@ jobs:
       # - name: Build GUI
       #   run: npm run build
       - name: build
-        run: cargo build -p lunaris_ds_egui --release
+        run: cargo build -p lunaris --release
 
       - name: Move exe -> ./build
         uses: ./.github/actions/setup-release
         with:
-          app_name: lunaris_ds_egui
+          app_name: lunaris
           build_profile: ${{ env.BUILD_PROFILE }}
 
       - name: Upload a Build Artifact

@@ -32,7 +32,8 @@ impl Engine3D {
         }
 
         assert!(!self.frame_params.w_buffer); // TODO: Implement W-Buffer
-        assert!(!self.disp3dcnt.alpha_test); // TODO: Implement alpha test
+        warn!("disp3dcnt.alpha_test is not implemented, so alpha test is currently disabled");
+        // assert!(!self.disp3dcnt.alpha_test); // TODO: Implement alpha test
 
         let disp3dcnt = &self.disp3dcnt;
         let toon_table = &self.toon_table;
