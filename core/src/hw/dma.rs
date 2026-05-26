@@ -403,7 +403,7 @@ impl Occasion {
                     Occasion::VBlank
                 }
                 2 => Occasion::DSCartridge,
-                3 if dma_num % 2 == 0 => {
+                3 if dma_num.is_multiple_of(2) => {
                     warn!("ARM7 WirelessInterrupt DMA not implemented!");
                     Occasion::WirelessInterrupt
                 }

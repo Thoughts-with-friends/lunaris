@@ -33,12 +33,12 @@ impl HW {
     }
 
     fn read_game_card(&mut self, is_arm9: bool) -> u32 {
-        let value = self.cartridge.read_gamecard(
+        
+        self.cartridge.read_gamecard(
             &mut self.scheduler,
             is_arm9,
             self.exmem.nds_arm7_access != is_arm9,
-        );
-        value
+        )
     }
 
     // TODO: Replace with const generic
@@ -46,7 +46,7 @@ impl HW {
         if self.exmem.gba_arm7_access != is_arm9 {
             let cnt = &self.exmem.gba[is_arm9 as usize];
             let value = match cnt.rom_n_access_time {
-                0 => addr / 2 | 0xFE08,
+                0 => (addr / 2) | 0xFE08,
                 1 | 2 => addr / 2,
                 3 => 0xFFFF,
                 _ => unreachable!(),
@@ -97,7 +97,7 @@ impl HW {
             write_fn(
                 device,
                 addr + i as u32,
-                num::cast::<T, u8>(value >> 8 * i & mask).unwrap(),
+                num::cast::<T, u8>(value >> (8 * i) & mask).unwrap(),
             );
         }
     }

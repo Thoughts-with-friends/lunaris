@@ -138,7 +138,7 @@ impl Engine3D {
         if match self.gxstat.command_fifo_irq {
             CommandFifoIRQ::Never => false,
             CommandFifoIRQ::LessHalf => self.gxfifo.len() < Engine3D::FIFO_LEN / 2,
-            CommandFifoIRQ::Empty => self.gxfifo.len() == 0,
+            CommandFifoIRQ::Empty => self.gxfifo.is_empty(),
         } {
             *interrupts |= InterruptRequest::GEOMETRY_COMMAND_FIFO
         }

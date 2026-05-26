@@ -143,7 +143,7 @@ impl Timer {
             self.calc_counter(global_cycle)
         };
         match byte {
-            0 => (counter >> 0) as u8,
+            0 => counter as u8,
             1 => (counter >> 8) as u8,
             2 | 3 => self.cnt.read(byte - 2),
             _ => unreachable!(),
@@ -153,7 +153,7 @@ impl Timer {
     pub fn write(&mut self, scheduler: &mut Scheduler, byte: usize, value: u8) {
         let global_cycle = scheduler.cycle;
         match byte {
-            0 => self.reload = self.reload & !0x00FF | (value as u16) << 0,
+            0 => self.reload = self.reload & !0x00FF | (value as u16),
             1 => self.reload = self.reload & !0xFF00 | (value as u16) << 8,
             2 => {
                 if self.cnt.start {
@@ -199,11 +199,10 @@ impl HW {
             self.interrupts[i].request |= self.timers[i].timers[num].interrupt
         }
         // Cascade Timers
-        if num + 1 < Timers::NUM_TIMERS && self.timers[i][num + 1].is_count_up() {
-            if self.timers[i][num + 1].clock() {
+        if num + 1 < Timers::NUM_TIMERS && self.timers[i][num + 1].is_count_up()
+            && self.timers[i][num + 1].clock() {
                 self.on_timer_overflow(Event::TimerOverflow(is_nds9, num + 1))
             }
-        }
         // TODO: Can I move this up to avoid recreating timers
         if !self.timers[i][num].is_count_up() {
             self.timers[i][num].reload();

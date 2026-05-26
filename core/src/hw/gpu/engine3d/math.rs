@@ -53,7 +53,7 @@ impl Matrix {
 
     pub fn mul4x4(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 16);
-        let old = self.elems.clone();
+        let old = self.elems;
         // self = vec * self
         self.elems[0] = FixedPoint::from_mul(
             vec[0] * old[0] + vec[1] * old[4] + vec[2] * old[8] + vec[3] * old[12],
@@ -110,7 +110,7 @@ impl Matrix {
 
     pub fn mul4x3(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 12);
-        let old = self.elems.clone();
+        let old = self.elems;
         // self = vec * self
         self.elems[0] = FixedPoint::from_mul(vec[0] * old[0] + vec[1] * old[4] + vec[2] * old[8]);
         self.elems[1] = FixedPoint::from_mul(vec[0] * old[1] + vec[1] * old[5] + vec[2] * old[9]);
@@ -143,7 +143,7 @@ impl Matrix {
 
     pub fn mul3x3(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 9);
-        let old = self.elems.clone();
+        let old = self.elems;
         // self = vec * self
         self.elems[0] = FixedPoint::from_mul(vec[0] * old[0] + vec[1] * old[4] + vec[2] * old[8]);
         self.elems[1] = FixedPoint::from_mul(vec[0] * old[1] + vec[1] * old[5] + vec[2] * old[9]);
@@ -207,7 +207,7 @@ impl Mul for Matrix {
     type Output = Matrix;
 
     fn mul(self, rhs: Matrix) -> Self::Output {
-        let mut rhs = rhs.clone();
+        let mut rhs = rhs;
         rhs.mul4x4(&self.elems.iter().map(|x| x.0 as u32).collect());
         rhs
     }

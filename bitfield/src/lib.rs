@@ -39,7 +39,7 @@ fn parse_tokens(input: proc_macro::TokenStream) -> Result<TokenStream> {
             let hi = range.hi;
 
             let make_range_error = |message| {
-                return Err(Error::new_spanned(range.to_token_stream(), message));
+                Err(Error::new_spanned(range.to_token_stream(), message))
             };
 
             if field_type.to_token_stream().to_string() == "bool" && lo != hi {
@@ -259,7 +259,7 @@ impl Parse for BitfieldField {
             }
 
             let segment = attr.path.segments.first().unwrap();
-            if segment.ident.to_string() != "skip" {
+            if segment.ident != "skip" {
                 return Err(Error::new_spanned(
                     attr,
                     "Bitfield field attribute segment must be `skip`",
@@ -334,7 +334,7 @@ impl Parse for BitfieldStruct {
         let _colon_token = input.parse()?;
         let base_type: Type = input.parse()?;
         let base_type_str = base_type.to_token_stream().to_string();
-        if base_type_str.as_bytes()[0] != 'u' as u8 {
+        if base_type_str.as_bytes()[0] != b'u' {
             return Err(syn::Error::new(
                 base_type.span(),
                 "Bitfield base type must be an unsigned integral type",

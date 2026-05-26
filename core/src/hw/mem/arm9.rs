@@ -34,12 +34,12 @@ impl HW {
                 MemoryRegion::Palette if addr & 0x7FFF < 0x400 => HW::read_from_bytes(
                     &self.gpu.engine_a,
                     &Engine2D::read_palette_ram,
-                    addr as u32,
+                    addr,
                 ),
                 MemoryRegion::Palette => HW::read_from_bytes(
                     &self.gpu.engine_b,
                     &Engine2D::read_palette_ram,
-                    addr as u32,
+                    addr,
                 ),
                 MemoryRegion::VRAM => self.gpu.vram.arm9_read(addr),
                 MemoryRegion::OAM if addr & 0x7FFF < 0x400 => {
@@ -76,7 +76,7 @@ impl HW {
                 }
                 MemoryRegion::SharedWRAM => HW::write_mem(
                     &mut self.shared_wram,
-                    self.wramcnt.arm9_offset + addr & self.wramcnt.arm9_mask,
+                    (self.wramcnt.arm9_offset + addr) & self.wramcnt.arm9_mask,
                     value,
                 ),
                 MemoryRegion::IO => self.arm9_write_io(addr, value),

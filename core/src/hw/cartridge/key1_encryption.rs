@@ -51,8 +51,8 @@ impl Key1Encryption {
         let mut y = ptr[0 / 4];
         let mut x = ptr[4 / 4];
 
-        let mut encrypt_range = 0x0..=0xF as usize;
-        let mut decrypt_range = (0x2..=0x11 as usize).rev();
+        let mut encrypt_range = 0x0..=0xF_usize;
+        let mut decrypt_range = (0x2..=0x11_usize).rev();
         let range = if ENCRYPT {
             &mut encrypt_range as &mut dyn Iterator<Item = _>
         } else {
@@ -64,7 +64,7 @@ impl Key1Encryption {
             x = key_buf[0x048 / 4 + (z >> 24 & 0xFF)];
             x = x.wrapping_add(key_buf[0x448 / 4 + (z >> 16 & 0xFF)]);
             x ^= key_buf[0x848 / 4 + (z >> 8 & 0xFF)];
-            x = x.wrapping_add(key_buf[0xC48 / 4 + (z >> 0 & 0xFF)]);
+            x = x.wrapping_add(key_buf[0xC48 / 4 + (z & 0xFF)]);
             x ^= y;
             y = z as u32;
         }
@@ -88,7 +88,7 @@ impl Key1Encryption {
     // Modulo should be div by 4 before passing in
     fn apply_keycode(&mut self, key_code: &mut [u32; 3], modulo: u32) {
         Self::encrypt64(&self.key_buf, &mut key_code[4 / 4..4 / 4 + 2]);
-        Self::encrypt64(&self.key_buf, &mut key_code[0 / 4..0 / 4 + 2]);
+        Self::encrypt64(&self.key_buf, &mut key_code[0 / 4..2]);
 
         let mut scratch = [0, 0];
         for i in (0..=0x44 / 4).step_by(4 / 4) {

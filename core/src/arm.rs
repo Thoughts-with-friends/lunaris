@@ -191,7 +191,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 _ => unreachable!(),
             }
         } else if shift > 31 {
-            assert_eq!(immediate, false);
+            assert!(!immediate);
             if !immediate {
                 self.internal()
             }
@@ -301,7 +301,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             self.regs
                 .set_v((!(op1 ^ op2)) & (op1 ^ result2.0) & 0x8000_0000 != 0);
         }
-        result2.0 as u32
+        result2.0
     }
 
     pub(self) fn sub(&mut self, op1: u32, op2: u32, change_status: bool) -> u32 {

@@ -521,7 +521,7 @@ impl ROMCTRL {
             2 => {
                 (self.data_word_ready as u8) << 7
                     | (self.key2_encrypt_cmd as u8) << 6
-                    | (self.key1_gap2_len) as u8
+                    | (self.key1_gap2_len)
             }
             3 => {
                 (self.block_busy as u8) << 7
@@ -529,7 +529,7 @@ impl ROMCTRL {
                     | (self.resb_release_reset as u8) << 5
                     | (self.key1_gap_clks as u8) << 4
                     | (self.transfer_clk_rate as u8) << 3
-                    | (self.data_block_size as u8)
+                    | self.data_block_size
             }
             _ => unreachable!(),
         }

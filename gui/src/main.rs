@@ -17,11 +17,15 @@ use imgui::*;
 fn setup_logging() {
     let arm7_file_name = "ROMs/arm7.log";
     let arm9_file_name = "ROMs/arm9.log";
+    let savedata_file_name = "ROMs/savedata.log";
+
     let instructions7_filter = LevelFilter::Off;
     let instructions9_filter = LevelFilter::Off;
+    let savedata_filter = LevelFilter::Trace;
 
     let arm7_file = File::create(arm7_file_name);
     let arm9_file = File::create(arm9_file_name);
+    let savedata_file = File::create(savedata_file_name);
 
     let mut loggers: Vec<Box<dyn SharedLogger>> = vec![TermLogger::new(
         LevelFilter::Warn,
@@ -57,6 +61,21 @@ fn setup_logging() {
                 .set_time_level(LevelFilter::Off)
                 .set_max_level(LevelFilter::Off)
                 .add_filter_allow_str("nds_core::arm9")
+                .build(),
+            file,
+        ));
+    }
+
+    if let Ok(file) = savedata_file {
+        loggers.push(WriteLogger::new(
+            savedata_filter,
+            ConfigBuilder::new()
+                // .set_time_level(LevelFilter::Off)
+                // .set_thread_level(LevelFilter::Off)
+                // .set_target_level(LevelFilter::Off)
+                // .set_location_level(LevelFilter::Off)
+                // .set_max_level(LevelFilter::Off)
+                .add_filter_allow_str("nds_core::savedata")
                 .build(),
             file,
         ));

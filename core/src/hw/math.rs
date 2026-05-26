@@ -35,7 +35,7 @@ impl Div {
             2 => (self.numer.value as i64, self.denom.value as i64),
             _ => unreachable!(),
         };
-        let special_invert = |num: &mut u64| *num = *num ^ 0xFFFF_FFFF_0000_0000;
+        let special_invert = |num: &mut u64| *num ^= 0xFFFF_FFFF_0000_0000;
         if numer == i64::MIN && denom == -1 {
             self.quot.value = numer as u64;
             self.rem.value = 0;
@@ -46,7 +46,7 @@ impl Div {
             if numer == 0 {
                 self.quot.value = -1i64 as u64;
             } else {
-                self.quot.value = (numer.signum() * -1) as u64;
+                self.quot.value = -numer.signum() as u64;
             }
             self.rem.value = numer as u64;
             if self.cnt.mode == 0 {

@@ -35,7 +35,8 @@ impl RTC {
     }
 
     fn read_parameter(&mut self, parameter: Parameter) -> (u8, Parameter) {
-        let value = match parameter {
+        
+        match parameter {
             Parameter::StatusReg1 => {
                 self.last_byte = true;
                 (self.date_time.read_status_reg1(), Parameter::StatusReg1)
@@ -75,8 +76,7 @@ impl RTC {
                 self.last_byte = true;
                 (self.date_time.clock_adjust, Parameter::ClockAdjust)
             }
-        };
-        value
+        }
     }
 
     fn write_parameter(&mut self, parameter: Parameter, value: u8) -> Parameter {
@@ -144,7 +144,7 @@ impl IORegister for RTC {
             | (self.data_write as u8) << 4
             | cs << 2
             | sck << 1
-            | data << 0
+            | data
     }
 
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
@@ -163,7 +163,7 @@ impl IORegister for RTC {
             self.sck = value >> 1 & 0x1 != 0
         }
         if self.data_write {
-            self.data = value >> 0 & 0x1 != 0
+            self.data = value & 0x1 != 0
         }
 
         self.mode = match self.mode {

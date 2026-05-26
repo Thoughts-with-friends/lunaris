@@ -123,7 +123,7 @@ impl<E: EngineType> DerefMut for DISPCNT<E> {
 impl<E: EngineType> IORegister for DISPCNT<E> {
     fn read(&self, byte: usize) -> u8 {
         match byte {
-            0 => (self.flags.bits >> 0) as u8 | self.bg_mode as u8,
+            0 => self.flags.bits as u8 | self.bg_mode as u8,
             1 => (self.flags.bits >> 8) as u8,
             2 => {
                 (self.flags.bits >> 16) as u8
@@ -214,13 +214,13 @@ impl RotationScalingParameter {
     }
 
     pub fn get_float_from_u16(value: u16) -> f64 {
-        (value >> 8) as i8 as i32 as f64 + (value >> 0) as u8 as f64 / 256.0
+        (value >> 8) as i8 as i32 as f64 + value as u8 as f64 / 256.0
     }
 }
 
 impl IORegister for RotationScalingParameter {
     fn read(&self, _byte: usize) -> u8 {
-        return 0;
+        0
     }
 
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
@@ -405,7 +405,7 @@ impl BLDCNTTargetPixelSelection {
     }
 
     pub fn read(&self) -> u8 {
-        (self.enabled[0] as u8) << 0
+        (self.enabled[0] as u8)
             | (self.enabled[1] as u8) << 1
             | (self.enabled[2] as u8) << 2
             | (self.enabled[3] as u8) << 3
@@ -414,7 +414,7 @@ impl BLDCNTTargetPixelSelection {
     }
 
     pub fn write(&mut self, value: u8) {
-        self.enabled[0] = value >> 0 & 0x1 != 0;
+        self.enabled[0] = value & 0x1 != 0;
         self.enabled[1] = value >> 1 & 0x1 != 0;
         self.enabled[2] = value >> 2 & 0x1 != 0;
         self.enabled[3] = value >> 3 & 0x1 != 0;
@@ -583,9 +583,9 @@ impl MasterBright {
     pub fn apply(&self, color: u16) -> u16 {
         let alpha = color & 0x8000;
         let split_channels =
-            |color: u16| [color >> 0 & 0x1F, color >> 5 & 0x1F, color >> 10 & 0x1F];
+            |color: u16| [color & 0x1F, color >> 5 & 0x1F, color >> 10 & 0x1F];
         let combine_channels =
-            |channels: [u16; 3]| (channels[0] << 0) | (channels[1] << 5) | (channels[2] << 10);
+            |channels: [u16; 3]| channels[0] | (channels[1] << 5) | (channels[2] << 10);
         alpha
             | match self.mode {
                 MasterBrightMode::Disable => color,

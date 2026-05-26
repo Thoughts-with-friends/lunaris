@@ -158,7 +158,7 @@ impl SPU {
     }
 
     pub fn read_channels(&self, addr: usize) -> u8 {
-        let addr = addr as usize;
+        let addr = addr;
         let channel = (addr >> 4) & 0xF;
         let byte = addr & 0xF;
         match channel {
@@ -170,7 +170,7 @@ impl SPU {
     }
 
     pub fn write_channels(&mut self, scheduler: &mut Scheduler, addr: usize, value: u8) {
-        let addr = addr as usize;
+        let addr = addr;
         let channel = (addr >> 4) & 0xF;
         let byte = addr & 0xF;
         match channel {
@@ -576,7 +576,7 @@ impl<T: ChannelType> Channel<T> {
             diff += table_val / 2
         }
         if data & 0x4 != 0 {
-            diff += table_val / 1
+            diff += table_val
         }
         if data & 0x8 == 0 {
             self.adpcm_value = self.adpcm_value.saturating_add(diff as i16);
@@ -586,7 +586,7 @@ impl<T: ChannelType> Channel<T> {
         self.adpcm_index += SPU::ADPCM_INDEX_TABLE[data as usize & 0x7];
         self.adpcm_index = self.adpcm_index.clamp(0, 88);
 
-        self.sample = self.adpcm_value as i16;
+        self.sample = self.adpcm_value;
     }
 
     pub fn set_initial_adpcm(&mut self, value: u32) {
@@ -714,27 +714,27 @@ pub struct NoiseChannel {}
 
 impl ChannelType for BaseChannel {
     fn supports_psg() -> bool {
-        return false;
+        false
     }
     fn supports_noise() -> bool {
-        return false;
+        false
     }
 }
 
 impl ChannelType for PSGChannel {
     fn supports_psg() -> bool {
-        return true;
+        true
     }
     fn supports_noise() -> bool {
-        return false;
+        false
     }
 }
 
 impl ChannelType for NoiseChannel {
     fn supports_psg() -> bool {
-        return false;
+        false
     }
     fn supports_noise() -> bool {
-        return true;
+        true
     }
 }

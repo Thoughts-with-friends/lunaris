@@ -32,11 +32,11 @@ impl DebugWindowState for PalettesWindowState {
         if self.palettes_extended {
             if Self::GRAPHICS_TYPES[self.palettes_graphics_type] == GraphicsType::BG {
                 Slider::new(im_str!("Slot"))
-                    .range(0 as u32..=3)
+                    .range(0_u32..=3)
                     .build(ui, &mut self.palettes_slot);
             }
             Slider::new(im_str!("Palette"))
-                .range(0 as u32..=15)
+                .range(0_u32..=15)
                 .build(ui, &mut self.palettes_palette);
         }
 
@@ -93,7 +93,7 @@ impl DebugWindowState for MapsWindowState {
         );
 
         Slider::new(im_str!("BG"))
-            .range(0 as u32..=3)
+            .range(0_u32..=3)
             .build(ui, &mut self.map_bg_i);
     }
 
@@ -114,7 +114,7 @@ pub struct TilesWindowState {
 }
 
 impl TilesWindowState {
-    const TILES_RANGES: [std::ops::RangeInclusive<u32>; 2] = [0 as u32..=3, 0 as u32..=1];
+    const TILES_RANGES: [std::ops::RangeInclusive<u32>; 2] = [0_u32..=3, 0_u32..=1];
 }
 
 impl DebugWindowState for TilesWindowState {
@@ -161,13 +161,13 @@ impl DebugWindowState for TilesWindowState {
                 ui.checkbox(im_str!("256 Colors"), &mut self.tiles_bpp8);
             } else if Self::GRAPHICS_TYPES[self.tiles_graphics_type] == GraphicsType::BG {
                 Slider::new(im_str!("Palette Slot"))
-                    .range(0 as u32..=3)
+                    .range(0_u32..=3)
                     .build(ui, &mut self.tiles_slot);
             }
 
             if self.tiles_extended || !self.tiles_bpp8 {
                 Slider::new(im_str!("Palette"))
-                    .range(0 as u32..=15)
+                    .range(0_u32..=15)
                     .build(ui, &mut self.tiles_palette);
             }
         }
@@ -209,7 +209,7 @@ impl DebugWindowState for VRAMWindowState {
         ui.checkbox(im_str!("Ignore alpha"), &mut self.ignore_alpha);
 
         Slider::new(im_str!("Bank"))
-            .range(0 as u32..=8)
+            .range(0_u32..=8)
             .build(ui, &mut self.bank);
     }
 

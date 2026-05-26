@@ -49,8 +49,8 @@ impl VRAM {
 
     const ENGINE_A_BG_MASK: usize = (4 * 128 / 16) - 1;
     const ENGINE_A_OBJ_MASK: usize = (2 * 128 / 16) - 1;
-    const ENGINE_B_BG_MASK: usize = (1 * 128 / 16) - 1;
-    const ENGINE_B_OBJ_MASK: usize = (1 * 128 / 16) - 1;
+    const ENGINE_B_BG_MASK: usize = (128 / 16) - 1;
+    const ENGINE_B_OBJ_MASK: usize = (128 / 16) - 1;
 
     // Can't cast in match :(
     const BANK_A: usize = Bank::A as usize;
@@ -65,8 +65,7 @@ impl VRAM {
 
     pub fn new() -> Self {
         let create_vecs = |len| {
-            std::iter::repeat(Vec::with_capacity(VRAM::BANKS_LEN.len()))
-                .take(len)
+            std::iter::repeat_n(Vec::with_capacity(VRAM::BANKS_LEN.len()), len)
                 .collect::<Vec<_>>()
         };
         VRAM {
@@ -247,7 +246,7 @@ impl VRAM {
 
     pub fn arm7_read<T: MemoryValue>(&self, addr: u32) -> T {
         let addr = (addr as usize) & (2 * VRAM::BANKS_LEN[VRAM::BANK_C] - 1);
-        let index = (addr as usize) / VRAM::BANKS_LEN[VRAM::BANK_C];
+        let index = addr / VRAM::BANKS_LEN[VRAM::BANK_C];
         let addr = addr & (VRAM::BANKS_LEN[VRAM::BANK_C] - 1);
         let mut value = num::zero();
         for bank in self.arm7_wram[index].iter() {
@@ -331,7 +330,7 @@ impl VRAM {
 
     pub fn arm7_write<T: MemoryValue>(&mut self, addr: u32, value: T) {
         let addr = (addr as usize) & (2 * VRAM::BANKS_LEN[VRAM::BANK_C] - 1);
-        let index = (addr as usize) / VRAM::BANKS_LEN[VRAM::BANK_C];
+        let index = addr / VRAM::BANKS_LEN[VRAM::BANK_C];
         let addr = addr & (VRAM::BANKS_LEN[VRAM::BANK_C] - 1);
         for bank in self.arm7_wram[index].iter() {
             HW::write_mem(&mut self.banks[*bank as usize], addr as u32, value);
@@ -557,7 +556,7 @@ impl Bank {
     }
 
     pub fn get_textures_pal_offset(&self, offset: u8) -> usize {
-        let slot = ((offset >> 1) & 0x1) * 4 + ((offset >> 0) & 0x1) * 1;
+        let slot = ((offset >> 1) & 0x1) * 4 + (offset & 0x1);
         slot as usize * 0x400 * 16
     }
 

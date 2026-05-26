@@ -278,7 +278,7 @@ impl HW {
         self.main_mem[addr..addr + 0x170].copy_from_slice(&self.cartridge.rom()[..0x170]);
 
         for addr in [0x027FF800, 0x027FFC00].iter() {
-            self.arm9_write(addr + 0x0, self.cartridge.chip_id());
+            self.arm9_write(*addr, self.cartridge.chip_id());
             self.arm9_write(addr + 0x4, self.cartridge.chip_id());
             self.arm9_write(
                 addr + 0x8,
@@ -306,7 +306,7 @@ impl HW {
         mem: &mut [u8],
     ) {
         let mem_mask = mem.len() - 1;
-        let mut page_table_i = (addr_start as usize) >> page_shift;
+        let mut page_table_i = addr_start >> page_shift;
         for addr in (addr_start..addr_end).step_by(page_size) {
             let mem_addr = addr & mem_mask;
             page_table[page_table_i] = mem[mem_addr..mem_addr + page_size].as_mut_ptr();

@@ -60,7 +60,7 @@ impl GPU {
                     let addr = tile_start_addr + 8 * bit_depth * tile_num;
                     for y in 0..8 {
                         let colors = Engine2D::<E>::get_colors_from_tile(
-                            &vram,
+                            vram,
                             get_vram_byte,
                             addr,
                             false,
@@ -164,7 +164,7 @@ impl<E: EngineType> Engine2D<E> {
                                 } else if y_overflowed {
                                     0x800 * 2
                                 } else if x_overflowed {
-                                    0x800 * 1
+                                    0x800
                                 } else {
                                     0
                                 }

@@ -355,7 +355,7 @@ impl<E: EngineType> Engine2D<E> {
         };
         if y_not_in_window {
             for dot_x in 0..GPU::WIDTH {
-                self.windows_lines[window_i][dot_x as usize] = false;
+                self.windows_lines[window_i][dot_x] = false;
             }
             return;
         }
@@ -410,7 +410,7 @@ impl<E: EngineType> Engine2D<E> {
                     obj_height
                 };
 
-                let obj_y = (obj[0] as u16) & 0xFF;
+                let obj_y = obj[0] & 0xFF;
                 let y_end = obj_y + obj_y_bounds;
                 let y = vcount + if y_end > 256 { 256 } else { 0 };
                 (obj_y..y_end).contains(&y)
@@ -433,13 +433,13 @@ impl<E: EngineType> Engine2D<E> {
                 let (obj_width, obj_height) = Engine2D::<E>::OBJ_SIZES[obj_size][obj_shape];
                 let dot_x_signed = (dot_x as i16) / self.mosaic.obj_size.h_size as i16
                     * self.mosaic.obj_size.h_size as i16;
-                let obj_x = (obj[1] & 0x1FF) as u16;
+                let obj_x = obj[1] & 0x1FF;
                 let obj_x = if obj_x & 0x100 != 0 {
                     0xFE00 | obj_x
                 } else {
                     obj_x
                 } as i16;
-                let obj_y = (obj[0] & 0xFF) as u16;
+                let obj_y = obj[0] & 0xFF;
                 let double_size = obj[0] >> 9 & 0x1 != 0;
                 let obj_x_bounds = if double_size {
                     obj_width * 2
@@ -453,7 +453,7 @@ impl<E: EngineType> Engine2D<E> {
                 let base_tile_num = (obj[2] & 0x3FF) as usize;
                 let x_diff = dot_x_signed - obj_x;
                 let y = vcount / self.mosaic.obj_size.v_size * self.mosaic.obj_size.v_size;
-                let y_diff = (y as u16).wrapping_sub(obj_y) & 0xFF;
+                let y_diff = y.wrapping_sub(obj_y) & 0xFF;
                 let (x_diff, y_diff) = if affine {
                     let (x_diff, y_diff) = if double_size {
                         (
@@ -750,11 +750,11 @@ impl<E: EngineType> Engine2D<E> {
             }
             3 => {
                 if x_overflowed && y_overflowed {
-                    (0x800 * 1, 0x800 * 2)
+                    (0x800, 0x800 * 2)
                 } else if y_overflowed {
                     (0, 0x800 * 2)
                 } else if x_overflowed {
-                    (0x800 * 1, 0)
+                    (0x800, 0)
                 } else {
                     (0, 0)
                 }
@@ -1008,7 +1008,7 @@ impl<E: EngineType> Engine2D<E> {
         } else {
             for addr_inc in 0..4 {
                 let byte = get_vram_byte(vram, base_addr + addr_inc) as usize;
-                colors[2 * addr_inc + 0] = (palette_num, byte >> 0 & 0xF);
+                colors[2 * addr_inc] = (palette_num, byte & 0xF);
                 colors[2 * addr_inc + 1] = (palette_num, byte >> 4 & 0xF);
             }
         }
@@ -1036,13 +1036,13 @@ impl<E: EngineType> Engine2D<E> {
         if bit_depth == 8 {
             (0, tile)
         } else {
-            (palette_num, ((tile >> 4 * (tile_x % 2)) & 0xF))
+            (palette_num, ((tile >> (4 * (tile_x % 2))) & 0xF))
         }
     }
 
     pub fn latch_affine(&mut self) {
-        self.bgxs_latch = self.bgxs.clone();
-        self.bgys_latch = self.bgys.clone();
+        self.bgxs_latch = self.bgxs;
+        self.bgys_latch = self.bgys;
     }
 
     pub(super) fn calc_tile_start_addr(&self, bgcnt: &BGControl) -> usize {
@@ -1232,35 +1232,35 @@ impl<E: EngineType> Engine2D<E> {
             0x027 => self.dmys[0].write(scheduler, 1, value),
             0x028 => {
                 self.bgxs[0].write(scheduler, 0, value);
-                self.bgxs_latch[0] = self.bgxs[0].clone()
+                self.bgxs_latch[0] = self.bgxs[0]
             }
             0x029 => {
                 self.bgxs[0].write(scheduler, 1, value);
-                self.bgxs_latch[0] = self.bgxs[0].clone()
+                self.bgxs_latch[0] = self.bgxs[0]
             }
             0x02A => {
                 self.bgxs[0].write(scheduler, 2, value);
-                self.bgxs_latch[0] = self.bgxs[0].clone()
+                self.bgxs_latch[0] = self.bgxs[0]
             }
             0x02B => {
                 self.bgxs[0].write(scheduler, 3, value);
-                self.bgxs_latch[0] = self.bgxs[0].clone()
+                self.bgxs_latch[0] = self.bgxs[0]
             }
             0x02C => {
                 self.bgys[0].write(scheduler, 0, value);
-                self.bgys_latch[0] = self.bgys[0].clone()
+                self.bgys_latch[0] = self.bgys[0]
             }
             0x02D => {
                 self.bgys[0].write(scheduler, 1, value);
-                self.bgys_latch[0] = self.bgys[0].clone()
+                self.bgys_latch[0] = self.bgys[0]
             }
             0x02E => {
                 self.bgys[0].write(scheduler, 2, value);
-                self.bgys_latch[0] = self.bgys[0].clone()
+                self.bgys_latch[0] = self.bgys[0]
             }
             0x02F => {
                 self.bgys[0].write(scheduler, 3, value);
-                self.bgys_latch[0] = self.bgys[0].clone()
+                self.bgys_latch[0] = self.bgys[0]
             }
             0x030 => self.dxs[1].write(scheduler, 0, value),
             0x031 => self.dxs[1].write(scheduler, 1, value),
@@ -1311,9 +1311,9 @@ impl<E: EngineType> Engine2D<E> {
         } else {
             &self.obj_palettes
         };
-        let index = (addr & GPU::PALETTE_SIZE - 1) / 2;
-        if addr % 2 == 0 {
-            (palettes[index] >> 0) as u8
+        let index = (addr & (GPU::PALETTE_SIZE - 1)) / 2;
+        if addr.is_multiple_of(2) {
+            palettes[index] as u8
         } else {
             (palettes[index] >> 8) as u8
         }
@@ -1324,13 +1324,13 @@ impl<E: EngineType> Engine2D<E> {
     }
 
     pub fn write_palette_ram(&mut self, addr: usize, value: u16) {
-        let addr = addr as usize & (2 * GPU::PALETTE_SIZE - 1);
+        let addr = addr & (2 * GPU::PALETTE_SIZE - 1);
         let palettes = if addr < GPU::PALETTE_SIZE {
             &mut self.bg_palettes
         } else {
             &mut self.obj_palettes
         };
-        let index = (addr & GPU::PALETTE_SIZE - 1) / 2;
+        let index = (addr & (GPU::PALETTE_SIZE - 1)) / 2;
         palettes[index] = value;
     }
 

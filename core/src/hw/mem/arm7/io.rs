@@ -5,7 +5,7 @@ impl HW {
         match addr {
             0x0400_0004 => self.gpu.dispstats[0].read(0),
             0x0400_0005 => self.gpu.dispstats[0].read(1),
-            0x0400_0006 => (self.gpu.vcount >> 0) as u8,
+            0x0400_0006 => self.gpu.vcount as u8,
             0x0400_0007 => (self.gpu.vcount >> 8) as u8,
             0x0400_00B0..=0x0400_00BB => self.dmas[0].read(0, addr - 0xB0),
             0x0400_00BC..=0x0400_00C7 => self.dmas[0].read(1, addr - 0xBC),
@@ -76,7 +76,7 @@ impl HW {
     }
 
     pub(super) fn arm7_read_io16(&self, addr: u32) -> u16 {
-        (self.arm7_read_io8(addr) as u16) << 0 | (self.arm7_read_io8(addr + 1) as u16) << 8
+        (self.arm7_read_io8(addr) as u16) | (self.arm7_read_io8(addr + 1) as u16) << 8
     }
 
     pub(super) fn arm7_read_io32(&mut self, addr: u32) -> u32 {
@@ -84,7 +84,7 @@ impl HW {
             0x0410_0000 => self.ipc_fifo_recv(false),
             0x0410_0010 => self.read_game_card(false),
             _ => {
-                (self.arm7_read_io8(addr) as u32) << 0
+                (self.arm7_read_io8(addr) as u32)
                     | (self.arm7_read_io8(addr + 1) as u32) << 8
                     | (self.arm7_read_io8(addr + 2) as u32) << 16
                     | (self.arm7_read_io8(addr + 3) as u32) << 24
@@ -262,7 +262,7 @@ impl HW {
     }
 
     pub(super) fn arm7_write_io16(&mut self, addr: u32, value: u16) {
-        self.arm7_write_io8(addr + 0, (value >> 0) as u8);
+        self.arm7_write_io8(addr, value as u8);
         self.arm7_write_io8(addr + 1, (value >> 8) as u8);
     }
 
@@ -270,7 +270,7 @@ impl HW {
         match addr {
             0x0400_0188 => self.ipc_fifo_send(true, value),
             _ => {
-                self.arm7_write_io8(addr + 0, (value >> 0) as u8);
+                self.arm7_write_io8(addr, value as u8);
                 self.arm7_write_io8(addr + 1, (value >> 8) as u8);
                 self.arm7_write_io8(addr + 2, (value >> 16) as u8);
                 self.arm7_write_io8(addr + 3, (value >> 24) as u8);

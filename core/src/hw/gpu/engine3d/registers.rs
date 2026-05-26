@@ -61,7 +61,7 @@ impl IORegister for DISP3DCNT {
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
         match byte {
             0 => {
-                self.texture_mapping = value >> 0 & 0x1 != 0;
+                self.texture_mapping = value & 0x1 != 0;
                 self.highlight_shading = value >> 1 & 0x1 != 0;
                 self.alpha_test = value >> 2 & 0x1 != 0;
                 self.alpha_blending = value >> 3 & 0x1 != 0;
@@ -137,7 +137,7 @@ impl Engine3D {
             3 => {
                 (self.gxstat.command_fifo_irq as u8) << 6
                     | (self.gxstat.geometry_engine_busy as u8) << 3
-                    | ((self.gxfifo.len() == 0) as u8) << 2
+                    | ((self.gxfifo.is_empty()) as u8) << 2
                     | ((self.gxfifo.len() < Engine3D::FIFO_LEN / 2) as u8) << 1
                     | (self.gxfifo.len() >> 8) as u8
             }
@@ -162,9 +162,9 @@ impl Engine3D {
 
     pub(super) fn read_ram_count(&self, byte: usize) -> u8 {
         match byte {
-            0 => (self.polygons.len() >> 0) as u8,
+            0 => self.polygons.len() as u8,
             1 => (self.polygons.len() >> 8) as u8,
-            2 => (self.vertices.len() >> 0) as u8,
+            2 => self.vertices.len() as u8,
             3 => (self.vertices.len() >> 8) as u8,
             _ => unreachable!(),
         }
@@ -178,7 +178,7 @@ impl Engine3D {
         let index = addr / 2;
         let old_value = self.toon_table[index].as_u16();
         self.toon_table[index] = Color::from(if addr & 0x1 == 0 {
-            old_value & !0x00FF | (value as u16) << 0
+            old_value & !0x00FF | (value as u16)
         } else {
             old_value & !0xFF00 | (value as u16) << 8
         });
@@ -389,7 +389,7 @@ impl PolygonAttributes {
     }
 
     pub fn write(&mut self, value: u32) {
-        self.lights_enabled[0] = value >> 0 & 0x1 != 0;
+        self.lights_enabled[0] = value & 0x1 != 0;
         self.lights_enabled[1] = value >> 1 & 0x1 != 0;
         self.lights_enabled[2] = value >> 2 & 0x1 != 0;
         self.lights_enabled[3] = value >> 3 & 0x1 != 0;
@@ -441,7 +441,7 @@ impl FrameParams {
     }
 
     pub fn write(&mut self, value: u32) {
-        self.manual_sort_translucent = (value >> 0) & 0x1 != 0;
+        self.manual_sort_translucent = value & 0x1 != 0;
         self.w_buffer = (value >> 1) & 0x1 != 0;
     }
 }
@@ -468,7 +468,7 @@ impl Viewport {
     }
 
     pub fn write(&mut self, value: u32) {
-        self.x1 = (value >> 0) as u8 as i32;
+        self.x1 = value as u8 as i32;
         self.y1 = (value >> 8) as u8 as i32;
         self.x2 = (value >> 16) as u8 as i32;
         self.y2 = (value >> 24) as u8 as i32;

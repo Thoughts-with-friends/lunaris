@@ -81,7 +81,7 @@ bitflags! {
 impl IORegister for InterruptEnable {
     fn read(&self, byte: usize) -> u8 {
         match byte {
-            0 => (self.bits >> 0) as u8,
+            0 => self.bits as u8,
             1 => (self.bits >> 8) as u8,
             2 => (self.bits >> 16) as u8,
             3 => (self.bits >> 24) as u8,
@@ -91,7 +91,7 @@ impl IORegister for InterruptEnable {
 
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
         match byte {
-            0 => self.bits = self.bits & !0x0000_00FF | (value as u32) << 0,
+            0 => self.bits = self.bits & !0x0000_00FF | (value as u32),
             1 => self.bits = self.bits & !0x0000_FF00 | (value as u32) << 8,
             2 => self.bits = self.bits & !0x00FF_0000 | (value as u32) << 16,
             3 => self.bits = self.bits & !0xFF00_0000 | (value as u32) << 24,
@@ -103,7 +103,7 @@ impl IORegister for InterruptEnable {
 impl IORegister for InterruptMasterEnable {
     fn read(&self, byte: usize) -> u8 {
         match byte {
-            0 => (self.bits >> 0) as u8,
+            0 => self.bits as u8,
             1 => (self.bits >> 8) as u8,
             2 => (self.bits >> 16) as u8,
             3 => (self.bits >> 24) as u8,
@@ -115,7 +115,7 @@ impl IORegister for InterruptMasterEnable {
         match byte {
             0 => {
                 self.bits =
-                    self.bits & !0x0000_00FF | (value as u32) << 0 & InterruptEnable::all().bits
+                    self.bits & !0x0000_00FF | (value as u32) & InterruptEnable::all().bits
             }
             1 => {
                 self.bits =
@@ -137,7 +137,7 @@ impl IORegister for InterruptMasterEnable {
 impl IORegister for InterruptRequest {
     fn read(&self, byte: usize) -> u8 {
         match byte {
-            0 => (self.bits >> 0) as u8,
+            0 => self.bits as u8,
             1 => (self.bits >> 8) as u8,
             2 => (self.bits >> 16) as u8,
             3 => (self.bits >> 24) as u8,
@@ -147,10 +147,10 @@ impl IORegister for InterruptRequest {
 
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
         match byte {
-            0 => self.bits = self.bits & !((value as u32) << 0),
-            1 => self.bits = self.bits & !((value as u32) << 8),
-            2 => self.bits = self.bits & !((value as u32) << 16),
-            3 => self.bits = self.bits & !((value as u32) << 24),
+            0 => self.bits &= !(value as u32),
+            1 => self.bits &= !((value as u32) << 8),
+            2 => self.bits &= !((value as u32) << 16),
+            3 => self.bits &= !((value as u32) << 24),
             _ => unreachable!(),
         }
     }

@@ -31,7 +31,7 @@ impl IORegister for SoundControl {
         match byte {
             0 => self.master_volume = value & 0x7F,
             1 => {
-                self.left_output = ChannelOutput::from(value >> 0 & 0x3);
+                self.left_output = ChannelOutput::from(value & 0x3);
                 self.right_output = ChannelOutput::from(value >> 2 & 0x3);
                 self.output_1 = value >> 4 != 0;
                 self.output_3 = value >> 5 != 0;
@@ -118,7 +118,7 @@ impl<T: ChannelType> IORegister for ChannelControl<T> {
             0 => self.volume_mul = value & 0x7F,
             1 => {
                 self.hold = (value >> 7) & 0x1 != 0;
-                self.volume_div = value >> 0 & 0x3;
+                self.volume_div = value & 0x3;
             }
             2 => self.panning = value & 0x7F,
             3 => {
@@ -237,7 +237,7 @@ impl CaptureControl {
     }
 
     pub fn write(&mut self, value: u8) {
-        self.add = value >> 0 & 0x1 != 0;
+        self.add = value & 0x1 != 0;
         self.use_channel = value >> 1 & 0x1 != 0;
         self.no_repeat = value >> 2 & 0x1 != 0;
         self.use_pcm8 = value >> 3 & 0x1 != 0;

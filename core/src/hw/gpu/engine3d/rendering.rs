@@ -190,7 +190,7 @@ impl Engine3D {
             assert!(
                 x_end >= x_start,
                 "{}",
-                (|| {
+                {
                     for vert in polygon.original_verts.iter() {
                         println!("Clip: {:?}", vert.0);
                         println!("OVert: {:?}", vert.1);
@@ -204,14 +204,14 @@ impl Engine3D {
                                     super::math::FixedPoint::one()
                                 )
                         );
-                        println!("");
+                        println!();
                     }
                     for vert in vertices.iter() {
                         println!("Clip: {:?}", vert.clip_coords);
                         println!("Screen: {:?}", vert.screen_coords);
                     }
                     format!("{} {}", x_start, x_end)
-                })()
+                }
             );
             let num_steps = x_end - x_start;
             let mut color = ColorSlope::new(
@@ -290,7 +290,7 @@ impl Engine3D {
         let mask = (size.0 - 1, size.1 - 1);
         // TODO: Avoid code repitition
         let s = if polygon.tex_params.repeat_s {
-            let (original_s, mask) = (s as u32, mask.0 as u32);
+            let (original_s, mask) = (s as u32, mask.0);
             let s = original_s & mask;
             if polygon.tex_params.flip_s && (original_s >> size_shift.0) % 2 == 1 {
                 s ^ mask
@@ -306,7 +306,7 @@ impl Engine3D {
             s as u32
         } as usize;
         let t = if polygon.tex_params.repeat_t {
-            let (original_t, mask) = (t as u32, mask.1 as u32);
+            let (original_t, mask) = (t as u32, mask.1);
             let t = original_t & mask;
             if polygon.tex_params.flip_t && (original_t >> size_shift.1) % 2 == 1 {
                 t ^ mask
@@ -338,7 +338,7 @@ impl Engine3D {
             }),
             TextureFormat::Palette4 => Some({
                 let palette_color =
-                    vram.get_textures::<u8>(vram_offset + texel / 4) >> 2 * (texel % 4) & 0x3;
+                    vram.get_textures::<u8>(vram_offset + texel / 4) >> (2 * (texel % 4)) & 0x3;
                 let color = Color::from(
                     vram.get_textures_pal::<u16>(pal_offset / 2 + 2 * palette_color as usize),
                 );
@@ -351,7 +351,7 @@ impl Engine3D {
             }),
             TextureFormat::Palette16 => Some({
                 let palette_color =
-                    vram.get_textures::<u8>(vram_offset + texel / 2) >> 4 * (texel % 2) & 0xF;
+                    vram.get_textures::<u8>(vram_offset + texel / 2) >> (4 * (texel % 2)) & 0xF;
                 let color = Color::from(
                     vram.get_textures_pal::<u16>(pal_offset + 2 * palette_color as usize),
                 );
@@ -367,7 +367,7 @@ impl Engine3D {
                 let block_start_addr = t / 4 * num_blocks_row + s / 4;
                 let base_addr = vram_offset + 4 * block_start_addr;
                 let te = vram.get_textures::<u8>(base_addr + t % 4);
-                let texel_val = te >> 2 * (s % 4) & 0x3;
+                let texel_val = te >> (2 * (s % 4)) & 0x3;
                 // TODO: Check behavior and optimize
                 assert!(base_addr / 128 / 0x400 == 0 || base_addr / 128 / 0x400 == 2);
                 let extra_palette_addr = (base_addr & 0x1_FFFF) / 2
@@ -387,7 +387,7 @@ impl Engine3D {
                 };
                 match mode {
                     0 => match texel_val {
-                        0 | 1 | 2 => color(texel_val),
+                        0..=2 => color(texel_val),
                         3 => FrameBufferColor::new5(Color::new5(0, 0, 0), 0), // Transparent
                         _ => unreachable!(),
                     },

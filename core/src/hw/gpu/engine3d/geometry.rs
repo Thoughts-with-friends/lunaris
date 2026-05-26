@@ -156,42 +156,42 @@ impl Engine3D {
             MtxTrans => self.apply_cur_mat(Matrix::translate, true),
             Color => self.color = self::Color::from(param as u16),
             Normal => self.calc_lighting(
-                FixedPoint::from_frac9(((param >> 0) & 0x3FF) as u16),
+                FixedPoint::from_frac9((param & 0x3FF) as u16),
                 FixedPoint::from_frac9(((param >> 10) & 0x3FF) as u16),
                 FixedPoint::from_frac9(((param >> 20) & 0x3FF) as u16),
             ),
             TexCoord => {
-                self.raw_tex_coord = [(param >> 0) as u16 as i16, (param >> 16) as u16 as i16];
+                self.raw_tex_coord = [param as u16 as i16, (param >> 16) as u16 as i16];
                 self.tex_coord = self.raw_tex_coord;
                 self.transform_tex_coord(TexCoordTransformationMode::TexCoord, None);
             }
             Vtx16 => self.submit_vertex(
-                FixedPoint::from_frac12((self.params[0] >> 0) as u16 as i16 as i32),
+                FixedPoint::from_frac12(self.params[0] as u16 as i16 as i32),
                 FixedPoint::from_frac12((self.params[0] >> 16) as u16 as i16 as i32),
-                FixedPoint::from_frac12((self.params[1] >> 0) as u16 as i16 as i32),
+                FixedPoint::from_frac12(self.params[1] as u16 as i16 as i32),
             ),
             Vtx10 => self.submit_vertex(
-                FixedPoint::from_frac6(((param >> 0) & 0x3FF) as u16),
+                FixedPoint::from_frac6((param & 0x3FF) as u16),
                 FixedPoint::from_frac6(((param >> 10) & 0x3FF) as u16),
                 FixedPoint::from_frac6(((param >> 20) & 0x3FF) as u16),
             ),
             VtxXY => self.submit_vertex(
-                FixedPoint::from_frac12((param >> 0) as u16 as i16 as i32),
+                FixedPoint::from_frac12(param as u16 as i16 as i32),
                 FixedPoint::from_frac12((param >> 16) as u16 as i16 as i32),
                 self.prev_pos[2],
             ),
             VtxXZ => self.submit_vertex(
-                FixedPoint::from_frac12((param >> 0) as u16 as i16 as i32),
+                FixedPoint::from_frac12(param as u16 as i16 as i32),
                 self.prev_pos[1],
                 FixedPoint::from_frac12((param >> 16) as u16 as i16 as i32),
             ),
             VtxYZ => self.submit_vertex(
                 self.prev_pos[0],
-                FixedPoint::from_frac12((param >> 0) as u16 as i16 as i32),
+                FixedPoint::from_frac12(param as u16 as i16 as i32),
                 FixedPoint::from_frac12((param >> 16) as u16 as i16 as i32),
             ),
             VtxDiff => self.submit_vertex(
-                self.prev_pos[0] + FixedPoint::from_vtx_diff_param(((param >> 0) & 0x3FF) as u16),
+                self.prev_pos[0] + FixedPoint::from_vtx_diff_param((param & 0x3FF) as u16),
                 self.prev_pos[1] + FixedPoint::from_vtx_diff_param(((param >> 10) & 0x3FF) as u16),
                 self.prev_pos[2] + FixedPoint::from_vtx_diff_param(((param >> 20) & 0x3FF) as u16),
             ),
@@ -211,14 +211,14 @@ impl Engine3D {
             LightVector => {
                 self.lights[(param >> 30 & 0x3) as usize].direction = self.cur_vec
                     * [
-                        FixedPoint::from_frac9(((param >> 0) & 0x3FF) as u16),
+                        FixedPoint::from_frac9((param & 0x3FF) as u16),
                         FixedPoint::from_frac9(((param >> 10) & 0x3FF) as u16),
                         FixedPoint::from_frac9(((param >> 20) & 0x3FF) as u16),
                     ]
             }
             LightColor => {
                 self.lights[(param >> 30 & 0x3) as usize].color = [
-                    (param >> 0 & 0x1F) as i32,
+                    (param & 0x1F) as i32,
                     (param >> 5 & 0x1F) as i32,
                     (param >> 10 & 0x1F) as i32,
                 ]
@@ -234,7 +234,7 @@ impl Engine3D {
                 self.cur_poly_verts.clear();
                 self.original_verts.clear();
                 self.swap_verts = false;
-                self.polygon_attrs_latch = self.polygon_attrs.clone();
+                self.polygon_attrs_latch = self.polygon_attrs;
                 self.vertex_primitive = VertexPrimitive::from(param & 0x3);
             }
             EndVtxs => (), // Does Nothing
@@ -247,13 +247,13 @@ impl Engine3D {
             Viewport => self.viewport.write(param),
             BoxTest => {
                 let pos = (
-                    (self.params[0] >> 0) as u16 as i16,
+                    self.params[0] as u16 as i16,
                     (self.params[0] >> 16) as u16 as i16,
-                    (self.params[1] >> 0) as u16 as i16,
+                    self.params[1] as u16 as i16,
                 );
                 let size = (
                     (self.params[1] >> 16) as u16 as i16,
-                    (self.params[2] >> 0) as u16 as i16,
+                    self.params[2] as u16 as i16,
                     (self.params[2] >> 16) as u16 as i16,
                 );
                 self.gxstat.test_busy = false;
@@ -534,9 +534,9 @@ impl Engine3D {
             self.cur_poly_verts[2].clip_coords[3] - self.cur_poly_verts[1].clip_coords[3],
         );
         let mut normal = (
-            ((a.1 * b.2) as i64 - (a.2 * b.1) as i64),
-            ((a.2 * b.0) as i64 - (a.0 * b.2) as i64),
-            ((a.0 * b.1) as i64 - (a.1 * b.0) as i64),
+            ((a.1 * b.2) - (a.2 * b.1)),
+            ((a.2 * b.0) - (a.0 * b.2)),
+            ((a.0 * b.1) - (a.1 * b.0)),
         );
         while (normal.0 >> 31) ^ (normal.0 >> 63) != 0
             || (normal.1 >> 31) ^ (normal.1 >> 63) != 0
@@ -569,7 +569,7 @@ impl Engine3D {
         self.clip_plane(2);
         self.clip_plane(1);
         self.clip_plane(0);
-        if self.cur_poly_verts.len() == 0 {
+        if self.cur_poly_verts.is_empty() {
             self.original_verts.clear();
             return;
         }
@@ -680,7 +680,7 @@ impl Engine3D {
                         self.find_intersection(coord_i, true, cur_vertex, prev_vertex);
                     new_vert_i += 1;
                 }
-                new_verts[new_vert_i] = cur_vertex.clone();
+                new_verts[new_vert_i] = *cur_vertex;
                 new_vert_i += 1;
             } else if prev_vertex.clip_coords[coord_i] <= prev_vertex.clip_coords[3] {
                 // Prev point inside
@@ -709,7 +709,7 @@ impl Engine3D {
                         prev_vertex,
                     ));
                 }
-                self.cur_poly_verts.push(cur_vertex.clone());
+                self.cur_poly_verts.push(*cur_vertex);
             } else if prev_vertex.clip_coords[coord_i] >= -prev_vertex.clip_coords[3] {
                 // Prev point inside
                 self.cur_poly_verts.push(self.find_intersection(
@@ -1013,12 +1013,12 @@ impl Material {
 
     pub fn set_dif_amb(&mut self, val: u32) -> bool {
         self.diffuse = [
-            (val >> 0 & 0x1F) as i32,
+            (val & 0x1F) as i32,
             (val >> 5 & 0x1F) as i32,
             (val >> 10 & 0x1F) as i32,
         ];
         self.ambient = [
-            (val >> (16 + 0) & 0x1F) as i32,
+            (val >> 16 & 0x1F) as i32,
             (val >> (16 + 5) & 0x1F) as i32,
             (val >> (16 + 10) & 0x1F) as i32,
         ];
@@ -1027,13 +1027,13 @@ impl Material {
 
     pub fn set_spe_emi(&mut self, val: u32) {
         self.specular = [
-            (val >> 0 & 0x1F) as i32,
+            (val & 0x1F) as i32,
             (val >> 5 & 0x1F) as i32,
             (val >> 10 & 0x1F) as i32,
         ];
         self.use_shininess_table = val & 0x8000 != 0;
         self.emission = [
-            (val >> (16 + 0) & 0x1F) as i32,
+            (val >> 16 & 0x1F) as i32,
             (val >> (16 + 5) & 0x1F) as i32,
             (val >> (16 + 10) & 0x1F) as i32,
         ];
@@ -1050,7 +1050,7 @@ pub struct Color {
 impl From<u16> for Color {
     fn from(value: u16) -> Self {
         Color::new5(
-            ((value >> 0) & 0x1F) as u8,
+            (value & 0x1F) as u8,
             ((value >> 5) & 0x1F) as u8,
             ((value >> 10) & 0x1F) as u8,
         )
@@ -1093,7 +1093,7 @@ impl Color {
 
     // 8 bit components reduced to 5 bit
     pub fn as_u16(&self) -> u16 {
-        (self.b as u16 >> 3) << 10 | (self.g as u16 >> 3) << 5 | (self.r as u16 >> 3) << 0
+        (self.b as u16 >> 3) << 10 | (self.g as u16 >> 3) << 5 | (self.r as u16 >> 3)
     }
 
     pub fn r5(&self) -> u8 {
@@ -1115,13 +1115,13 @@ impl Color {
         self.b >> 2
     }
     pub fn r8(&self) -> u8 {
-        self.r >> 0
+        self.r
     }
     pub fn g8(&self) -> u8 {
-        self.g >> 0
+        self.g
     }
     pub fn b8(&self) -> u8 {
-        self.b >> 0
+        self.b
     }
 }
 

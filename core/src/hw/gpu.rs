@@ -186,9 +186,9 @@ impl GPU {
 
     pub fn get_screens(&self) -> [&Vec<u16>; 2] {
         if self.powcnt1.contains(POWCNT1::TOP_A) {
-            [&self.engine_a.pixels(), &self.engine_b.pixels()]
+            [self.engine_a.pixels(), self.engine_b.pixels()]
         } else {
-            [&self.engine_b.pixels(), &self.engine_a.pixels()]
+            [self.engine_b.pixels(), self.engine_a.pixels()]
         }
     }
 }

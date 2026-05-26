@@ -164,10 +164,10 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 }
                 self.regs[15] = src;
                 if src & 0x1 != 0 {
-                    self.regs[15] = self.regs[15] & !0x1;
+                    self.regs[15] &= !0x1;
                     self.fill_thumb_instr_buffer(hw);
                 } else {
-                    self.regs[15] = self.regs[15] & !0x2;
+                    self.regs[15] &= !0x2;
                     self.regs.set_t(false);
                     self.fill_arm_instr_buffer(hw);
                 }
@@ -560,7 +560,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     ) {
         assert_eq!(instr >> 12, 0b1101);
         let condition = (C3 as u8) << 3 | (C2 as u8) << 2 | (C1 as u8) << 1 | (C0 as u8);
-        assert_eq!(condition < 0xE, true);
+        assert!(condition < 0xE);
         let offset = (instr & 0xFF) as i8 as u32;
         if self.should_exec(condition as u32) {
             self.instruction_prefetch::<u16>(hw, AccessType::N);
@@ -616,17 +616,17 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 assert!(IS_ARM9);
                 // BLX
                 if self.regs[15] & 0x1 != 0 {
-                    self.regs[15] = self.regs[15] & !0x1;
+                    self.regs[15] &= !0x1;
                     self.fill_thumb_instr_buffer(hw);
                 } else {
-                    self.regs[15] = self.regs[15] & !0x2;
+                    self.regs[15] &= !0x2;
                     self.regs.set_t(false);
                     self.fill_arm_instr_buffer(hw);
                 }
             }
         } else {
             // First Instruction
-            assert_eq!(X, true);
+            assert!(X);
             let offset = if offset >> 10 & 0x1 != 0 {
                 0xFFFF_F800 | offset
             } else {

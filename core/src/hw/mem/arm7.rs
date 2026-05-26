@@ -55,7 +55,7 @@ impl HW {
                 }
                 MemoryRegion::SharedWRAM => HW::write_mem(
                     &mut self.shared_wram,
-                    self.wramcnt.arm7_offset + addr & self.wramcnt.arm7_mask,
+                    (self.wramcnt.arm7_offset + addr) & self.wramcnt.arm7_mask,
                     value,
                 ),
                 MemoryRegion::IO => self.arm7_write_io(addr, value),

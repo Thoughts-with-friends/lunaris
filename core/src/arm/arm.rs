@@ -112,7 +112,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let op2 = if immediate_op2 {
             let shift = (instr >> 8) & 0xF;
             let operand = instr & 0xFF;
-            if (opcode < 0x5 || opcode > 0x7) && shift != 0 {
+            if !(0x5..=0x7).contains(&opcode) && shift != 0 {
                 self.shift(3, operand, shift * 2, true, change_status)
             } else {
                 operand.rotate_right(shift * 2)
@@ -135,7 +135,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 op2,
                 shift,
                 !shift_by_reg,
-                change_status && (opcode < 0x5 || opcode > 0x7),
+                change_status && !(0x5..=0x7).contains(&opcode),
             )
         };
         let op1 = self.regs[(instr >> 16) & 0xF];
@@ -160,7 +160,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         } else if special_change_status {
             self.regs.restore_cpsr()
         } else {
-            assert_eq!(opcode & 0xC != 0x8, true)
+            assert!(opcode & 0xC != 0x8)
         }
         let mut clocked = false;
         if opcode & 0xC != 0x8 {
@@ -227,12 +227,12 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 self.regs.update_spsr_mode();
             } else {
                 self.regs.save_banked();
-                set(&mut self.regs.cpsr_mut());
+                set(self.regs.cpsr_mut());
                 self.regs.update_cpsr_mode();
                 self.regs.load_banked(self.regs.get_mode());
             }
         } else {
-            assert_eq!(immediate_operand, false);
+            assert!(!immediate_operand);
             self.regs[instr >> 12 & 0xF] = if use_spsr {
                 self.regs.spsr()
             } else {
@@ -284,7 +284,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
 
         self.instruction_prefetch::<u32>(hw, AccessType::S);
         self.internal();
-        self.inc_mul_clocks(op1 as u32, signed);
+        self.inc_mul_clocks(op1, signed);
         let result = if signed {
             (op1 as i32 as u64).wrapping_mul(op2 as i32 as u64)
         } else {
@@ -300,7 +300,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             self.regs.set_n(result & 0x8000_0000_0000_0000 != 0);
             self.regs.set_z(result == 0);
         }
-        self.regs[src_dest_reg_low] = (result >> 0) as u32;
+        self.regs[src_dest_reg_low] = result as u32;
         self.regs[src_dest_reg_high] = (result >> 32) as u32;
     }
 
@@ -395,7 +395,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         } else {
             // TOOD: Take into account privilege of access
             let force_non_privileged_access = instr >> 21 & 0x1 != 0;
-            assert_eq!(force_non_privileged_access, false);
+            assert!(!force_non_privileged_access);
             // Write back is not done if src_reg == base_reg
             exec(base);
             if write_back {
@@ -479,7 +479,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 let addr = addr & !0x1;
                 assert!(IS_ARM9 || opcode == 1);
                 if opcode == 2 || opcode == 3 {
-                    assert!(src_dest_reg % 2 == 0 && src_dest_reg != 14); // Rd is a multiple of 2 and cannot be 14
+                    assert!(src_dest_reg.is_multiple_of(2) && src_dest_reg != 14); // Rd is a multiple of 2 and cannot be 14
                     assert!(addr & 0x7 == 0); // Addr must be double-word aligned
                                               // For STRD, Rm != Rd and Rm != Rd + 1
                     if opcode == 3 && !immediate_offset {
@@ -517,7 +517,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             }
         } else {
             exec(base);
-            assert_eq!(instr >> 24 & 0x1 != 0, false);
+            assert!((instr >> 24 & 0x1 == 0));
             // Write back is not done if src_reg == base_reg
             if write_back {
                 self.regs[base_reg] = offset_applied
@@ -747,7 +747,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let result = match opcode {
             0b00 => {
                 // SMLA
-                let product = (get_half(operand2, X) as i32 * get_half(operand1, Y) as i32) as i32;
+                let product = get_half(operand2, X) as i32 * get_half(operand1, Y) as i32 ;
                 let (result, overflowed) = product.overflowing_add(accumulate as i32);
                 if overflowed {
                     self.regs.set_q(true)
@@ -817,7 +817,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let cp_src_dest_reg = instr >> 16 & 0xF;
         let arm_src_dest_reg = instr >> 12 & 0xF;
         let cp_info = (CP2 as u32) << 2 | (CP1 as u32) << 1 | (CP0 as u32);
-        assert_eq!(instr >> &4 & 0x1, 1);
+        assert_eq!(instr >> 4 & 0x1, 1);
         let cp_operand_reg = instr & 0xF;
         if OP {
             // MRC

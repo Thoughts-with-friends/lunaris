@@ -32,17 +32,18 @@ impl dyn Backup {
                 _ => todo!(),
             }
         } else {
-            warn!("Game not found in DB!");
+            warn!(target: "nds_core::savedata", "Game not found in DB!");
             Box::new(NoBackup::new())
         }
     }
 
     fn mmap(save_file: File, default_val: u8, size: usize) -> MmapMut {
+        debug!(target: "nds_core::savedata", "mmap: default_val={default_val}, size=  {size:#X}");
+
         let mut save_file = save_file;
         if save_file.metadata().unwrap().len() as usize != size {
             save_file.write_all(&vec![default_val; size]).unwrap();
         }
-
         unsafe { MmapOptions::new().map_mut(&save_file).unwrap() }
     }
 }
