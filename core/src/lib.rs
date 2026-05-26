@@ -1,5 +1,9 @@
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
-#![expect(clippy::duplicate_mod)]
+#![expect(
+    clippy::enum_variant_names,
+    clippy::too_many_arguments,
+    clippy::upper_case_acronyms
+)]
 
 #[cfg(feature = "nightly")]
 use core::intrinsics::{likely, unlikely};

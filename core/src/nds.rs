@@ -132,6 +132,14 @@ impl NDS {
     ) -> Self {
         let save_file_path = rom_path.with_extension("sav");
 
+        if !save_file_path.exists() {
+            info!(
+                target: "nds_core::savedata",
+                "Save file not found, creating new one at {}",
+                save_file_path.display()
+            );
+        }
+
         let save_file = OpenOptions::new()
             .read(true)
             .write(true)

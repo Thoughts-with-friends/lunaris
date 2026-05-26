@@ -25,10 +25,12 @@ pub fn handle_gamepad_input(io: &imgui::Io, glfw: &glfw::Glfw, nds: &mut NDS) {
                 handle_gamepad_button(nds, &state, ButtonY, nds::Key::X);
                 handle_gamepad_button(nds, &state, ButtonX, nds::Key::Y);
 
+                // FIXME: LR input not working on the NDS side. Cause unknown.
                 handle_gamepad_button(nds, &state, ButtonLeftBumper, nds::Key::L);
                 handle_gamepad_button(nds, &state, ButtonRightBumper, nds::Key::R);
                 handle_gamepad_button(nds, &state, ButtonLeftThumb, nds::Key::L);
                 handle_gamepad_button(nds, &state, ButtonRightThumb, nds::Key::R);
+
                 handle_gamepad_button(nds, &state, ButtonStart, nds::Key::Start);
                 handle_gamepad_button(nds, &state, ButtonBack, nds::Key::Select);
 
