@@ -10,8 +10,7 @@ pub struct Audio {
 }
 
 impl Audio {
-    const DS_SAMPLE_RATE: f32 = 48_000.0; // 32_000_0
-    const SINC_WINDOW: usize = 8; // ±8 samples
+    const SINC_WINDOW: usize = 16; // ±16 samples
 
     fn calculate_buffer_len(sample_rate: u32) -> usize {
         ((sample_rate as usize) * 100) / 1000
@@ -109,8 +108,8 @@ impl Audio {
     }
 
     pub fn push_sample(&mut self, left_sample: f32, right_sample: f32) {
-        let left_clipped = left_sample.max(-1.0).min(1.0);
-        let right_clipped = right_sample.max(-1.0).min(1.0);
+        let left_clipped = left_sample.clamp(-1.0, 1.0);
+        let right_clipped = right_sample.clamp(-1.0, 1.0);
 
         // push to history
         if self.history.len() >= Self::SINC_WINDOW * 4 {
@@ -118,10 +117,11 @@ impl Audio {
         }
         self.history.push_back([left_clipped, right_clipped]);
 
-        let ratio = self.config.sample_rate.0 as f32 / Self::DS_SAMPLE_RATE;
-        // let ratio = Self::DS_SAMPLE_RATE / self.config.sample_rate.0 as f32;
+        // let ratio = 32768.0 / self.config.sample_rate.0 as f32;
+        let ratio = 1.0;
         self.fraction += ratio;
 
+        // 32.768 kHz → device sample rate
         while self.fraction >= 1.0 {
             self.fraction -= 1.0;
 
@@ -143,7 +143,7 @@ impl Audio {
     }
 
     pub fn sample_rate(&self) -> usize {
-        self.config.sample_rate.0 as usize
+        self.config.sample_rate.0 as usize // 48kHz
     }
 }
 

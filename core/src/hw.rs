@@ -332,8 +332,8 @@ impl Engine {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum GraphicsType {
-    BG,
-    OBJ,
+    BG,  // Background
+    OBJ, // Object: character sprites
 }
 
 impl GraphicsType {

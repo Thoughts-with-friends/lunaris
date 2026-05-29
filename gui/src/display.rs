@@ -150,6 +150,10 @@ impl Display {
         }
     }
 
+    pub fn set_last_rom_path(&mut self, path: Option<PathBuf>) {
+        self.config.last_rom_path = path;
+    }
+
     fn prepare_frame(&mut self, io: &mut imgui::Io) {
         if io.want_set_mouse_pos {
             self.window

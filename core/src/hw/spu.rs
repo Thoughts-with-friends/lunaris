@@ -610,13 +610,15 @@ impl<T: ChannelType> Channel<T> {
                 scheduler.schedule(
                     Event::ResetAudioChannel(self.spec),
                     HW::reset_audio_channel,
-                    (-(self.timer_val as i16) as u16) as usize,
+                    // (-(self.timer_val as i16) as u16) as usize,
+                    ((0x10000u32 - self.timer_val as u32) * 2) as usize,
                 );
             } else {
                 scheduler.schedule(
                     Event::StepAudioChannel(self.spec),
                     HW::step_audio_channel,
-                    (-(self.timer_val as i16) as u16) as usize,
+                    // (-(self.timer_val as i16) as u16) as usize,
+                    ((0x10000u32 - self.timer_val as u32) * 2) as usize,
                 );
             }
         }

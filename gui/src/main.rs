@@ -3,7 +3,7 @@ mod debug;
 mod display;
 pub mod gamepad;
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::path::PathBuf;
 
 use nds_core::log::*;
@@ -21,14 +21,15 @@ fn setup_logging() {
 
     let instructions7_filter = LevelFilter::Off;
     let instructions9_filter = LevelFilter::Off;
-    let savedata_filter = LevelFilter::Trace;
+    let savedata_filter = LevelFilter::Off;
 
     let arm7_file = File::create(arm7_file_name);
     let arm9_file = File::create(arm9_file_name);
     let savedata_file = File::create(savedata_file_name);
 
     let mut loggers: Vec<Box<dyn SharedLogger>> = vec![TermLogger::new(
-        LevelFilter::Warn,
+        LevelFilter::Off,
+        // LevelFilter::Warn,
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
@@ -90,10 +91,10 @@ fn main() {
 
     // Try to get ROM path from command line or show file selection dialog
     let mut config = self::config::Config::load();
-    let rom_path = if let Some(arg) = std::env::args().nth(1) {
-        PathBuf::from(arg)
+    let mut current_rom_path = if let Some(arg) = std::env::args().nth(1) {
+        Some(PathBuf::from(arg))
     } else if let Some(path) = config.last_rom_path.clone() {
-        path
+        Some(path)
     } else {
         match rfd::FileDialog::new()
             .add_filter("NDS ROM", &["nds"])
@@ -101,7 +102,7 @@ fn main() {
         {
             Some(path) => {
                 config.last_rom_path = Some(path.clone());
-                path
+                Some(path)
             }
             None => {
                 error!("No ROM file selected");
@@ -109,6 +110,8 @@ fn main() {
             }
         }
     };
+
+    let rom_path = current_rom_path.clone().unwrap();
 
     let bios7_path = PathBuf::from("ROMs/bios7.bin");
     let bios9_path = PathBuf::from("ROMs/bios9.bin");
@@ -160,6 +163,8 @@ fn main() {
         let (keys_pressed, files_dropped) =
             display.render_main(&mut nds, &mut imgui, main_menu_height);
 
+        let mut pending_last_rom_path: Option<PathBuf> = None;
+
         display.render_imgui(&mut imgui, keys_pressed, |ui, keys_pressed| {
             ui.main_menu_bar(|| {
                 // =================================================
@@ -176,11 +181,38 @@ fn main() {
                             .add_filter("NDS ROM", &["nds"])
                             .pick_file()
                         {
+                            current_rom_path = Some(path.clone());
+                            pending_last_rom_path = Some(path.clone());
                             nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, &path);
 
                             paused = false;
 
                             info!("Loaded ROM: {:?}", path);
+                        }
+                    }
+
+                    if MenuItem::new(im_str!("Import Savefile")).build(ui) {
+                        if let Some(save_path) = rfd::FileDialog::new()
+                            .add_filter("NDS Save", &["sav"])
+                            .pick_file()
+                        {
+                            if let Some(rom_path) = current_rom_path.clone() {
+                                let target_save_path = rom_path.with_extension("sav");
+                                if let Err(err) = fs::copy(&save_path, &target_save_path) {
+                                    error!("Failed to import savefile: {}", err);
+                                } else {
+                                    nds = NDS::load_rom(
+                                        bios7_path,
+                                        bios9_path,
+                                        firmware_path,
+                                        &rom_path,
+                                    );
+                                    paused = false;
+                                    info!("Imported savefile from {:?}", save_path);
+                                }
+                            } else {
+                                error!("Cannot import savefile without a loaded ROM");
+                            }
                         }
                     }
 
@@ -213,9 +245,12 @@ fn main() {
                     // Reset emulator
                     // =============================================
                     if MenuItem::new(im_str!("Reset")).build(ui) {
-                        nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, &rom_path);
-
-                        paused = false;
+                        if let Some(ref rom_path) = current_rom_path {
+                            nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, rom_path);
+                            paused = false;
+                        } else {
+                            error!("Cannot reset emulator without a loaded ROM");
+                        }
                     }
                 });
 
@@ -241,6 +276,10 @@ fn main() {
 
             stats_window.render(ui);
         });
+
+        if let Some(path) = pending_last_rom_path.take() {
+            display.set_last_rom_path(Some(path));
+        }
 
         // =====================================================
         // Existing drag-and-drop ROM loading
