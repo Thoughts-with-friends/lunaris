@@ -582,8 +582,7 @@ impl MasterBright {
 
     pub fn apply(&self, color: u16) -> u16 {
         let alpha = color & 0x8000;
-        let split_channels =
-            |color: u16| [color & 0x1F, color >> 5 & 0x1F, color >> 10 & 0x1F];
+        let split_channels = |color: u16| [color & 0x1F, color >> 5 & 0x1F, color >> 10 & 0x1F];
         let combine_channels =
             |channels: [u16; 3]| channels[0] | (channels[1] << 5) | (channels[2] << 10);
         alpha

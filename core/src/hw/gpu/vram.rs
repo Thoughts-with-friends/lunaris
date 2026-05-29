@@ -65,8 +65,7 @@ impl VRAM {
 
     pub fn new() -> Self {
         let create_vecs = |len| {
-            std::iter::repeat_n(Vec::with_capacity(VRAM::BANKS_LEN.len()), len)
-                .collect::<Vec<_>>()
+            std::iter::repeat_n(Vec::with_capacity(VRAM::BANKS_LEN.len()), len).collect::<Vec<_>>()
         };
         VRAM {
             cnts: [VRAMCNT::new(0, 0); 9],

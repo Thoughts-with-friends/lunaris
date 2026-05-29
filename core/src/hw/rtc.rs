@@ -35,7 +35,6 @@ impl RTC {
     }
 
     fn read_parameter(&mut self, parameter: Parameter) -> (u8, Parameter) {
-        
         match parameter {
             Parameter::StatusReg1 => {
                 self.last_byte = true;

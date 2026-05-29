@@ -38,9 +38,8 @@ fn parse_tokens(input: proc_macro::TokenStream) -> Result<TokenStream> {
             let lo = range.lo;
             let hi = range.hi;
 
-            let make_range_error = |message| {
-                Err(Error::new_spanned(range.to_token_stream(), message))
-            };
+            let make_range_error =
+                |message| Err(Error::new_spanned(range.to_token_stream(), message));
 
             if field_type.to_token_stream().to_string() == "bool" && lo != hi {
                 return make_range_error("Bitfield range is too large for a bool");

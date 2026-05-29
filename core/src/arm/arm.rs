@@ -747,7 +747,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let result = match opcode {
             0b00 => {
                 // SMLA
-                let product = get_half(operand2, X) as i32 * get_half(operand1, Y) as i32 ;
+                let product = get_half(operand2, X) as i32 * get_half(operand1, Y) as i32;
                 let (result, overflowed) = product.overflowing_add(accumulate as i32);
                 if overflowed {
                     self.regs.set_q(true)

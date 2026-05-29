@@ -33,7 +33,6 @@ impl HW {
     }
 
     fn read_game_card(&mut self, is_arm9: bool) -> u32 {
-        
         self.cartridge.read_gamecard(
             &mut self.scheduler,
             is_arm9,

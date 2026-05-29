@@ -199,10 +199,12 @@ impl HW {
             self.interrupts[i].request |= self.timers[i].timers[num].interrupt
         }
         // Cascade Timers
-        if num + 1 < Timers::NUM_TIMERS && self.timers[i][num + 1].is_count_up()
-            && self.timers[i][num + 1].clock() {
-                self.on_timer_overflow(Event::TimerOverflow(is_nds9, num + 1))
-            }
+        if num + 1 < Timers::NUM_TIMERS
+            && self.timers[i][num + 1].is_count_up()
+            && self.timers[i][num + 1].clock()
+        {
+            self.on_timer_overflow(Event::TimerOverflow(is_nds9, num + 1))
+        }
         // TODO: Can I move this up to avoid recreating timers
         if !self.timers[i][num].is_count_up() {
             self.timers[i][num].reload();

@@ -114,8 +114,7 @@ impl IORegister for InterruptMasterEnable {
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
         match byte {
             0 => {
-                self.bits =
-                    self.bits & !0x0000_00FF | (value as u32) & InterruptEnable::all().bits
+                self.bits = self.bits & !0x0000_00FF | (value as u32) & InterruptEnable::all().bits
             }
             1 => {
                 self.bits =
