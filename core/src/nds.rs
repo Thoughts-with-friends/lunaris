@@ -34,6 +34,7 @@ impl NDS {
         }
     }
 
+    #[inline]
     pub fn set_audio_volume(&mut self, volume_percent: f32) {
         self.hw.set_audio_volume(volume_percent);
     }
@@ -133,6 +134,7 @@ impl NDS {
         bios9_path: Option<&Path>,
         firmware_path: Option<&Path>,
         rom_path: &Path,
+        audio_volume: f32,
     ) -> Self {
         let save_file_path = rom_path.with_extension("sav");
 
@@ -186,13 +188,15 @@ impl NDS {
                 .unwrap()
         };
 
-        NDS::new(
+        let mut nds = NDS::new(
             bios7,
             bios9,
             firmware_file,
             fs::read(rom_path).unwrap(),
             save_file,
-        )
+        );
+        nds.set_audio_volume(audio_volume);
+        nds
     }
 }
 

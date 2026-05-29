@@ -128,11 +128,16 @@ fn main() {
     let firmware_path = firmware_path.exists().then_some(firmware_path);
     let firmware_path = firmware_path.as_deref();
 
-    let mut nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, &rom_path);
+    let mut nds = NDS::load_rom(
+        bios7_path,
+        bios9_path,
+        firmware_path,
+        &rom_path,
+        config.audio_volume,
+    );
 
     let mut imgui = Context::create();
     let mut display = Display::new(&mut imgui, config);
-    nds.set_audio_volume(display.audio_volume());
 
     // =========================================================
     // CHANGE:
@@ -190,9 +195,13 @@ fn main() {
                         {
                             current_rom_path = Some(path.clone());
                             pending_last_rom_path = Some(path.clone());
-                            nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, &path);
-                            nds.set_audio_volume(audio_volume);
-
+                            nds = NDS::load_rom(
+                                bios7_path,
+                                bios9_path,
+                                firmware_path,
+                                &path,
+                                audio_volume,
+                            );
                             paused = false;
 
                             info!("Loaded ROM: {:?}", path);
@@ -214,8 +223,8 @@ fn main() {
                                         bios9_path,
                                         firmware_path,
                                         &rom_path,
+                                        audio_volume,
                                     );
-                                    nds.set_audio_volume(audio_volume);
                                     paused = false;
                                     info!("Imported savefile from {:?}", save_path);
                                 }
@@ -255,8 +264,13 @@ fn main() {
                     // =============================================
                     if MenuItem::new(im_str!("Reset")).build(ui) {
                         if let Some(ref rom_path) = current_rom_path {
-                            nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, rom_path);
-                            nds.set_audio_volume(audio_volume);
+                            nds = NDS::load_rom(
+                                bios7_path,
+                                bios9_path,
+                                firmware_path,
+                                rom_path,
+                                audio_volume,
+                            );
                             paused = false;
                         } else {
                             error!("Cannot reset emulator without a loaded ROM");
@@ -328,9 +342,13 @@ fn main() {
             if let Some(ext) = files_dropped[0].extension() {
                 if let Some(str) = ext.to_str() {
                     if str.to_lowercase() == "nds" {
-                        nds =
-                            NDS::load_rom(bios7_path, bios9_path, firmware_path, &files_dropped[0]);
-                        nds.set_audio_volume(display.audio_volume());
+                        nds = NDS::load_rom(
+                            bios7_path,
+                            bios9_path,
+                            firmware_path,
+                            &files_dropped[0],
+                            audio_volume,
+                        );
 
                         // =========================================
                         // CHANGE:

@@ -144,10 +144,12 @@ impl Audio {
         }
     }
 
+    #[inline]
     pub fn sample_rate(&self) -> usize {
         self.config.sample_rate.0 as usize // 48kHz
     }
 
+    #[inline]
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
     }
