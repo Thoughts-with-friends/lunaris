@@ -173,6 +173,10 @@ impl HW {
         self.spi.release_screen();
     }
 
+    pub fn set_audio_volume(&mut self, volume_percent: f32) {
+        self.spu.set_audio_volume(volume_percent);
+    }
+
     pub fn render_palettes(
         &self,
         extended: bool,

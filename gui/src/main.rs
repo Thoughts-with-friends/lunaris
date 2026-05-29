@@ -128,6 +128,10 @@ fn main() {
 
     let mut nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, &rom_path);
 
+    let mut imgui = Context::create();
+    let mut display = Display::new(&mut imgui, config);
+    nds.set_audio_volume(display.audio_volume());
+
     // =========================================================
     // CHANGE:
     // Added emulator execution state
@@ -146,8 +150,7 @@ fn main() {
 
     let mut stats_window = StatsWindow::new();
 
-    let mut imgui = Context::create();
-    let mut display = Display::new(&mut imgui, config);
+    let mut show_audio_settings_window = false;
 
     let main_loop = move |display: &mut Display| {
         // =====================================================
@@ -164,6 +167,8 @@ fn main() {
             display.render_main(&mut nds, &mut imgui, main_menu_height);
 
         let mut pending_last_rom_path: Option<PathBuf> = None;
+        let mut audio_volume = display.audio_volume();
+        let mut audio_volume_changed = false;
 
         display.render_imgui(&mut imgui, keys_pressed, |ui, keys_pressed| {
             ui.main_menu_bar(|| {
@@ -184,6 +189,7 @@ fn main() {
                             current_rom_path = Some(path.clone());
                             pending_last_rom_path = Some(path.clone());
                             nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, &path);
+                            nds.set_audio_volume(audio_volume);
 
                             paused = false;
 
@@ -207,6 +213,7 @@ fn main() {
                                         firmware_path,
                                         &rom_path,
                                     );
+                                    nds.set_audio_volume(audio_volume);
                                     paused = false;
                                     info!("Imported savefile from {:?}", save_path);
                                 }
@@ -247,6 +254,7 @@ fn main() {
                     if MenuItem::new(im_str!("Reset")).build(ui) {
                         if let Some(ref rom_path) = current_rom_path {
                             nds = NDS::load_rom(bios7_path, bios9_path, firmware_path, rom_path);
+                            nds.set_audio_volume(audio_volume);
                             paused = false;
                         } else {
                             error!("Cannot reset emulator without a loaded ROM");
@@ -263,8 +271,32 @@ fn main() {
                     stats_window.menu_item(ui);
                 });
 
+                // =================================================
+                // Added Config menu
+                // =================================================
+                ui.menu(im_str!("Config"), true, || {
+                    if MenuItem::new(im_str!("Audio Settings")).build(ui) {
+                        show_audio_settings_window = true;
+                    }
+                });
+
                 main_menu_height = ui.window_size()[1];
             });
+
+            if show_audio_settings_window {
+                imgui::Window::new(imgui::im_str!("Audio Settings"))
+                    .size([320.0, 110.0], imgui::Condition::FirstUseEver)
+                    .opened(&mut show_audio_settings_window)
+                    .build(ui, || {
+                        if Slider::new(imgui::im_str!("Volume"))
+                            .range(0.0_f32..=100.0_f32)
+                            .build(ui, &mut audio_volume)
+                        {
+                            audio_volume_changed = true;
+                        }
+                        ui.text(format!("Volume: {:.0}%", audio_volume));
+                    });
+            }
 
             palettes_window.render(&mut nds, ui, &keys_pressed);
 
@@ -281,6 +313,12 @@ fn main() {
             display.set_last_rom_path(Some(path));
         }
 
+        if audio_volume_changed {
+            display.set_audio_volume(audio_volume);
+            nds.set_audio_volume(audio_volume);
+            display.save_config();
+        }
+
         // =====================================================
         // Existing drag-and-drop ROM loading
         // =====================================================
@@ -290,6 +328,7 @@ fn main() {
                     if str.to_lowercase() == "nds" {
                         nds =
                             NDS::load_rom(bios7_path, bios9_path, firmware_path, &files_dropped[0]);
+                        nds.set_audio_volume(display.audio_volume());
 
                         // =========================================
                         // CHANGE:

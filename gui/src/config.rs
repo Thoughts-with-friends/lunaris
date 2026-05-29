@@ -27,7 +27,7 @@ impl Default for Config {
             window_width: 512,
             window_height: 768,
 
-            audio_volume: 1.0,
+            audio_volume: 100.0,
         }
     }
 }

@@ -34,6 +34,10 @@ impl NDS {
         }
     }
 
+    pub fn set_audio_volume(&mut self, volume_percent: f32) {
+        self.hw.set_audio_volume(volume_percent);
+    }
+
     pub fn emulate_frame(&mut self) {
         while !self.hw.rendered_frame() {
             if likely(!self.hw.gpu.bus_stalled()) {

@@ -107,7 +107,7 @@ impl SPU {
             ChannelOutput::Mixer => mixer.1,
             ChannelOutput::Ch1 => ch1.1,
             ChannelOutput::Ch3 => ch3.1,
-            ChannelOutput::Ch1Ch3 => ch1.0 + ch3.0,
+            ChannelOutput::Ch1Ch3 => ch1.0 + ch3.1,
         } >> 16;
         let final_sample = (
             ((left_sample * self.cnt.master_volume()) >> 7) as i16,
@@ -117,6 +117,10 @@ impl SPU {
             cpal::Sample::from::<i16>(&final_sample.0),
             cpal::Sample::from::<i16>(&final_sample.1),
         );
+    }
+
+    pub fn set_audio_volume(&mut self, volume_percent: f32) {
+        self.audio.set_volume(volume_percent / 100.0);
     }
 
     pub fn capture_addr(&mut self, num: usize) -> Option<(u32, usize, bool)> {

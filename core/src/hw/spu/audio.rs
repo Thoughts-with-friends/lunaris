@@ -7,6 +7,7 @@ pub struct Audio {
     prod: ringbuf::Producer<[f32; 2]>,
     fraction: f32,
     history: VecDeque<[f32; 2]>, // history buffer for sinc
+    volume: f32,
 }
 
 impl Audio {
@@ -71,6 +72,7 @@ impl Audio {
             prod,
             fraction: 0.0,
             history: VecDeque::with_capacity(Self::SINC_WINDOW * 4),
+            volume: 1.0,
         }
     }
 
@@ -108,14 +110,14 @@ impl Audio {
     }
 
     pub fn push_sample(&mut self, left_sample: f32, right_sample: f32) {
-        let left_clipped = left_sample.clamp(-1.0, 1.0);
-        let right_clipped = right_sample.clamp(-1.0, 1.0);
+        let left_scaled = (left_sample * self.volume).clamp(-1.0, 1.0);
+        let right_scaled = (right_sample * self.volume).clamp(-1.0, 1.0);
 
         // push to history
         if self.history.len() >= Self::SINC_WINDOW * 4 {
             self.history.pop_front();
         }
-        self.history.push_back([left_clipped, right_clipped]);
+        self.history.push_back([left_scaled, right_scaled]);
 
         // let ratio = 32768.0 / self.config.sample_rate.0 as f32;
         let ratio = 1.0;
@@ -144,6 +146,10 @@ impl Audio {
 
     pub fn sample_rate(&self) -> usize {
         self.config.sample_rate.0 as usize // 48kHz
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        self.volume = volume.clamp(0.0, 1.0);
     }
 }
 
