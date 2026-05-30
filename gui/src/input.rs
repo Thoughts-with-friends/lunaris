@@ -33,10 +33,10 @@ pub struct InputState {
     pub keyboard: HashSet<glfw::Key>,
 
     /// Currently pressed gamepad buttons.
-    pub gamepad_buttons: HashSet<(glfw::JoystickId, glfw::GamepadButton)>,
+    pub gamepad_buttons: HashSet<glfw::GamepadButton>,
 
     /// Currently active gamepad axis directions.
-    pub gamepad_axes: HashSet<(glfw::JoystickId, glfw::GamepadAxis, AxisDirection)>,
+    pub gamepad_axes: HashSet<(glfw::GamepadAxis, AxisDirection)>,
 }
 
 impl InputState {
@@ -44,15 +44,11 @@ impl InputState {
         match source {
             InputSource::Keyboard { key } => self.keyboard.contains(key),
 
-            InputSource::GamepadButton { joystick, button } => {
-                self.gamepad_buttons.contains(&(*joystick, *button))
-            }
+            InputSource::GamepadButton { button } => self.gamepad_buttons.contains(button),
 
-            InputSource::GamepadAxis {
-                joystick,
-                axis,
-                direction,
-            } => self.gamepad_axes.contains(&(*joystick, *axis, *direction)),
+            InputSource::GamepadAxis { axis, direction } => {
+                self.gamepad_axes.contains(&(*axis, *direction))
+            }
         }
     }
 }
@@ -132,11 +128,10 @@ pub fn update_keyboard_input(input: &mut InputState, key: glfw::Key, pressed: bo
 
 fn update_gamepad_button(
     input: &mut InputState,
-    joystick: glfw::JoystickId,
     state: &glfw::GamepadState,
     button: glfw::GamepadButton,
 ) {
-    let key = (joystick, button);
+    let key = button;
 
     if matches!(state.get_button_state(button), glfw::Action::Press) {
         input.gamepad_buttons.insert(key);
@@ -147,15 +142,13 @@ fn update_gamepad_button(
 
 fn update_gamepad_axis(
     input: &mut InputState,
-    joystick: glfw::JoystickId,
     state: &glfw::GamepadState,
     axis: glfw::GamepadAxis,
 ) {
     let value = state.get_axis(axis);
 
-    let negative = (joystick, axis, AxisDirection::Negative);
-
-    let positive = (joystick, axis, AxisDirection::Positive);
+    let negative = (axis, AxisDirection::Negative);
+    let positive = (axis, AxisDirection::Positive);
 
     if value < -DEAD_ZONE {
         input.gamepad_axes.insert(negative);
@@ -174,10 +167,12 @@ fn update_gamepad_axis(
 ///
 /// This function intentionally does NOT know anything
 /// about emulator bindings.
-pub fn update_gamepad_input(glfw: &glfw::Glfw, input: &mut InputState) {
-    let joystick = glfw::JoystickId::Joystick1;
-
-    let js = glfw.get_joystick(joystick);
+pub fn update_gamepad_input(
+    glfw: &glfw::Glfw,
+    input: &mut InputState,
+    joystick_id: glfw::JoystickId,
+) {
+    let js = glfw.get_joystick(joystick_id);
 
     let Some(state) = js.get_gamepad_state() else {
         return;
@@ -187,43 +182,43 @@ pub fn update_gamepad_input(glfw: &glfw::Glfw, input: &mut InputState) {
     // Buttons
     //
 
-    update_gamepad_button(input, joystick, &state, ButtonA);
+    update_gamepad_button(input, &state, ButtonA);
 
-    update_gamepad_button(input, joystick, &state, ButtonB);
+    update_gamepad_button(input, &state, ButtonB);
 
-    update_gamepad_button(input, joystick, &state, ButtonX);
+    update_gamepad_button(input, &state, ButtonX);
 
-    update_gamepad_button(input, joystick, &state, ButtonY);
+    update_gamepad_button(input, &state, ButtonY);
 
-    update_gamepad_button(input, joystick, &state, ButtonDpadUp);
+    update_gamepad_button(input, &state, ButtonDpadUp);
 
-    update_gamepad_button(input, joystick, &state, ButtonDpadDown);
+    update_gamepad_button(input, &state, ButtonDpadDown);
 
-    update_gamepad_button(input, joystick, &state, ButtonDpadLeft);
+    update_gamepad_button(input, &state, ButtonDpadLeft);
 
-    update_gamepad_button(input, joystick, &state, ButtonDpadRight);
+    update_gamepad_button(input, &state, ButtonDpadRight);
 
-    update_gamepad_button(input, joystick, &state, ButtonLeftBumper);
+    update_gamepad_button(input, &state, ButtonLeftBumper);
 
-    update_gamepad_button(input, joystick, &state, ButtonRightBumper);
+    update_gamepad_button(input, &state, ButtonRightBumper);
 
-    update_gamepad_button(input, joystick, &state, ButtonStart);
+    update_gamepad_button(input, &state, ButtonStart);
 
-    update_gamepad_button(input, joystick, &state, ButtonBack);
+    update_gamepad_button(input, &state, ButtonBack);
 
     //
     // Axes
     //
 
-    update_gamepad_axis(input, joystick, &state, glfw::GamepadAxis::AxisLeftX);
+    update_gamepad_axis(input, &state, glfw::GamepadAxis::AxisLeftX);
 
-    update_gamepad_axis(input, joystick, &state, glfw::GamepadAxis::AxisLeftY);
+    update_gamepad_axis(input, &state, glfw::GamepadAxis::AxisLeftY);
 
-    update_gamepad_axis(input, joystick, &state, glfw::GamepadAxis::AxisRightX);
+    update_gamepad_axis(input, &state, glfw::GamepadAxis::AxisRightX);
 
-    update_gamepad_axis(input, joystick, &state, glfw::GamepadAxis::AxisRightY);
+    update_gamepad_axis(input, &state, glfw::GamepadAxis::AxisRightY);
 
-    update_gamepad_axis(input, joystick, &state, glfw::GamepadAxis::AxisLeftTrigger);
+    update_gamepad_axis(input, &state, glfw::GamepadAxis::AxisLeftTrigger);
 
-    update_gamepad_axis(input, joystick, &state, glfw::GamepadAxis::AxisRightTrigger);
+    update_gamepad_axis(input, &state, glfw::GamepadAxis::AxisRightTrigger);
 }

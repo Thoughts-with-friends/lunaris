@@ -355,7 +355,11 @@ impl Display {
             }
         }
 
-        crate::input::update_gamepad_input(&self.glfw, &mut self.input_state);
+        crate::input::update_gamepad_input(
+            &self.glfw,
+            &mut self.input_state,
+            self.config.joystick_id,
+        );
         crate::input::apply_input_bindings(nds, &self.config.input_bindings, &self.input_state);
 
         (keys_pressed, files_dropped)

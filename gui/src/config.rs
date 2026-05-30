@@ -37,17 +37,13 @@ pub enum InputSource {
     Keyboard { key: glfw::Key },
 
     /// Digital gamepad button input.
-    GamepadButton {
-        joystick: glfw::JoystickId,
-        button: glfw::GamepadButton,
-    },
+    GamepadButton { button: glfw::GamepadButton },
 
     /// Analog gamepad axis input.
     ///
     /// `direction` selects which half of the axis
     /// is considered active.
     GamepadAxis {
-        joystick: glfw::JoystickId,
         axis: glfw::GamepadAxis,
         direction: AxisDirection,
     },
@@ -126,6 +122,9 @@ pub struct Config {
 
     pub audio_volume: f32,
 
+    /// Joystick ID for gamepad input.
+    pub joystick_id: glfw::JoystickId,
+
     /// Input binding configuration.
     ///
     /// ```no_run
@@ -146,7 +145,6 @@ impl Default for Config {
     fn default() -> Self {
         use glfw::GamepadAxis::*;
         use glfw::GamepadButton::*;
-        use glfw::JoystickId::*;
         use glfw::Key::*;
 
         Self {
@@ -154,9 +152,11 @@ impl Default for Config {
             bios9_path: None,
             firmware_path: None,
             last_rom_path: None,
+
             window: WindowConfig::default(),
             audio_volume: 100.0,
 
+            joystick_id: glfw::JoystickId::Joystick1,
             input_bindings: vec![
                 //
                 // Keyboard
@@ -210,90 +210,68 @@ impl Default for Config {
                     target: BindKey::Select,
                 },
                 //
-                // Gamepad buttons
+                // Gamepad buttons (no joystick id anymore)
                 //
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonDpadUp,
                     }],
                     target: BindKey::Up,
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonDpadDown,
                     }],
                     target: BindKey::Down,
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonDpadLeft,
                     }],
                     target: BindKey::Left,
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonDpadRight,
                     }],
                     target: BindKey::Right,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
-                        button: ButtonB,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonB }],
                     target: BindKey::A,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
-                        button: ButtonA,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonA }],
                     target: BindKey::B,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
-                        button: ButtonY,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonY }],
                     target: BindKey::X,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
-                        button: ButtonX,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonX }],
                     target: BindKey::Y,
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonLeftBumper,
                     }],
                     target: BindKey::L,
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonRightBumper,
                     }],
                     target: BindKey::R,
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
                         button: ButtonStart,
                     }],
                     target: BindKey::Start,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        joystick: Joystick1,
-                        button: ButtonBack,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonBack }],
                     target: BindKey::Select,
                 },
                 //
@@ -301,7 +279,6 @@ impl Default for Config {
                 //
                 InputBinding {
                     sources: vec![InputSource::GamepadAxis {
-                        joystick: Joystick1,
                         axis: AxisLeftX,
                         direction: AxisDirection::Negative,
                     }],
@@ -309,7 +286,6 @@ impl Default for Config {
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadAxis {
-                        joystick: Joystick1,
                         axis: AxisLeftX,
                         direction: AxisDirection::Positive,
                     }],
@@ -317,7 +293,6 @@ impl Default for Config {
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadAxis {
-                        joystick: Joystick1,
                         axis: AxisLeftY,
                         direction: AxisDirection::Negative,
                     }],
@@ -325,7 +300,6 @@ impl Default for Config {
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadAxis {
-                        joystick: Joystick1,
                         axis: AxisLeftY,
                         direction: AxisDirection::Positive,
                     }],
@@ -336,7 +310,6 @@ impl Default for Config {
                 //
                 InputBinding {
                     sources: vec![InputSource::GamepadAxis {
-                        joystick: Joystick1,
                         axis: AxisLeftTrigger,
                         direction: AxisDirection::Positive,
                     }],
@@ -344,7 +317,6 @@ impl Default for Config {
                 },
                 InputBinding {
                     sources: vec![InputSource::GamepadAxis {
-                        joystick: Joystick1,
                         axis: AxisRightTrigger,
                         direction: AxisDirection::Positive,
                     }],
