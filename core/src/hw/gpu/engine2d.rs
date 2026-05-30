@@ -396,8 +396,9 @@ impl<E: EngineType> Engine2D<E> {
         let mut objs = oam_parsed
             .iter()
             .filter(|obj| {
-                // For the safe index, setting the shape to `& 0x2` causes the rendering to glitch for some reason.
                 let obj_shape = (obj[0] >> 14 & 0x3) as usize;
+                let obj_shape = if obj_shape > 2 { 0 } else { obj_shape }; // To avoid bound err
+
                 let obj_size = (obj[1] >> 14 & 0x3) as usize;
                 let (_, obj_height) = Engine2D::<E>::OBJ_SIZES[obj_size][obj_shape];
                 let affine = obj[0] >> 8 & 0x1 != 0;
@@ -429,6 +430,8 @@ impl<E: EngineType> Engine2D<E> {
             let mut set_color = false;
             for obj in objs.iter() {
                 let obj_shape = (obj[0] >> 14 & 0x3) as usize;
+                let obj_shape = if obj_shape > 2 { 0 } else { obj_shape }; // To avoid bound err
+
                 let obj_size = (obj[1] >> 14 & 0x3) as usize;
                 let affine = obj[0] >> 8 & 0x1 != 0;
                 let (obj_width, obj_height) = Engine2D::<E>::OBJ_SIZES[obj_size][obj_shape];
