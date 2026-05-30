@@ -16,7 +16,7 @@ winres = "0.1.12" # Meta information can be added to the exe.
 
 [dependencies]
 gl = "0.14.0"
-glfw = "0.62.0"
+glfw = { version = "0.62.0", features = ["serde"] }
 imgui = "0.7.0"
 imgui-opengl-renderer = "0.11.0"
 nds-core = { path = "../core" }

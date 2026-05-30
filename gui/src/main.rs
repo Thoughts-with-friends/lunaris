@@ -4,7 +4,7 @@
 mod config;
 mod debug;
 mod display;
-pub mod gamepad;
+mod input;
 
 use std::fs::{self, File};
 use std::path::PathBuf;

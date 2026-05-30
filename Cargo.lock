@@ -1051,6 +1051,7 @@ dependencies = [
  "log",
  "objc2",
  "raw-window-handle",
+ "serde",
  "winapi",
 ]
 

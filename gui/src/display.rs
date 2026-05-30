@@ -21,21 +21,23 @@ pub struct Display {
     prev_frame_time: Instant,
     prev_fps_update_time: Instant,
     frames_passed: u32,
+    input_state: crate::input::InputState,
 }
 
 impl Display {
     const WIDTH: usize = nds::WIDTH;
     const HEIGHT: usize = 2 * nds::HEIGHT;
-    const SCALE: usize = 1;
+    // const SCALE: usize = 1;
 
     pub fn new(imgui: &mut imgui::Context, config: Config) -> Display {
         let mut glfw = glfw::init_no_callbacks().unwrap();
 
-        let width = (Display::WIDTH * Display::SCALE) as u32;
-        let height = 19 + (Display::HEIGHT * Display::SCALE) as u32; // TODO: Don't hardcode main menu bar height
+        let width = config.window.width as u32;
+        let height = 19 + config.window.height as u32; // FIXME: Don't hardcode main menu bar height(19px)
         let (mut window, events) = glfw
             .create_window(width, height, "Lunaris", glfw::WindowMode::Windowed)
             .expect("Failed to create GLFW window!");
+        window.set_pos(config.window.pos_x, config.window.pos_y);
         window.make_current();
         window.set_all_polling(true);
         gl::load_with(|name| {
@@ -49,6 +51,7 @@ impl Display {
                 .get_proc_address(s)
                 .map_or(core::ptr::null(), |f| f as *const core::ffi::c_void)
         });
+        enable_dark_mode(&window);
 
         imgui.set_ini_filename(None);
         Self::init_imgui(&window, imgui.io_mut());
@@ -106,6 +109,7 @@ impl Display {
             prev_frame_time: Instant::now(),
             prev_fps_update_time: Instant::now(),
             frames_passed: 0,
+            input_state: crate::input::InputState::default(),
         }
     }
 
@@ -148,6 +152,7 @@ impl Display {
         while !self.window.should_close() {
             main_loop(self);
         }
+        self.config.save();
     }
 
     pub fn set_last_rom_path(&mut self, path: Option<PathBuf>) {
@@ -284,9 +289,7 @@ impl Display {
 
         self.glfw.poll_events();
 
-        let mut input = crate::gamepad::InputState::default();
         let mut keys_pressed = HashSet::new();
-        let mut modifiers = HashSet::new();
         let mut files_dropped = Vec::new();
 
         let old_mouse_pressed =
@@ -296,21 +299,18 @@ impl Display {
             Display::handle_event(io, &event);
 
             match event {
-                glfw::WindowEvent::Key(key, _, action, new_modifiers)
-                    if !io.want_capture_keyboard =>
-                {
+                glfw::WindowEvent::Key(key, _, action, _) if !io.want_capture_keyboard => {
                     if action != Action::Release {
                         keys_pressed.insert(key);
-                        modifiers.insert(new_modifiers);
                     }
 
                     match action {
                         Action::Press | Action::Repeat => {
-                            crate::gamepad::update_keyboard_input(&mut input, key, true);
+                            crate::input::update_keyboard_input(&mut self.input_state, key, true);
                         }
 
                         Action::Release => {
-                            crate::gamepad::update_keyboard_input(&mut input, key, false);
+                            crate::input::update_keyboard_input(&mut self.input_state, key, false);
                         }
                     }
                 }
@@ -343,15 +343,20 @@ impl Display {
                 }
 
                 glfw::WindowEvent::FileDrop(paths) => files_dropped = paths,
-
-                glfw::WindowEvent::Close => self.config.save(),
-
+                glfw::WindowEvent::Size(width, height) => {
+                    self.config.window.width = width;
+                    self.config.window.height = height;
+                }
+                glfw::WindowEvent::Pos(pos_x, pos_y) => {
+                    self.config.window.pos_x = pos_x;
+                    self.config.window.pos_y = pos_y;
+                }
                 _ => {}
             }
         }
-        crate::gamepad::update_gamepad_input(&self.glfw, &mut input);
 
-        crate::gamepad::apply_input_state(nds, &input);
+        crate::input::update_gamepad_input(&self.glfw, &mut self.input_state);
+        crate::input::apply_input_bindings(nds, &self.config.input_bindings, &self.input_state);
 
         (keys_pressed, files_dropped)
     }
@@ -478,3 +483,42 @@ extern "system" fn gl_debug_callback(
         panic!("OpenGL Debug message: {}", message);
     }
 }
+
+#[cfg(target_os = "windows")]
+#[expect(clippy::upper_case_acronyms)]
+pub fn enable_dark_mode(window: &glfw::PWindow) {
+    type HWND = *mut core::ffi::c_void;
+    type HRESULT = i32;
+
+    const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
+
+    #[link(name = "glfw3")]
+    unsafe extern "C" {
+        fn glfwGetWin32Window(window: *mut core::ffi::c_void) -> HWND;
+    }
+
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: HWND,
+            attribute: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> HRESULT;
+    }
+
+    let hwnd = unsafe { glfwGetWin32Window(window.window_ptr() as *mut core::ffi::c_void) };
+
+    let enabled: i32 = 1;
+
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &enabled as *const _ as *const core::ffi::c_void,
+            core::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+#[cfg(not(target_os = "windows"))]
+pub fn enable_dark_mode(_: &glfw::PWindow) {}
