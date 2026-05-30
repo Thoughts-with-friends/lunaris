@@ -484,6 +484,18 @@ extern "system" fn gl_debug_callback(
     }
 }
 
+/// Windows DWM attribute for immersive dark mode title bars.
+///
+/// GLFW internally owns a native Win32 HWND.
+/// We obtain it through GLFW's native access API:
+///
+/// GLFWwindow* -> HWND
+///
+/// Then we directly call DwmSetWindowAttribute from dwmapi.dll
+/// without depending on the windows crate.
+///
+/// This affects only the OS window decoration/title bar,
+/// not the ImGui theme itself.
 #[cfg(target_os = "windows")]
 #[expect(clippy::upper_case_acronyms)]
 pub fn enable_dark_mode(window: &glfw::PWindow) {
@@ -494,6 +506,19 @@ pub fn enable_dark_mode(window: &glfw::PWindow) {
 
     #[link(name = "glfw3")]
     unsafe extern "C" {
+        /// GLFW provides a native access API on each platform.
+        ///
+        /// On Windows:
+        ///
+        ///     GLFWwindow* -> HWND
+        ///
+        /// through glfwGetWin32Window().
+        ///
+        /// The Rust glfw crate does not expose this function directly,
+        /// so we bind it manually via FFI.
+        ///
+        /// This function exists in the GLFW native Win32 API:
+        /// https://www.glfw.org/docs/latest/group__native.html
         fn glfwGetWin32Window(window: *mut core::ffi::c_void) -> HWND;
     }
 
