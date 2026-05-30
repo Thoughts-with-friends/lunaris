@@ -28,7 +28,9 @@ impl Div {
                 self.numer.value as u32 as i32 as i64,
                 self.denom.value as u32 as i32 as i64,
             ),
-            1 => (
+            // Although 3 is reserved, it is used with `kingdom hearts 365`, and according to the reference below, it is apparently equivalent to 1.
+            // ref: https://problemkaputt.de/gbatek.htm#dsmaths
+            1 | 3 => (
                 self.numer.value as i64,
                 self.denom.value as u32 as i32 as i64,
             ),
@@ -46,7 +48,7 @@ impl Div {
             if numer == 0 {
                 self.quot.value = -1i64 as u64;
             } else {
-                self.quot.value = -numer.signum() as u64;
+                self.quot.value = (-numer.signum()) as u64;
             }
             self.rem.value = numer as u64;
             if self.cnt.mode == 0 {
