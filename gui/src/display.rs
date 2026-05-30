@@ -159,18 +159,6 @@ impl Display {
         self.config.last_rom_path = path;
     }
 
-    pub fn audio_volume(&self) -> f32 {
-        self.config.audio_volume
-    }
-
-    pub fn set_audio_volume(&mut self, volume: f32) {
-        self.config.audio_volume = volume;
-    }
-
-    pub fn save_config(&self) {
-        self.config.save();
-    }
-
     fn prepare_frame(&mut self, io: &mut imgui::Io) {
         if io.want_set_mouse_pos {
             self.window
