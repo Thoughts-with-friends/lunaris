@@ -50,13 +50,11 @@ impl Audio {
                         match output_config {
                             OutputConfig::Mono => {
                                 let sample = (samples[0] + samples[1]) * 0.5;
-                                frame[0] = cpal::Sample::from::<f32>(&sample.max(-1.0).min(1.0));
+                                frame[0] = cpal::Sample::from::<f32>(&sample.clamp(-1.0, 1.0));
                             }
                             OutputConfig::Stereo => {
-                                frame[0] =
-                                    cpal::Sample::from::<f32>(&samples[0].max(-1.0).min(1.0));
-                                frame[1] =
-                                    cpal::Sample::from::<f32>(&samples[1].max(-1.0).min(1.0));
+                                frame[0] = cpal::Sample::from::<f32>(&samples[0].clamp(-1.0, 1.0));
+                                frame[1] = cpal::Sample::from::<f32>(&samples[1].clamp(-1.0, 1.0));
                             }
                         }
                     }

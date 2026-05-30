@@ -310,11 +310,11 @@ impl HW {
         mem: &mut [u8],
     ) {
         let mem_mask = mem.len() - 1;
-        let mut page_table_i = addr_start >> page_shift;
-        for addr in (addr_start..addr_end).step_by(page_size) {
+        for (page_table_i, addr) in
+            (addr_start >> page_shift..).zip((addr_start..addr_end).step_by(page_size))
+        {
             let mem_addr = addr & mem_mask;
             page_table[page_table_i] = mem[mem_addr..mem_addr + page_size].as_mut_ptr();
-            page_table_i += 1;
         }
     }
 }

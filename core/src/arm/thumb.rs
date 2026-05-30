@@ -646,6 +646,7 @@ pub(super) fn gen_lut<const IS_ARM9: bool>() -> [InstructionHandler<u16, IS_ARM9
     // Bits 0-7 of opcode = Bits 16-31 of instr
     let mut lut: [InstructionHandler<u16, IS_ARM9>; 256] = [ARM::undefined_instr_thumb; 256]; // Temp handler
 
+    #[expect(clippy::needless_range_loop)]
     for opcode in 0..256 {
         let skeleton = opcode << 8;
         lut[opcode] = if opcode & 0b1111_1000 == 0b0001_1000 {

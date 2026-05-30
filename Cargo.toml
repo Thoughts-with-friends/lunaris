@@ -1,14 +1,14 @@
 [workspace.package]
-authors = ["DiaSird"] 
-categories = ["encoding"] 
-description = "A modern Nintendo DS emulator written in Rust" 
-edition = "2024" 
-keywords = ["emulator", "rust"] 
-license = "GPL-3.0" 
-readme = "README.md" 
+authors = ["DiaSird"]
+categories = ["encoding"]
+description = "A modern Nintendo DS emulator written in Rust"
+edition = "2024"
+keywords = ["emulator", "rust"]
+license = "GPL-3.0"
+readme = "README.md"
 repository = "https://github.com/Thoughts-with-friends/lunaris" # NOTE: Without it, CLI & CI build will error.
-rust-version = "1.91" 
-version = "0.1.0" 
+rust-version = "1.91"
+version = "0.1.0"
 
 [workspace]
 default-members = ["gui"]
@@ -20,12 +20,18 @@ members = [
 ]
 resolver = "3"
 
+
+[profile.release]
+debug = true
+
+
 [workspace.lints.clippy]
 all = {level = "warn", priority = -1}
 cargo = {level = "warn", priority = -1}
 nursery = {level = "warn", priority = -1}
 
 # allow list
+collapsible_if = "allow"
 derive_partial_eq_without_eq = "allow"
 future_not_send = "allow"
 multiple_crate_versions = "allow"

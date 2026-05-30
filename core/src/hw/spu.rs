@@ -162,7 +162,6 @@ impl SPU {
     }
 
     pub fn read_channels(&self, addr: usize) -> u8 {
-        let addr = addr;
         let channel = (addr >> 4) & 0xF;
         let byte = addr & 0xF;
         match channel {
@@ -174,7 +173,6 @@ impl SPU {
     }
 
     pub fn write_channels(&mut self, scheduler: &mut Scheduler, addr: usize, value: u8) {
-        let addr = addr;
         let channel = (addr >> 4) & 0xF;
         let byte = addr & 0xF;
         match channel {
@@ -707,6 +705,7 @@ pub enum ChannelSpec {
     Noise(usize),
 }
 
+#[expect(unused)]
 pub trait ChannelType {
     fn supports_psg() -> bool;
     fn supports_noise() -> bool;

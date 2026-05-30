@@ -109,6 +109,7 @@ impl Engine3D {
         // Find top left and bottom right vertices
         let (mut start_vert, mut end_vert) = (0, 0);
         for (i, vert) in vertices.iter().enumerate() {
+            #[expect(clippy::if_same_then_else)]
             if vert.screen_coords[1] < vertices[start_vert].screen_coords[1] {
                 start_vert = i;
             } else if vert.screen_coords[1] == vertices[start_vert].screen_coords[1]
@@ -117,6 +118,7 @@ impl Engine3D {
                 start_vert = i;
             }
 
+            #[expect(clippy::if_same_then_else)]
             if vert.screen_coords[1] > vertices[end_vert].screen_coords[1] {
                 end_vert = i;
             } else if vert.screen_coords[1] == vertices[end_vert].screen_coords[1]
@@ -145,12 +147,15 @@ impl Engine3D {
             }
         };
 
-        let (next_left, next_right): (Box<dyn Fn(usize) -> usize>, Box<dyn Fn(usize) -> usize>) =
-            if polygon.is_front {
-                (Box::new(next), Box::new(prev))
-            } else {
-                (Box::new(prev), Box::new(next))
-            };
+        #[expect(clippy::type_complexity)]
+        let (next_left, next_right): (
+            Box<dyn Fn(usize) -> usize>,
+            Box<dyn Fn(usize) -> usize>,
+        ) = if polygon.is_front {
+            (Box::new(next), Box::new(prev))
+        } else {
+            (Box::new(prev), Box::new(next))
+        };
         let new_left_vert = next_left(left_vert);
         let mut left_slope =
             VertexSlope::from_verts(&vertices[left_vert], &vertices[new_left_vert]);

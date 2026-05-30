@@ -422,6 +422,7 @@ impl VRAM {
         )
     }
 
+    #[expect(clippy::ptr_arg)]
     fn read_mapping<T: MemoryValue>(banks: &[Vec<u8>], mapping: &Vec<Bank>, addr: usize) -> T {
         let mut value = num::zero();
         for bank in mapping.iter() {
@@ -431,6 +432,7 @@ impl VRAM {
         value
     }
 
+    #[expect(clippy::ptr_arg)]
     fn write_mapping<T: MemoryValue>(
         banks: &mut [Vec<u8>],
         mapping: &Vec<Bank>,

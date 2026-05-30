@@ -1,5 +1,6 @@
 use super::Backup;
 
+#[expect(dead_code)]
 #[derive(Debug)]
 pub struct GameInfo {
     pub game_code: u32,

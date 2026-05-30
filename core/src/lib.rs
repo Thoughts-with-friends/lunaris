@@ -1,6 +1,7 @@
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
 #![expect(
     clippy::enum_variant_names,
+    clippy::module_inception,
     clippy::too_many_arguments,
     clippy::upper_case_acronyms
 )]

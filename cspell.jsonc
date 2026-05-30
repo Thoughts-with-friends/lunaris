@@ -3,6 +3,7 @@
     "clippy",
     "cpsr",
     "doubleword",
+    "glfw",
     "gxfifo",
     "halfword",
     "hblank",

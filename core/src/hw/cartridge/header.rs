@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 
+#[expect(unused)]
 pub struct Header {
     pub game_title: [u8; 12], // ASCII
     pub game_code: u32,       // ASCII - 0 = homebrew
@@ -51,7 +52,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn new(rom: &Vec<u8>) -> Header {
+    pub fn new(rom: &[u8]) -> Header {
         Header {
             game_title: rom[0x000..0x00C].try_into().unwrap(),
             game_code: u32::from_le_bytes(rom[0x00C..0x010].try_into().unwrap()),

@@ -419,6 +419,7 @@ impl Occasion {
 
 pub struct Control {
     count: u32,
+    #[expect(unused)]
     pub count_latch: u32,
     pub dest_addr_ctrl: u8,
     pub src_addr_ctrl: u8,

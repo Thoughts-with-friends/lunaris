@@ -8,10 +8,9 @@ use std::fs::File;
 use std::ops::Range;
 
 use super::{
-    dma,
+    HW, dma,
     interrupt_controller::InterruptRequest,
     scheduler::{Event, Scheduler},
-    HW,
 };
 
 use header::Header;
@@ -73,6 +72,7 @@ impl Cartridge {
         let secure_area = &mut self.rom[secure_area_range()];
         let secure_area_32: &[u32] = bytemuck::cast_slice(secure_area);
         // Check secure area exists
+        #[expect(clippy::needless_range_loop)]
         for i in 0..3 {
             if secure_area_32[i] != Self::DESTROYED_SECURE_AREA_ID {
                 return;
@@ -378,11 +378,7 @@ impl Cartridge {
     }
 
     fn transfer_byte_time(&self) -> usize {
-        if self.romctrl.transfer_clk_rate {
-            8
-        } else {
-            5
-        }
+        if self.romctrl.transfer_clk_rate { 8 } else { 5 }
     }
 }
 

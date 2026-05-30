@@ -33,13 +33,17 @@ impl Matrix {
         *self = Matrix::identity()
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn load4x4(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 16);
+
+        #[expect(clippy::needless_range_loop)]
         for i in 0..16 {
             self.elems[i] = FixedPoint(vec[i] as i32);
         }
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn load4x3(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 12);
         for row in 0..4 {
@@ -51,6 +55,7 @@ impl Matrix {
         self.elems[15] = FixedPoint::one();
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn mul4x4(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 16);
         let old = self.elems;
@@ -108,6 +113,7 @@ impl Matrix {
         );
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn mul4x3(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 12);
         let old = self.elems;
@@ -141,6 +147,7 @@ impl Matrix {
         );
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn mul3x3(&mut self, vec: &Vec<u32>) {
         assert_eq!(vec.len(), 9);
         let old = self.elems;
@@ -161,6 +168,7 @@ impl Matrix {
         self.elems[11] = FixedPoint::from_mul(vec[6] * old[3] + vec[7] * old[7] + vec[8] * old[11]);
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn scale(&mut self, vec: &Vec<u32>) {
         self.elems[0] = FixedPoint::from_mul(vec[0] * self.elems[0]);
         self.elems[1] = FixedPoint::from_mul(vec[0] * self.elems[1]);
@@ -178,6 +186,7 @@ impl Matrix {
         self.elems[11] = FixedPoint::from_mul(vec[2] * self.elems[11]);
     }
 
+    #[expect(clippy::ptr_arg)]
     pub fn translate(&mut self, coords: &Vec<u32>) {
         assert_eq!(coords.len(), 3);
         self.elems[12] += FixedPoint::from_mul(

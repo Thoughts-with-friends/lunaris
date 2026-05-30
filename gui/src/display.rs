@@ -218,14 +218,6 @@ impl Display {
         imgui: &mut imgui::Context,
         main_menu_height: f32,
     ) -> (HashSet<glfw::Key>, Vec<PathBuf>) {
-        // use std::sync::atomic::{AtomicBool, Ordering};
-        // static INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-        // let (width, height) = if INITIALIZED.swap(true, Ordering::AcqRel) {
-        // (self.config.window_width, self.config.window_height)
-        // } else {
-        //     self.window.get_size()
-        // };
         let (width, height) = self.window.get_size();
 
         let screens = nds.get_screens();
@@ -292,13 +284,17 @@ impl Display {
 
         self.glfw.poll_events();
 
+        let mut input = crate::gamepad::InputState::default();
         let mut keys_pressed = HashSet::new();
         let mut modifiers = HashSet::new();
         let mut files_dropped = Vec::new();
+
         let old_mouse_pressed =
             self.window.get_mouse_button(glfw::MouseButtonLeft) == Action::Press;
+
         for (_, event) in glfw::flush_messages(&self.events) {
             Display::handle_event(io, &event);
+
             match event {
                 glfw::WindowEvent::Key(key, _, action, new_modifiers)
                     if !io.want_capture_keyboard =>
@@ -307,28 +303,18 @@ impl Display {
                         keys_pressed.insert(key);
                         modifiers.insert(new_modifiers);
                     }
-                    // glfw::GamepadButton::ButtonA
-                    let nds_key = match key {
-                        glfw::Key::A => nds::Key::A,
-                        glfw::Key::B => nds::Key::B,
-                        glfw::Key::X => nds::Key::X,
-                        glfw::Key::Y => nds::Key::Y,
-                        glfw::Key::E => nds::Key::Select,
-                        glfw::Key::T => nds::Key::Start,
-                        glfw::Key::Right => nds::Key::Right,
-                        glfw::Key::Left => nds::Key::Left,
-                        glfw::Key::Up => nds::Key::Up,
-                        glfw::Key::Down => nds::Key::Down,
-                        glfw::Key::R => nds::Key::R,
-                        glfw::Key::L => nds::Key::L,
-                        _ => continue,
-                    };
+
                     match action {
-                        Action::Press => nds.press_key(nds_key),
-                        Action::Release => nds.release_key(nds_key),
-                        _ => continue,
-                    };
+                        Action::Press | Action::Repeat => {
+                            crate::gamepad::update_keyboard_input(&mut input, key, true);
+                        }
+
+                        Action::Release => {
+                            crate::gamepad::update_keyboard_input(&mut input, key, false);
+                        }
+                    }
                 }
+
                 glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Press, _)
                 | glfw::WindowEvent::MouseButton(glfw::MouseButtonLeft, Action::Release, _)
                     if !io.want_capture_mouse =>
@@ -342,6 +328,7 @@ impl Display {
                         y_end - y_start,
                     )
                 }
+
                 glfw::WindowEvent::CursorPos(_, _)
                     if old_mouse_pressed && !io.want_capture_mouse =>
                 {
@@ -354,27 +341,17 @@ impl Display {
                         y_end - y_start,
                     )
                 }
+
                 glfw::WindowEvent::FileDrop(paths) => files_dropped = paths,
+
                 glfw::WindowEvent::Close => self.config.save(),
-                _ => (),
+
+                _ => {}
             }
         }
+        crate::gamepad::update_gamepad_input(&self.glfw, &mut input);
 
-        crate::gamepad::handle_gamepad_input(io, &self.glfw, nds);
-        crate::gamepad::handle_gamepad_axis(
-            nds,
-            &self.glfw,
-            glfw::GamepadAxis::AxisLeftX,
-            nds::Key::Left,
-            nds::Key::Right,
-        );
-        crate::gamepad::handle_gamepad_axis(
-            nds,
-            &self.glfw,
-            glfw::GamepadAxis::AxisLeftY,
-            nds::Key::Up,
-            nds::Key::Down,
-        );
+        crate::gamepad::apply_input_state(nds, &input);
 
         (keys_pressed, files_dropped)
     }

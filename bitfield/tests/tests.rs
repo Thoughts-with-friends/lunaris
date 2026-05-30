@@ -18,11 +18,11 @@ fn basic_usage() {
 
     // Check access
     assert_eq!(basic_bitfield.0, 0);
-    assert_eq!(basic_bitfield.a(), false);
-    assert_eq!(basic_bitfield.b(), false);
+    assert!(!basic_bitfield.a());
+    assert!(!basic_bitfield.b());
     assert_eq!(basic_bitfield.c(), 0);
     assert_eq!(basic_bitfield.d(), 0);
-    assert_eq!(basic_bitfield.e(), false);
+    assert!(!basic_bitfield.e());
     assert_eq!(basic_bitfield.f(), 0);
     assert_eq!(basic_bitfield.g(), 0);
     assert_eq!(basic_bitfield.byte0(), 0);
@@ -33,11 +33,11 @@ fn basic_usage() {
     basic_bitfield.set_e(true);
     basic_bitfield.set_d(0b010);
     assert_eq!(basic_bitfield.0, 0b10100001);
-    assert_eq!(basic_bitfield.a(), true);
-    assert_eq!(basic_bitfield.b(), false);
+    assert!(basic_bitfield.a());
+    assert!(!basic_bitfield.b());
     assert_eq!(basic_bitfield.c(), 0);
     assert_eq!(basic_bitfield.d(), 0b010);
-    assert_eq!(basic_bitfield.e(), true);
+    assert!(basic_bitfield.e());
     assert_eq!(basic_bitfield.f(), 0);
     assert_eq!(basic_bitfield.g(), 0);
     assert_eq!(basic_bitfield.byte0(), 0b10100001);
@@ -46,11 +46,11 @@ fn basic_usage() {
     // Byte operations
     basic_bitfield.set_byte1(0xAA);
     assert_eq!(basic_bitfield.0, 0b1010101010100001);
-    assert_eq!(basic_bitfield.a(), true);
-    assert_eq!(basic_bitfield.b(), false);
+    assert!(basic_bitfield.a());
+    assert!(!basic_bitfield.b());
     assert_eq!(basic_bitfield.c(), 0);
     assert_eq!(basic_bitfield.d(), 0b010);
-    assert_eq!(basic_bitfield.e(), true);
+    assert!(basic_bitfield.e());
     assert_eq!(basic_bitfield.f(), 0b01010);
     assert_eq!(basic_bitfield.g(), 0b101);
     assert_eq!(basic_bitfield.byte0(), 0b10100001);

@@ -1002,8 +1002,8 @@ impl<E: EngineType> Engine2D<E> {
         let mut colors = [(0, 0); 8];
         let base_addr = addr + tile_y * bit_depth;
         if bit_depth == 8 {
-            for tile_x in 0..8 {
-                colors[tile_x] = (0, get_vram_byte(vram, base_addr + tile_x) as usize);
+            for (tile_x, color) in colors.iter_mut().enumerate() {
+                *color = (0, get_vram_byte(vram, base_addr + tile_x) as usize);
             }
         } else {
             for addr_inc in 0..4 {

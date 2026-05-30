@@ -1,7 +1,14 @@
 [package]
-edition = "2021"
 name = "lunaris"
 version = "2.0.0"
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [build-dependencies]
@@ -12,10 +19,7 @@ gl = "0.14.0"
 glfw = "0.62.0"
 imgui = "0.7.0"
 imgui-opengl-renderer = "0.11.0"
-nds-core = {path = "../core"}
+nds-core = { path = "../core" }
 rfd = "0.14"
-serde = {version = "1.0.228", features = ["derive"]}
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-
-[profile.release]
-debug = true

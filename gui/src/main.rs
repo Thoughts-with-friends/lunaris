@@ -1,5 +1,6 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![expect(clippy::collapsible_if)]
 mod config;
 mod debug;
 mod display;
@@ -93,9 +94,13 @@ fn main() {
 
     // Try to get ROM path from command line or show file selection dialog
     let mut config = self::config::Config::load();
-    let mut current_rom_path = if let Some(arg) = std::env::args().nth(1) {
+    let mut current_rom_path = if let Some(arg) = std::env::args().nth(1)
+        && PathBuf::from(arg.as_str()).exists()
+    {
         Some(PathBuf::from(arg))
-    } else if let Some(path) = config.last_rom_path.clone() {
+    } else if let Some(path) = config.last_rom_path.clone()
+        && path.exists()
+    {
         Some(path)
     } else {
         match rfd::FileDialog::new()

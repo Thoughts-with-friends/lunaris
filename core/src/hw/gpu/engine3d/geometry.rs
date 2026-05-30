@@ -358,14 +358,7 @@ impl Engine3D {
             )
             .raw()
                 >> 4; // Convert to 8 frac
-                      // TODO: Use clamp
-            let diffuse_lvl = if diffuse_lvl < 0 {
-                0
-            } else if diffuse_lvl > 0xFF {
-                0xFF
-            } else {
-                diffuse_lvl
-            };
+            let diffuse_lvl = diffuse_lvl.clamp(0, 0xFF);
 
             let half_vector = [
                 FixedPoint::from_frac12((light.direction[0] + line_of_sight[0]).raw() / 2),
@@ -395,6 +388,7 @@ impl Engine3D {
                 shininess_lvl
             };
 
+            #[expect(clippy::needless_range_loop)]
             for i in 0..3 {
                 final_color[i] +=
                     (self.material.specular[i] * light.color[i] * shininess_lvl) >> 13;

@@ -2,7 +2,14 @@
 name = "bitfield"
 version = "0.1.0"
 authors = ["Akash Munagala <akash.munagala@gmail.com>"]
-edition = "2021"
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [lib]
 proc-macro = true
@@ -13,4 +20,4 @@ trybuild = "1.0"
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = { version="1.0", features=["full"] }
+syn = { version = "1.0", features = ["full"] }

@@ -146,6 +146,8 @@ impl NDS {
             );
         }
 
+        // NOTE: Do not use `truncate`, the .sav file gets corrupted and won't load.
+        #[allow(clippy::suspicious_open_options)]
         let save_file = OpenOptions::new()
             .read(true)
             .write(true)
