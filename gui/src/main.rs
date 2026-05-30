@@ -214,19 +214,11 @@ fn frame(
 
     let (keys, dropped) = display.render_main(&mut ctx.nds, imgui, ctx.menu_height);
 
-    let mut pending_rom = None;
-
     display.render_imgui(imgui, keys, |ui, keys| {
-        render_menu(ctx, ui, debug, ui_state, &mut pending_rom);
+        render_menu(ctx, ui, debug, ui_state);
         render_debug(&mut ctx.nds, ui, &keys, debug);
         render_audio(&mut ctx.config, &mut ctx.nds, ui, ui_state);
     });
-
-    if let Some(p) = pending_rom {
-        ctx.nds = create_nds(&p, &ctx.config);
-        display.set_last_rom_path(Some(p));
-        ctx.paused = false;
-    }
 
     if dropped.len() == 1 {
         if dropped[0].extension().and_then(|e| e.to_str()) == Some("nds") {
@@ -241,13 +233,7 @@ fn frame(
 // Menu
 // =========================================================
 
-fn render_menu(
-    ctx: &mut FrameCtx,
-    ui: &Ui,
-    debug: &mut DebugState,
-    ui_state: &mut UiState,
-    pending: &mut Option<PathBuf>,
-) {
+fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &mut UiState) {
     ui.main_menu_bar(|| {
         ui.menu(im_str!("File"), true, || {
             if MenuItem::new(im_str!("Open ROM")).build(ui) {
@@ -255,7 +241,10 @@ fn render_menu(
                     .add_filter("NDS ROM", &["nds"])
                     .pick_file()
                 {
-                    *pending = Some(p);
+                    ctx.nds = create_nds(&p, &ctx.config);
+                    ctx.paused = false;
+                    ctx.config.last_rom_path = Some(p);
+                    ctx.config.save();
                 }
             }
 
@@ -280,8 +269,8 @@ fn render_menu(
             }
 
             if MenuItem::new(im_str!("Reset")).build(ui) {
-                if let Some(p) = pending {
-                    ctx.nds = create_nds(p, &ctx.config);
+                if let Some(path) = ctx.config.last_rom_path.as_deref() {
+                    ctx.nds = create_nds(path, &ctx.config);
                     ctx.paused = false;
                 }
             }
