@@ -7,6 +7,10 @@ mod thumb;
 use crate::hw::{AccessType, HW, MemoryValue};
 use crate::{likely, num, unlikely};
 use registers::{Mode, RegValues};
+use std::sync::OnceLock;
+
+type ArmLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u32, IS_ARM9>; 4096];
+type ThumbLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u16, IS_ARM9>; 256];
 
 pub struct ARM<const IS_ARM9: bool> {
     cycle: usize,
@@ -14,13 +18,15 @@ pub struct ARM<const IS_ARM9: bool> {
     instr_buffer: [u32; 2],
     next_access_type: AccessType,
 
-    condition_lut: [bool; 256],
-    arm_lut: [instructions::InstructionHandler<u32, IS_ARM9>; 4096],
-    thumb_lut: [instructions::InstructionHandler<u16, IS_ARM9>; 256],
+    condition_lut: &'static [bool; 256],
+    arm_lut: &'static ArmLut<IS_ARM9>,
+    thumb_lut: &'static ThumbLut<IS_ARM9>,
 }
 
 impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     pub fn new(hw: &mut HW, direct_boot: bool) -> ARM<IS_ARM9> {
+        static CONDITION_LUT: OnceLock<[bool; 256]> = OnceLock::new();
+
         let mut cpu = ARM {
             cycle: 0,
             regs: if direct_boot {
@@ -35,10 +41,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             instr_buffer: [0; 2],
             next_access_type: AccessType::N,
 
-            condition_lut: instructions::gen_condition_table(),
-            arm_lut: arm::gen_lut(),
-            thumb_lut: thumb::gen_lut(),
+            condition_lut: CONDITION_LUT.get_or_init(instructions::gen_condition_table),
+            arm_lut: arm_lut(),
+            thumb_lut: thumb_lut(),
         };
+
         cpu.fill_arm_instr_buffer(hw);
         cpu
     }
@@ -319,6 +326,64 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 break;
             }
             mask <<= 8;
+        }
+    }
+}
+
+/// Returns the global ARM instruction LUT for the selected CPU type.
+///
+/// ARM7 and ARM9 use different instruction handler types because
+/// `InstructionHandler` is parameterized by the `IS_ARM9` const generic.
+///
+/// Rust cannot currently unify:
+///
+///     InstructionHandler<_, true>
+///     InstructionHandler<_, false>
+///
+/// even inside a compile-time `if IS_ARM9`.
+///
+/// Therefore we store separate static LUTs and cast them back to the
+/// requested const-generic type.
+///
+/// # Safety
+///
+/// This cast is safe because:
+///
+/// - `IS_ARM9 == true` only accesses `ARM9_ARM_LUT`
+/// - `IS_ARM9 == false` only accesses `ARM7_ARM_LUT`
+///
+/// so the runtime value and compile-time type always match.
+fn arm_lut<const IS_ARM9: bool>() -> &'static ArmLut<IS_ARM9> {
+    if IS_ARM9 {
+        static ARM9_ARM_LUT: OnceLock<ArmLut<true>> = OnceLock::new();
+        unsafe {
+            &*(ARM9_ARM_LUT.get_or_init(arm::gen_lut) as *const ArmLut<true>
+                as *const ArmLut<IS_ARM9>)
+        }
+    } else {
+        static ARM7_ARM_LUT: OnceLock<ArmLut<false>> = OnceLock::new();
+        unsafe {
+            &*(ARM7_ARM_LUT.get_or_init(arm::gen_lut) as *const ArmLut<false>
+                as *const ArmLut<IS_ARM9>)
+        }
+    }
+}
+
+/// Returns the global THUMB instruction LUT for the selected CPU type.
+///
+/// See `arm_lut()` for details about the const-generic cast.
+fn thumb_lut<const IS_ARM9: bool>() -> &'static ThumbLut<IS_ARM9> {
+    if IS_ARM9 {
+        static ARM9_THUMB_LUT: OnceLock<ThumbLut<true>> = OnceLock::new();
+        unsafe {
+            &*(ARM9_THUMB_LUT.get_or_init(thumb::gen_lut) as *const ThumbLut<true>
+                as *const ThumbLut<IS_ARM9>)
+        }
+    } else {
+        static ARM7_THUMB_LUT: OnceLock<ThumbLut<false>> = OnceLock::new();
+        unsafe {
+            &*(ARM7_THUMB_LUT.get_or_init(thumb::gen_lut) as *const ThumbLut<false>
+                as *const ThumbLut<IS_ARM9>)
         }
     }
 }
