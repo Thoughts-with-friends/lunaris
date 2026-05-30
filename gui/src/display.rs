@@ -508,24 +508,6 @@ pub fn enable_dark_mode(window: &glfw::PWindow) {
 
     const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 
-    #[link(name = "glfw3")]
-    unsafe extern "C" {
-        /// GLFW provides a native access API on each platform.
-        ///
-        /// On Windows:
-        ///
-        ///     GLFWwindow* -> HWND
-        ///
-        /// through glfwGetWin32Window().
-        ///
-        /// The Rust glfw crate does not expose this function directly,
-        /// so we bind it manually via FFI.
-        ///
-        /// This function exists in the GLFW native Win32 API:
-        /// https://www.glfw.org/docs/latest/group__native.html
-        fn glfwGetWin32Window(window: *mut core::ffi::c_void) -> HWND;
-    }
-
     #[link(name = "dwmapi")]
     unsafe extern "system" {
         fn DwmSetWindowAttribute(
@@ -536,8 +518,7 @@ pub fn enable_dark_mode(window: &glfw::PWindow) {
         ) -> HRESULT;
     }
 
-    let hwnd = unsafe { glfwGetWin32Window(window.window_ptr() as *mut core::ffi::c_void) };
-
+    let hwnd = unsafe { glfw::ffi::glfwGetWin32Window(window.window_ptr()) };
     let enabled: i32 = 1;
 
     unsafe {
