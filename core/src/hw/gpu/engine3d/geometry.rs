@@ -1,7 +1,7 @@
 use super::{
+    Engine3D, InterruptRequest,
     math::{FixedPoint, Matrix, Vec4},
     registers::*,
-    Engine3D, InterruptRequest,
 };
 
 impl Engine3D {

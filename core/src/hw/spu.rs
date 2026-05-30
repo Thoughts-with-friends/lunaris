@@ -2,9 +2,9 @@ mod audio;
 mod registers;
 
 use super::{
+    HW,
     mem::IORegister,
     scheduler::{Event, Scheduler},
-    HW,
 };
 
 use audio::Audio;

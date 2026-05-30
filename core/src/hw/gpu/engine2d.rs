@@ -3,7 +3,7 @@ mod registers;
 pub use registers::{BGMode, DisplayMode};
 
 use super::{Engine3D, EngineType, GPU, VRAM};
-use crate::hw::{mem::IORegister, Scheduler};
+use crate::hw::{Scheduler, mem::IORegister};
 use registers::*;
 
 pub struct Engine2D<E: EngineType> {

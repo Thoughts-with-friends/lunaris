@@ -1,4 +1,4 @@
-use super::{math::Vec4, Color, Engine3D, IORegister, InterruptRequest, Scheduler, GPU};
+use super::{Color, Engine3D, GPU, IORegister, InterruptRequest, Scheduler, math::Vec4};
 
 pub struct DISP3DCNT {
     pub texture_mapping: bool,

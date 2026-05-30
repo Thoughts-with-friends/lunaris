@@ -1,4 +1,4 @@
-use super::{instructions::InstructionHandler, registers::Mode, ARM, HW};
+use super::{ARM, HW, instructions::InstructionHandler, registers::Mode};
 
 use crate::hw::AccessType;
 use crate::likely;
@@ -15,11 +15,28 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     pub(super) fn emulate_arm_instr(&mut self, hw: &mut HW) {
         let instr = self.instr_buffer[0];
         {
-            trace!("{:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} \
+            trace!(
+                "{:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} \
             {:08X} {:08X} {:08X} {:08X} cpsr: {:08X} | {:08X}",
-            self.regs[0], self.regs[1], self.regs[2], self.regs[3], self.regs[4], self.regs[5], self.regs[6],
-            self.regs[7], self.regs[8], self.regs[9], self.regs[10], self.regs[11], self.regs[12],
-            self.regs[13], self.regs[14], self.regs[15], self.regs.cpsr(), instr);
+                self.regs[0],
+                self.regs[1],
+                self.regs[2],
+                self.regs[3],
+                self.regs[4],
+                self.regs[5],
+                self.regs[6],
+                self.regs[7],
+                self.regs[8],
+                self.regs[9],
+                self.regs[10],
+                self.regs[11],
+                self.regs[12],
+                self.regs[13],
+                self.regs[14],
+                self.regs[15],
+                self.regs.cpsr(),
+                instr
+            );
         }
         self.instr_buffer[0] = self.instr_buffer[1];
         self.regs[15] = self.regs[15].wrapping_add(4);
@@ -481,7 +498,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 if opcode == 2 || opcode == 3 {
                     assert!(src_dest_reg.is_multiple_of(2) && src_dest_reg != 14); // Rd is a multiple of 2 and cannot be 14
                     assert!(addr & 0x7 == 0); // Addr must be double-word aligned
-                                              // For STRD, Rm != Rd and Rm != Rd + 1
+                    // For STRD, Rm != Rd and Rm != Rd + 1
                     if opcode == 3 && !immediate_offset {
                         assert!(offset_low != src_dest_reg && offset_low != src_dest_reg + 1)
                     }

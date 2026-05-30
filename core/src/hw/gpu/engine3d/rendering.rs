@@ -1,8 +1,8 @@
 use super::{
     super::VRAM,
+    Color, Engine3D, GPU, TextureFormat,
     geometry::{Polygon, Vertex},
-    registers::{PolygonMode, DISP3DCNT},
-    Color, Engine3D, TextureFormat, GPU,
+    registers::{DISP3DCNT, PolygonMode},
 };
 
 impl Engine3D {

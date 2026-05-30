@@ -1,6 +1,6 @@
 use super::{mem::IORegister, scheduler::Scheduler};
 
-use chrono::{offset::Local, Datelike, Timelike};
+use chrono::{Datelike, Timelike, offset::Local};
 
 pub struct RTC {
     // Register

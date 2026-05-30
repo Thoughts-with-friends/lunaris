@@ -4,7 +4,7 @@ mod arm;
 mod registers;
 mod thumb;
 
-use crate::hw::{AccessType, MemoryValue, HW};
+use crate::hw::{AccessType, HW, MemoryValue};
 use crate::{likely, num, unlikely};
 use registers::{Mode, RegValues};
 
@@ -173,11 +173,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                     if change_status {
                         self.regs.set_c(bit);
                     }
-                    if bit {
-                        0xFFFF_FFFF
-                    } else {
-                        0
-                    }
+                    if bit { 0xFFFF_FFFF } else { 0 }
                 }
                 // RRX #1
                 3 => {
@@ -224,11 +220,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                     if change_status {
                         self.regs.set_c(c)
                     }
-                    if c {
-                        0xFFFF_FFFF
-                    } else {
-                        0
-                    }
+                    if c { 0xFFFF_FFFF } else { 0 }
                 }
                 // ROR
                 3 => {

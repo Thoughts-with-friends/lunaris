@@ -1,10 +1,11 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{
+    Error,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
-    Error, *,
+    *,
 };
 
 const MAX_BITS: usize = 64;
@@ -345,7 +346,7 @@ impl Parse for BitfieldStruct {
                 return Err(syn::Error::new(
                     base_type.span(),
                     "Bitfield base type must be an unsigned integral type",
-                ))
+                ));
             }
         };
         if base_type_size as usize > MAX_BITS {

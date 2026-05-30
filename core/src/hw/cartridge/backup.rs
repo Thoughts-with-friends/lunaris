@@ -8,7 +8,7 @@ use std::{fs::File, io::Write};
 
 use super::Header;
 
-use eeprom::{EEPROMNormal, EEPROMSmall, EEPROM};
+use eeprom::{EEPROM, EEPROMNormal, EEPROMSmall};
 pub use flash::Flash;
 use no_backup::NoBackup;
 

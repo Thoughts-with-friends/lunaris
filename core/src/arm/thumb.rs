@@ -1,4 +1,4 @@
-use super::{instructions::InstructionHandler, registers::Mode, ARM, HW};
+use super::{ARM, HW, instructions::InstructionHandler, registers::Mode};
 
 use crate::hw::AccessType;
 
@@ -14,14 +14,32 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     pub(super) fn emulate_thumb_instr(&mut self, hw: &mut HW) {
         let instr = self.instr_buffer[0] as u16;
         {
-            trace!("{:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} \
+            trace!(
+                "{:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} \
             {:08X} {:08X} {:08X} {:08X} cpsr: {:08X} | {}",
-            self.regs[0], self.regs[1], self.regs[2], self.regs[3], self.regs[4], self.regs[5], self.regs[6],
-            self.regs[7], self.regs[8], self.regs[9], self.regs[10], self.regs[11], self.regs[12],
-            self.regs[13], self.regs[14], self.regs[15], self.regs.cpsr(),
-            if instr & 0b1111_1000_0000_0000 == 0b1111_0000_0000_0000 {
-                format!("{:04X}{:04X}", instr, self.instr_buffer[1])
-            } else { format!("    {:04X}", instr) });
+                self.regs[0],
+                self.regs[1],
+                self.regs[2],
+                self.regs[3],
+                self.regs[4],
+                self.regs[5],
+                self.regs[6],
+                self.regs[7],
+                self.regs[8],
+                self.regs[9],
+                self.regs[10],
+                self.regs[11],
+                self.regs[12],
+                self.regs[13],
+                self.regs[14],
+                self.regs[15],
+                self.regs.cpsr(),
+                if instr & 0b1111_1000_0000_0000 == 0b1111_0000_0000_0000 {
+                    format!("{:04X}{:04X}", instr, self.instr_buffer[1])
+                } else {
+                    format!("    {:04X}", instr)
+                }
+            );
         }
         self.instr_buffer[0] = self.instr_buffer[1];
         self.regs[15] = self.regs[15].wrapping_add(2);

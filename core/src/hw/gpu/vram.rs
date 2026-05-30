@@ -1,7 +1,7 @@
 use num_traits as num;
 
 use super::{
-    super::{MemoryValue, HW},
+    super::{HW, MemoryValue},
     EngineType,
 };
 
@@ -448,10 +448,12 @@ impl VRAM {
     fn add_mapping(arr: &mut [Vec<Bank>], bank: Bank, offset: usize, size: Option<usize>) {
         let size = size.unwrap_or_else(|| VRAM::BANKS_LEN[bank as usize]);
         for addr in (0..size).step_by(VRAM::MAPPING_LEN) {
-            assert!(arr[(addr + offset) / VRAM::MAPPING_LEN]
-                .iter()
-                .position(|b| *b == bank)
-                .is_none());
+            assert!(
+                arr[(addr + offset) / VRAM::MAPPING_LEN]
+                    .iter()
+                    .position(|b| *b == bank)
+                    .is_none()
+            );
             arr[(addr + offset) / VRAM::MAPPING_LEN].push(bank);
         }
     }

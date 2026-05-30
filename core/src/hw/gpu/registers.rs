@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use bitflags::*;
 
-use crate::hw::{mem::IORegister, Scheduler, HW};
+use crate::hw::{HW, Scheduler, mem::IORegister};
 
 bitflags! {
     pub struct POWCNT1: u32 {

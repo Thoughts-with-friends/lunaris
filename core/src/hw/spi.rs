@@ -3,7 +3,7 @@ mod tsc;
 use memmap::{MmapMut, MmapOptions};
 use std::fs::File;
 
-use super::{mem::IORegister, Scheduler, GPU, HW};
+use super::{GPU, HW, Scheduler, mem::IORegister};
 use crate::hw::cartridge::{Backup, Flash};
 use tsc::TSC;
 

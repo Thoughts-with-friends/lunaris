@@ -1,4 +1,4 @@
-use super::{engine2d::BGMode, Engine2D, EngineType, GPU, VRAM};
+use super::{Engine2D, EngineType, GPU, VRAM, engine2d::BGMode};
 
 impl GPU {
     pub fn render_palettes<F: Fn(usize) -> u16>(

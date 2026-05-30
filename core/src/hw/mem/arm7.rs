@@ -1,6 +1,6 @@
 mod io;
 
-use super::{AccessType, IORegister, MemoryValue, HW};
+use super::{AccessType, HW, IORegister, MemoryValue};
 use crate::{num, unlikely};
 use std::mem::size_of;
 

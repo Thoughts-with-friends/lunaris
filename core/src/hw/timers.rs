@@ -1,8 +1,8 @@
 use super::{
+    HW,
     interrupt_controller::InterruptRequest,
     mem::IORegister,
     scheduler::{Event, Scheduler},
-    HW,
 };
 
 pub struct Timers {
@@ -89,7 +89,7 @@ impl Timer {
 
     fn calc_counter(&self, global_cycle: usize) -> u16 {
         let cycles_passed = global_cycle as i64 - self.start_cycle as i64; // Avoid underflow
-                                                                           // Counter stores the reload value
+        // Counter stores the reload value
         if cycles_passed >= self.time_till_first_clock as i64 {
             let cycles_passed = cycles_passed as usize; // Cast back to usize for division
             let cycles_passed = cycles_passed - self.time_till_first_clock;

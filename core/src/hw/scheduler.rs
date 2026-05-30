@@ -3,7 +3,7 @@ use std::hash::Hash;
 
 use priority_queue::PriorityQueue;
 
-use super::{spu, HW};
+use super::{HW, spu};
 
 type EventHandler = fn(&mut HW, Event);
 

@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use super::{InterruptRequest, Scheduler, GPU};
+use super::{GPU, InterruptRequest, Scheduler};
 use crate::hw::mem::IORegister;
 
 mod geometry;

@@ -5,15 +5,14 @@ mod registers;
 mod vram;
 
 use crate::hw::{
-    dma,
+    HW, dma,
     interrupt_controller::{InterruptController, InterruptRequest},
     scheduler::{Event, Scheduler},
-    HW,
 };
 
 pub use engine2d::Engine2D;
 pub use engine3d::Engine3D;
-pub use registers::{DISPSTATFlags, DISPCAPCNT, DISPSTAT, POWCNT1};
+pub use registers::{DISPCAPCNT, DISPSTAT, DISPSTATFlags, POWCNT1};
 pub use vram::VRAM;
 
 use engine2d::DisplayMode;

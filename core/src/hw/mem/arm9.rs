@@ -1,6 +1,6 @@
 mod io;
 
-use super::{AccessType, IORegister, MemoryValue, HW};
+use super::{AccessType, HW, IORegister, MemoryValue};
 use crate::hw::gpu::{Engine2D, EngineType, GPU};
 use crate::{num, unlikely};
 use std::mem::size_of;

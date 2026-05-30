@@ -1,8 +1,8 @@
 use super::{
+    HW,
     interrupt_controller::InterruptRequest,
     mem::{AccessType, IORegister, MemoryValue},
     scheduler::{Event, Scheduler},
-    HW,
 };
 
 pub struct Controller {
@@ -272,20 +272,12 @@ impl Channel {
             sad: Address::new(if is_nds9 {
                 0x0FFF_FFFF
             } else {
-                if num == 0 {
-                    0x07FF_FFFF
-                } else {
-                    0x0FFF_FFFF
-                }
+                if num == 0 { 0x07FF_FFFF } else { 0x0FFF_FFFF }
             }),
             dad: Address::new(if is_nds9 {
                 0x0FFF_FFFF
             } else {
-                if num == 3 {
-                    0x07FF_FFFF
-                } else {
-                    0x0FFF_FFFF
-                }
+                if num == 3 { 0x07FF_FFFF } else { 0x0FFF_FFFF }
             }),
         }
     }
@@ -452,11 +444,7 @@ impl Control {
             count_mask: if is_nds9 {
                 0x1F_FFFF
             } else {
-                if num == 3 {
-                    0xFFFF
-                } else {
-                    0x3FFF
-                }
+                if num == 3 { 0xFFFF } else { 0x3FFF }
             },
         }
     }

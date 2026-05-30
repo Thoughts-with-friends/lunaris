@@ -1,4 +1,4 @@
-use super::{IORegister, HW};
+use super::{HW, IORegister};
 
 impl HW {
     pub(super) fn arm7_read_io8(&self, addr: u32) -> u8 {

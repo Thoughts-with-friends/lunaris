@@ -1,4 +1,4 @@
-use super::{mem::IORegister, Scheduler};
+use super::{Scheduler, mem::IORegister};
 use bitflags::*;
 
 pub struct InterruptController {
