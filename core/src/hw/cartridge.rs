@@ -18,6 +18,7 @@ use key1_encryption::Key1Encryption;
 
 pub(super) use backup::{Backup, Flash}; // For Firmware
 
+#[derive(emu_utils::Savestate)]
 pub struct Cartridge {
     chip_id: u32,
     header: Header,
@@ -32,6 +33,7 @@ pub struct Cartridge {
     rom_bytes_left: usize,
     game_card_words: VecDeque<u32>,
     // Backup
+    #[savestate(skip)]
     backup: Box<dyn Backup>,
 }
 
@@ -87,14 +89,12 @@ impl Cartridge {
         let secure_area_32: &mut [u32] =
             bytemuck::cast_slice_mut(&mut self.rom[secure_area_range()]);
         // Level 3 for entire secure area
-        self.key1_encryption
-            .init_key_code(self.header.game_code, 3, 2);
+        self.key1_encryption.init_key_code(self.header.game_code, 3, 2);
         for chunk in secure_area_32.chunks_exact_mut(2) {
             self.key1_encryption.encrypt(chunk);
         }
         // Level 2 for first 8 bytes (first 8 bytes encrypted twice)
-        self.key1_encryption
-            .init_key_code(self.header.game_code, 2, 2);
+        self.key1_encryption.init_key_code(self.header.game_code, 2, 2);
         self.key1_encryption.encrypt(&mut secure_area_32[..0x8]);
         self.key1_encryption.in_use = false;
     }
@@ -146,17 +146,15 @@ impl Cartridge {
 
     fn copy_rom(&mut self, range: Range<usize>) {
         for addr in range.step_by(4) {
-            self.game_card_words.push_back(u32::from_le_bytes(
-                self.rom[addr..addr + 4].try_into().unwrap(),
-            ));
+            self.game_card_words
+                .push_back(u32::from_le_bytes(self.rom[addr..addr + 4].try_into().unwrap()));
         }
     }
 
     pub fn run_encrypted_command(&mut self) {
         // Command is in given as big endian, but the decryption works with little endian
         self.command.reverse();
-        self.key1_encryption
-            .decrypt(bytemuck::cast_slice_mut(&mut self.command));
+        self.key1_encryption.decrypt(bytemuck::cast_slice_mut(&mut self.command));
         self.command.reverse();
 
         // TODO: Verify command parameters
@@ -193,10 +191,7 @@ impl Cartridge {
                 }
             }
             _ => {
-                warn!(
-                    "Unimplemented Encrypted Cartridge Command: {:X?}",
-                    self.command
-                );
+                warn!("Unimplemented Encrypted Cartridge Command: {:X?}", self.command);
                 for _ in 0..self.rom_bytes_left / 4 {
                     self.game_card_words.push_back(0);
                 }
@@ -214,8 +209,7 @@ impl Cartridge {
                 self.copy_rom(0..self.rom_bytes_left);
             }
             0x3C => {
-                self.key1_encryption
-                    .init_key_code(self.header.game_code, 2, 2);
+                self.key1_encryption.init_key_code(self.header.game_code, 2, 2);
             }
             0xB7 => {
                 // for byte in self.command[5..].iter() {
@@ -250,10 +244,7 @@ impl Cartridge {
                 }
             }
             _ => {
-                warn!(
-                    "Unimplemented Unencrypted Cartridge Command: {:X?}",
-                    self.command
-                );
+                warn!("Unimplemented Unencrypted Cartridge Command: {:X?}", self.command);
                 for _ in 0..self.rom_bytes_left / 4 {
                     self.game_card_words.push_back(0);
                 }
@@ -288,9 +279,8 @@ impl Cartridge {
             // Apply ROM mirroring + secure area aliasing
             let addr = self.normalize_rom_addr(wrapped_addr);
 
-            self.game_card_words.push_back(u32::from_le_bytes(
-                self.rom[addr..addr + 4].try_into().unwrap(),
-            ));
+            self.game_card_words
+                .push_back(u32::from_le_bytes(self.rom[addr..addr + 4].try_into().unwrap()));
         }
     }
 
@@ -406,6 +396,7 @@ impl HW {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct SPICNT {
     // Registers
     baudrate: u8,
@@ -467,6 +458,7 @@ impl SPICNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct ROMCTRL {
     key1_gap1_len: u16,
     key2_encrypt_data: bool,

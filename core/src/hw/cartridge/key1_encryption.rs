@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 
+#[derive(emu_utils::Savestate)]
 pub struct Key1Encryption {
     pub in_use: bool,
     key_buf: [u32; Self::KEY_TABLE_SIZE],
@@ -13,15 +14,9 @@ impl Key1Encryption {
 
     pub fn new(bios7: &[u8]) -> Self {
         let original_key_buf: [u32; Self::KEY_TABLE_SIZE] =
-            bytemuck::cast_slice(&bios7[0x30..=0x1077])
-                .try_into()
-                .unwrap();
+            bytemuck::cast_slice(&bios7[0x30..=0x1077]).try_into().unwrap();
 
-        Self {
-            in_use: false,
-            key_buf: original_key_buf,
-            original_key_buf,
-        }
+        Self { in_use: false, key_buf: original_key_buf, original_key_buf }
     }
 
     pub fn init_key_code(&mut self, id_code: u32, level: u32, modulo: u32) {

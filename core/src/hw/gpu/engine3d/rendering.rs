@@ -12,9 +12,7 @@ impl Engine3D {
 
     pub fn copy_line(&self, vcount: u16, line: &mut [u16; GPU::WIDTH]) {
         for (i, pixel) in line.iter_mut().enumerate() {
-            *pixel = self.frame_buffer[vcount as usize * GPU::WIDTH + i]
-                .color
-                .as_u16()
+            *pixel = self.frame_buffer[vcount as usize * GPU::WIDTH + i].color.as_u16()
         }
     }
 
@@ -71,10 +69,8 @@ impl Engine3D {
         };
 
         if disp3dcnt.alpha_blending {
-            let (opaque, translucent): (Vec<Polygon>, Vec<Polygon>) = self
-                .polygons
-                .drain(..)
-                .partition(|polygon| polygon.attrs.alpha == 0x1F);
+            let (opaque, translucent): (Vec<Polygon>, Vec<Polygon>) =
+                self.polygons.drain(..).partition(|polygon| polygon.attrs.alpha == 0x1F);
 
             for polygon in opaque {
                 render(polygon)
@@ -133,18 +129,10 @@ impl Engine3D {
         let end_vert = end_vert; // Shadow to mark these as immutable
 
         let next = |cur| {
-            if cur == vertices.len() - 1 {
-                0
-            } else {
-                cur + 1
-            }
+            if cur == vertices.len() - 1 { 0 } else { cur + 1 }
         };
         let prev = |cur| {
-            if cur == 0 {
-                vertices.len() - 1
-            } else {
-                cur - 1
-            }
+            if cur == 0 { vertices.len() - 1 } else { cur - 1 }
         };
 
         #[expect(clippy::type_complexity)]
@@ -185,11 +173,8 @@ impl Engine3D {
             }
             let x_start = left_slope.next_x() as usize;
             let x_end = right_slope.next_x() as usize;
-            let (x_start, x_end) = if x_start > x_end {
-                (x_end, x_start)
-            } else {
-                (x_start, x_end)
-            };
+            let (x_start, x_end) =
+                if x_start > x_end { (x_end, x_start) } else { (x_start, x_end) };
             let w_start = left_slope.next_w() as i16;
             let w_end = right_slope.next_w() as i16;
             assert!(x_end >= x_start, "{}", {
@@ -246,12 +231,8 @@ impl Engine3D {
 
                 let vert_color = FrameBufferColor::new5(color.next(), polygon.attrs.alpha);
                 let fb_color = &pixel.color;
-                let poly_color = blend(
-                    polygon,
-                    vert_color,
-                    s.next() as i32 >> 4,
-                    t.next() as i32 >> 4,
-                );
+                let poly_color =
+                    blend(polygon, vert_color, s.next() as i32 >> 4, t.next() as i32 >> 4);
                 if poly_color.a5() == 0 {
                     // Pixel is totally tranpsarent so not rendered
                 } else if disp3dcnt.alpha_blending && fb_color.a5() != 0 && poly_color.a5() != 0x1F
@@ -280,14 +261,8 @@ impl Engine3D {
     fn get_tex_color(vram: &VRAM, polygon: &Polygon, s: i32, t: i32) -> Option<FrameBufferColor> {
         let vram_offset = polygon.tex_params.vram_offset;
         let pal_offset = polygon.palette_base;
-        let size = (
-            polygon.tex_params.size_s as u32,
-            polygon.tex_params.size_t as u32,
-        );
-        let size_shift = (
-            polygon.tex_params.size_s_shift,
-            polygon.tex_params.size_t_shift,
-        );
+        let size = (polygon.tex_params.size_s as u32, polygon.tex_params.size_t as u32);
+        let size_shift = (polygon.tex_params.size_s_shift, polygon.tex_params.size_t_shift);
         let mask = (size.0 - 1, size.1 - 1);
         // TODO: Avoid code repitition
         let s = if polygon.tex_params.repeat_s {
@@ -343,11 +318,7 @@ impl Engine3D {
                 let color = Color::from(
                     vram.get_textures_pal::<u16>(pal_offset / 2 + 2 * palette_color as usize),
                 );
-                let alpha = if palette_color == 0 && color0_transparent {
-                    0
-                } else {
-                    0x1F
-                };
+                let alpha = if palette_color == 0 && color0_transparent { 0 } else { 0x1F };
                 FrameBufferColor::new5(color, alpha)
             }),
             TextureFormat::Palette16 => Some({
@@ -356,11 +327,7 @@ impl Engine3D {
                 let color = Color::from(
                     vram.get_textures_pal::<u16>(pal_offset + 2 * palette_color as usize),
                 );
-                let alpha = if palette_color == 0 && color0_transparent {
-                    0
-                } else {
-                    0x1F
-                };
+                let alpha = if palette_color == 0 && color0_transparent { 0 } else { 0x1F };
                 FrameBufferColor::new5(color, alpha)
             }),
             TextureFormat::Compressed => Some({
@@ -428,11 +395,7 @@ impl Engine3D {
                 let color = Color::from(
                     vram.get_textures_pal::<u16>(pal_offset + 2 * palette_color as usize),
                 );
-                let alpha = if palette_color == 0 && color0_transparent {
-                    0
-                } else {
-                    0x1F
-                };
+                let alpha = if palette_color == 0 && color0_transparent { 0 } else { 0x1F };
                 FrameBufferColor::new5(color, alpha)
             }),
             TextureFormat::DirectColor => Some({
@@ -495,11 +458,7 @@ impl Engine3D {
         fn lt_depth_test(cur_depth: u32, new_depth: u32) -> bool {
             new_depth < cur_depth
         }
-        if polygon.attrs.depth_test_eq {
-            eq_depth_test
-        } else {
-            lt_depth_test
-        }
+        if polygon.attrs.depth_test_eq { eq_depth_test } else { lt_depth_test }
     }
 }
 
@@ -605,11 +564,7 @@ impl ColorSlope {
     }
 
     pub fn next(&mut self) -> Color {
-        Color::new8(
-            self.r.next() as u8,
-            self.g.next() as u8,
-            self.b.next() as u8,
-        )
+        Color::new8(self.r.next() as u8, self.g.next() as u8, self.b.next() as u8)
     }
 }
 
@@ -653,10 +608,7 @@ struct Slope {
 
 impl Slope {
     pub fn new(start: f32, end: f32, num_steps: usize) -> Self {
-        Slope {
-            cur: start,
-            step: (end - start) / num_steps as f32,
-        }
+        Slope { cur: start, step: (end - start) / num_steps as f32 }
     }
 
     pub fn next(&mut self) -> f32 {
@@ -680,11 +632,7 @@ impl FPSlope {
         let x_major = diff > num_steps;
         FPSlope {
             cur: Frac::new(start)
-                + if x_major {
-                    Frac(Frac::<18>::one().0 / 2)
-                } else {
-                    Frac::zero()
-                },
+                + if x_major { Frac(Frac::<18>::one().0 / 2) } else { Frac::zero() },
             step: if num_steps == 0 {
                 Frac::zero()
             } else if num_steps == diff {
@@ -764,6 +712,7 @@ impl<const N: u8, const M: u8> std::ops::SubAssign<Frac<M>> for Frac<N> {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct FrameBufferPixel {
     color: FrameBufferColor,
@@ -772,13 +721,11 @@ pub struct FrameBufferPixel {
 
 impl FrameBufferPixel {
     pub fn new() -> Self {
-        FrameBufferPixel {
-            color: FrameBufferColor::new5(Color::new5(0, 0, 0), 0),
-            depth: 0,
-        }
+        FrameBufferPixel { color: FrameBufferColor::new5(Color::new5(0, 0, 0), 0), depth: 0 }
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 struct FrameBufferColor {
     color: Color,
@@ -787,17 +734,11 @@ struct FrameBufferColor {
 
 impl FrameBufferColor {
     pub fn new5(color: Color, a: u8) -> Self {
-        FrameBufferColor {
-            color,
-            a: Color::upscale::<3>(a),
-        }
+        FrameBufferColor { color, a: Color::upscale::<3>(a) }
     }
 
     pub fn new6(color: Color, a: u8) -> Self {
-        FrameBufferColor {
-            color,
-            a: Color::upscale::<2>(a),
-        }
+        FrameBufferColor { color, a: Color::upscale::<2>(a) }
     }
 
     pub fn new8(color: Color, a: u8) -> Self {

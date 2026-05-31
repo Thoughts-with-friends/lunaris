@@ -19,12 +19,8 @@ impl Audio {
 
     pub fn new() -> Self {
         let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .expect("No audio output device available!");
-        let config = device
-            .default_output_config()
-            .expect("No audio output config available!");
+        let device = host.default_output_device().expect("No audio output device available!");
+        let config = device.default_output_config().expect("No audio output config available!");
 
         match config.sample_format() {
             cpal::SampleFormat::F32 => Audio::init::<f32>(device, config.into()),

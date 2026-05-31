@@ -9,10 +9,63 @@ use crate::hw::HW;
 
 pub use crate::hw::{Engine, GraphicsType, Key};
 
+#[derive(emu_utils::Savestate)]
+#[load(in_place_only, post = "self.post_load(save)?")]
+#[store(post = "self.post_store(save)?")]
 pub struct NDS {
     arm7: ARM<false>,
     arm9: ARM<true>,
     hw: HW,
+}
+
+impl NDS {
+    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"arm7")?;
+        save.load_into(&mut self.arm7)?;
+
+        save.start_field(b"arm9")?;
+        save.load_into(&mut self.arm9)?;
+
+        save.start_field(b"hw")?;
+        save.load_into(&mut self.hw)?;
+
+        save.end_struct()?;
+        Ok(())
+    }
+
+    fn post_store<S: emu_utils::WriteSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"arm7")?;
+        save.store(&mut self.arm7)?;
+
+        save.start_field(b"arm9")?;
+        save.store(&mut self.arm9)?;
+
+        save.start_field(b"hw")?;
+        save.store(&mut self.hw)?;
+
+        save.end_struct()?;
+        Ok(())
+    }
+
+    pub fn load_state(&mut self, state: &[u8]) -> Result<(), emu_utils::ReadError> {
+        use emu_utils::ReadSavestate as _;
+        let mut reader = emu_utils::PersistentReadSavestate::new(state)
+            .map_err(|_| emu_utils::ReadError::InvalidEnum)?;
+        reader.load_into(self)?;
+        Ok(())
+    }
+
+    pub fn save_state(&mut self) -> Result<Vec<u8>, emu_utils::WriteError> {
+        use emu_utils::WriteSavestate as _;
+
+        let mut output = Vec::new();
+        emu_utils::PersistentWriteSavestate::new(&mut output).store(self)?;
+        Ok(output)
+    }
 }
 
 impl NDS {
@@ -27,11 +80,7 @@ impl NDS {
     ) -> Self {
         let direct_boot = true;
         let mut hw = HW::new(bios7, bios9, firmware_file, rom, save_file, direct_boot);
-        NDS {
-            arm7: ARM::new(&mut hw, direct_boot),
-            arm9: ARM::new(&mut hw, direct_boot),
-            hw,
-        }
+        NDS { arm7: ARM::new(&mut hw, direct_boot), arm9: ARM::new(&mut hw, direct_boot), hw }
     }
 
     #[inline]
@@ -91,8 +140,7 @@ impl NDS {
         engine: Engine,
         graphics_type: GraphicsType,
     ) -> (Vec<u16>, usize, usize) {
-        self.hw
-            .render_palettes(extended, slot, palette, engine, graphics_type)
+        self.hw.render_palettes(extended, slot, palette, engine, graphics_type)
     }
 
     #[inline]
@@ -112,16 +160,7 @@ impl NDS {
         palette: usize,
         offset: usize,
     ) -> (Vec<u16>, usize, usize) {
-        self.hw.render_tiles(
-            engine,
-            graphics_type,
-            extended,
-            bitmap,
-            bpp8,
-            slot,
-            palette,
-            offset,
-        )
+        self.hw.render_tiles(engine, graphics_type, extended, bitmap, bpp8, slot, palette, offset)
     }
 
     #[inline]
@@ -148,12 +187,8 @@ impl NDS {
 
         // NOTE: Do not use `truncate`, the .sav file gets corrupted and won't load.
         #[allow(clippy::suspicious_open_options)]
-        let save_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&save_file_path)
-            .unwrap();
+        let save_file =
+            OpenOptions::new().read(true).write(true).create(true).open(&save_file_path).unwrap();
 
         let bios7 = bios7_path
             .and_then(|path| fs::read(path).ok())
@@ -169,11 +204,7 @@ impl NDS {
                 Err(_) => {
                     fs::write(path, free_bios::firmware::FIRMWARE_DS).unwrap();
 
-                    OpenOptions::new()
-                        .read(true)
-                        .write(true)
-                        .open(path)
-                        .unwrap()
+                    OpenOptions::new().read(true).write(true).open(path).unwrap()
                 }
             }
         } else {
@@ -183,20 +214,10 @@ impl NDS {
                 fs::write(&firmware_path, free_bios::firmware::FIRMWARE_DS).unwrap();
             }
 
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&firmware_path)
-                .unwrap()
+            OpenOptions::new().read(true).write(true).open(&firmware_path).unwrap()
         };
 
-        let mut nds = NDS::new(
-            bios7,
-            bios9,
-            firmware_file,
-            fs::read(rom_path).unwrap(),
-            save_file,
-        );
+        let mut nds = NDS::new(bios7, bios9, firmware_file, fs::read(rom_path).unwrap(), save_file);
         nds.set_audio_volume(audio_volume);
         nds
     }

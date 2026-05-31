@@ -1,3 +1,4 @@
+#[derive(emu_utils::Savestate)]
 pub struct TSC {
     x: u16,
     y: u16,
@@ -9,14 +10,7 @@ pub struct TSC {
 
 impl TSC {
     pub fn new() -> Self {
-        TSC {
-            x: 0,
-            y: 0,
-
-            pos: 0,
-            value: 0,
-            return_byte: 0,
-        }
+        TSC { x: 0, y: 0, pos: 0, value: 0, return_byte: 0 }
     }
 
     pub fn read(&self) -> u8 {

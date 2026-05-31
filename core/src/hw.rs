@@ -31,6 +31,7 @@ use spi::SPI;
 use spu::SPU;
 use timers::Timers;
 
+#[derive(emu_utils::Savestate)]
 pub struct HW {
     // Memory
     pub cp15: CP15,
@@ -39,10 +40,13 @@ pub struct HW {
     cartridge: Cartridge,
     itcm: Vec<u8>,
     dtcm: Vec<u8>,
+    // #[savestate(skip)] // Skip Dust too
     main_mem: Vec<u8>,
     iwram: Vec<u8>,
     shared_wram: Vec<u8>,
+    #[savestate(skip)]
     arm7_page_table: Vec<*mut u8>,
+    #[savestate(skip)]
     arm9_page_table: Vec<*mut u8>,
     // Devices
     pub gpu: GPU,
@@ -188,11 +192,7 @@ impl HW {
         if extended {
             match (engine, graphics_type) {
                 (Engine::A, GraphicsType::BG) => GPU::render_palettes(
-                    |i| {
-                        self.gpu
-                            .vram
-                            .get_bg_ext_pal::<EngineA>(slot, palette * 256 + i)
-                    },
+                    |i| self.gpu.vram.get_bg_ext_pal::<EngineA>(slot, palette * 256 + i),
                     16,
                 ),
                 (Engine::A, GraphicsType::OBJ) => GPU::render_palettes(
@@ -200,11 +200,7 @@ impl HW {
                     16,
                 ),
                 (Engine::B, GraphicsType::BG) => GPU::render_palettes(
-                    |i| {
-                        self.gpu
-                            .vram
-                            .get_bg_ext_pal::<EngineB>(slot, palette * 256 + i)
-                    },
+                    |i| self.gpu.vram.get_bg_ext_pal::<EngineB>(slot, palette * 256 + i),
                     16,
                 ),
                 (Engine::B, GraphicsType::OBJ) => GPU::render_palettes(

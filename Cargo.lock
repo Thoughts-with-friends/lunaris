@@ -730,6 +730,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
+name = "emu-utils"
+version = "0.0.0"
+source = "git+https://github.com/Thoughts-with-friends/emu-utils?rev=10bb6de#10bb6deac426b2ccd88d06b6c710f90e4049446b"
+dependencies = [
+ "cfg-if",
+ "emu-utils-macros",
+]
+
+[[package]]
+name = "emu-utils-macros"
+version = "0.0.0"
+source = "git+https://github.com/Thoughts-with-friends/emu-utils?rev=10bb6de#10bb6deac426b2ccd88d06b6c710f90e4049446b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1724,6 +1743,7 @@ dependencies = [
  "bytemuck",
  "chrono",
  "cpal",
+ "emu-utils",
  "free_bios",
  "likely_stable",
  "log",

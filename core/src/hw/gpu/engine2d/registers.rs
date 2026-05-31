@@ -6,6 +6,7 @@ use std::ops::{Deref, DerefMut};
 use super::EngineType;
 use crate::hw::{mem::IORegister, scheduler::Scheduler};
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum BGMode {
     Mode0 = 0,
@@ -33,6 +34,7 @@ impl BGMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum DisplayMode {
     Mode0 = 0,
@@ -76,6 +78,8 @@ bitflags! {
     }
 }
 
+crate::impl_savestate_bitflags!(DISPCNTFlags);
+
 pub struct DISPCNT<E: EngineType> {
     pub flags: DISPCNTFlags,
     pub bg_mode: BGMode,
@@ -85,6 +89,64 @@ pub struct DISPCNT<E: EngineType> {
     pub char_base: u8,
     pub screen_base: u8,
     engine_type: PhantomData<E>,
+}
+
+impl<E: EngineType> emu_utils::Storable for DISPCNT<E> {
+    fn store<S: emu_utils::WriteSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"flags")?;
+        save.store(&mut self.flags)?;
+
+        save.start_field(b"bg_mode")?;
+        save.store(&mut self.bg_mode)?;
+
+        save.start_field(b"display_mode")?;
+        save.store(&mut self.display_mode)?;
+
+        save.start_field(b"vram_block")?;
+        save.store(&mut self.vram_block)?;
+
+        save.start_field(b"tile_obj_1d_bound")?;
+        save.store(&mut self.tile_obj_1d_bound)?;
+
+        save.start_field(b"char_base")?;
+        save.store(&mut self.char_base)?;
+
+        save.start_field(b"screen_base")?;
+        save.store(&mut self.screen_base)?;
+
+        save.end_struct()
+    }
+}
+
+impl<E: EngineType> emu_utils::LoadableInPlace for DISPCNT<E> {
+    fn load_in_place<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"flags")?;
+        save.load_into(&mut self.flags)?;
+
+        save.start_field(b"bg_mode")?;
+        save.load_into(&mut self.bg_mode)?;
+
+        save.start_field(b"display_mode")?;
+        save.load_into(&mut self.display_mode)?;
+
+        save.start_field(b"vram_block")?;
+        save.load_into(&mut self.vram_block)?;
+
+        save.start_field(b"tile_obj_1d_bound")?;
+        save.load_into(&mut self.tile_obj_1d_bound)?;
+
+        save.start_field(b"char_base")?;
+        save.load_into(&mut self.char_base)?;
+
+        save.start_field(b"screen_base")?;
+        save.load_into(&mut self.screen_base)?;
+
+        save.end_struct()
+    }
 }
 
 impl<E: EngineType> DISPCNT<E> {
@@ -183,6 +245,7 @@ impl<E: EngineType> IORegister for DISPCNT<E> {
 }
 
 bitfield! {
+    #[derive(emu_utils::Savestate)]
     #[derive(Clone, Copy)]
     pub struct BGControl: u16 {
         pub priority: u8 @ 0..=1,
@@ -196,6 +259,7 @@ bitfield! {
 }
 
 bitfield! {
+    #[derive(emu_utils::Savestate)]
     #[derive(Clone, Copy)]
     pub struct Offset: u16 {
         pub offset: u16 @ 0..=8,
@@ -203,6 +267,7 @@ bitfield! {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct RotationScalingParameter {
     value: i16,
@@ -235,6 +300,7 @@ impl IORegister for RotationScalingParameter {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct ReferencePointCoord {
     value: i32,
@@ -276,12 +342,11 @@ impl IORegister for ReferencePointCoord {
 
 impl std::ops::AddAssign<RotationScalingParameter> for ReferencePointCoord {
     fn add_assign(&mut self, rhs: RotationScalingParameter) {
-        *self = Self {
-            value: self.value.wrapping_add(rhs.value as i32),
-        }
+        *self = Self { value: self.value.wrapping_add(rhs.value as i32) }
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct WindowDimensions {
     pub coord2: u8,
@@ -290,10 +355,7 @@ pub struct WindowDimensions {
 
 impl WindowDimensions {
     pub fn new() -> WindowDimensions {
-        WindowDimensions {
-            coord2: 0,
-            coord1: 0,
-        }
+        WindowDimensions { coord2: 0, coord1: 0 }
     }
 }
 
@@ -316,6 +378,7 @@ impl IORegister for WindowDimensions {
 }
 
 bitfield! {
+    #[derive(emu_utils::Savestate)]
     #[derive(Clone, Copy)]
     pub struct WindowControl: u8 {
         pub bg0_enable: bool @ 0,
@@ -338,6 +401,7 @@ impl WindowControl {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct MosaicSize {
     pub h_size: u16,
     pub v_size: u16,
@@ -345,10 +409,7 @@ pub struct MosaicSize {
 
 impl MosaicSize {
     pub fn new() -> MosaicSize {
-        MosaicSize {
-            h_size: 1,
-            v_size: 1,
-        }
+        MosaicSize { h_size: 1, v_size: 1 }
     }
 
     pub fn read(&self) -> u8 {
@@ -361,6 +422,7 @@ impl MosaicSize {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct MOSAIC {
     pub bg_size: MosaicSize,
     pub obj_size: MosaicSize,
@@ -368,10 +430,7 @@ pub struct MOSAIC {
 
 impl MOSAIC {
     pub fn new() -> MOSAIC {
-        MOSAIC {
-            bg_size: MosaicSize::new(),
-            obj_size: MosaicSize::new(),
-        }
+        MOSAIC { bg_size: MosaicSize::new(), obj_size: MosaicSize::new() }
     }
 }
 
@@ -393,15 +452,14 @@ impl IORegister for MOSAIC {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct BLDCNTTargetPixelSelection {
     pub enabled: [bool; 6],
 }
 
 impl BLDCNTTargetPixelSelection {
     pub fn new() -> BLDCNTTargetPixelSelection {
-        BLDCNTTargetPixelSelection {
-            enabled: [false; 6],
-        }
+        BLDCNTTargetPixelSelection { enabled: [false; 6] }
     }
 
     pub fn read(&self) -> u8 {
@@ -423,6 +481,7 @@ impl BLDCNTTargetPixelSelection {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum ColorSFX {
     None = 0,
@@ -444,6 +503,7 @@ impl ColorSFX {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct BLDCNT {
     pub target_pixel1: BLDCNTTargetPixelSelection,
     pub effect: ColorSFX,
@@ -481,6 +541,7 @@ impl IORegister for BLDCNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct BLDALPHA {
     raw_eva: u8,
     raw_evb: u8,
@@ -490,12 +551,7 @@ pub struct BLDALPHA {
 
 impl BLDALPHA {
     pub fn new() -> BLDALPHA {
-        BLDALPHA {
-            raw_eva: 0,
-            raw_evb: 0,
-            eva: 0,
-            evb: 0,
-        }
+        BLDALPHA { raw_eva: 0, raw_evb: 0, eva: 0, evb: 0 }
     }
 }
 
@@ -523,6 +579,7 @@ impl IORegister for BLDALPHA {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct BLDY {
     pub evy: u8,
 }
@@ -547,6 +604,7 @@ impl IORegister for BLDY {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum MasterBrightMode {
     Disable = 0,
@@ -565,6 +623,7 @@ impl MasterBrightMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct MasterBright {
     factor_read: u8, // Used for memory reading which is different than factor
     factor: u8,
@@ -573,11 +632,7 @@ pub struct MasterBright {
 
 impl MasterBright {
     pub fn new() -> Self {
-        MasterBright {
-            factor_read: 0,
-            factor: 0,
-            mode: MasterBrightMode::Disable,
-        }
+        MasterBright { factor_read: 0, factor: 0, mode: MasterBrightMode::Disable }
     }
 
     pub fn apply(&self, color: u16) -> u16 {

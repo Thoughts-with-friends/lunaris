@@ -7,8 +7,10 @@ use super::{GPU, HW, Scheduler, mem::IORegister};
 use crate::hw::cartridge::{Backup, Flash};
 use tsc::TSC;
 
+#[derive(emu_utils::Savestate)]
 pub struct SPI {
     cnt: CNT,
+    #[savestate(skip)]
     firmware: Flash,
     tsc: TSC,
 }
@@ -23,11 +25,7 @@ impl SPI {
     }
 
     pub fn read_cnt(&self, byte: usize) -> u8 {
-        if self.cnt.enable {
-            self.cnt.read(byte)
-        } else {
-            0
-        }
+        if self.cnt.enable { self.cnt.read(byte) } else { 0 }
     }
     pub fn read_data(&self) -> u8 {
         match self.cnt.device {
@@ -88,9 +86,7 @@ impl SPI {
         firmware[user_settings_addr as usize + 0x63] = max_y as u8;
         let crc16 = {
             let mut crc = 0xFFFF;
-            let vals = [
-                0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001,
-            ];
+            let vals = [0xC0C1, 0xC181, 0xC301, 0xC601, 0xCC01, 0xD801, 0xF001, 0xA001];
             for byte in
                 firmware[user_settings_addr as usize..user_settings_addr as usize + 0x70].iter()
             {
@@ -112,6 +108,7 @@ impl SPI {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct CNT {
     baudrate: u8,
     busy: bool,
@@ -171,6 +168,7 @@ impl IORegister for CNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 enum Device {
     Powerman = 0,

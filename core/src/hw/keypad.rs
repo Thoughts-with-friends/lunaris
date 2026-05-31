@@ -1,6 +1,7 @@
 use super::{Scheduler, mem::IORegister};
 use bitflags::*;
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum Key {
     A = 0,
@@ -17,6 +18,7 @@ pub enum Key {
     L = 9,
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Keypad {
     pub keyinput: KEYINPUT,
     pub keycnt: KEYCNT,
@@ -25,11 +27,7 @@ pub struct Keypad {
 
 impl Keypad {
     pub fn new() -> Self {
-        Keypad {
-            keyinput: KEYINPUT::all(),
-            keycnt: KEYCNT::empty(),
-            extkeyin: EXTKEYIN::new(),
-        }
+        Keypad { keyinput: KEYINPUT::all(), keycnt: KEYCNT::empty(), extkeyin: EXTKEYIN::new() }
     }
 
     pub fn press_key(&mut self, key: Key) {
@@ -70,6 +68,7 @@ impl Keypad {
     }
 }
 
+// #[derive(emu_utils::Savestate)]
 bitflags! {
     pub struct KEYINPUT: u16 {
         const A = 1 << 0;
@@ -84,6 +83,7 @@ bitflags! {
         const L = 1 << 9;
     }
 }
+crate::impl_savestate_bitflags!(KEYINPUT);
 
 bitflags! {
     pub struct KEYCNT: u16 {
@@ -101,6 +101,7 @@ bitflags! {
         const IRQ_COND_AND = 1 << 15;
     }
 }
+crate::impl_savestate_bitflags!(KEYCNT);
 
 bitflags! {
     pub struct EXTKEYIN: u8 {
@@ -111,6 +112,7 @@ bitflags! {
         const HINGE_CLOSED = 1 << 7;
     }
 }
+crate::impl_savestate_bitflags!(EXTKEYIN);
 
 impl IORegister for KEYINPUT {
     fn read(&self, byte: usize) -> u8 {

@@ -6,6 +6,8 @@ use super::{Engine3D, EngineType, GPU, VRAM};
 use crate::hw::{Scheduler, mem::IORegister};
 use registers::*;
 
+#[derive(emu_utils::Savestate)]
+#[load(in_place_only, post = "self.post_load(save)?")]
 pub struct Engine2D<E: EngineType> {
     // Registers
     pub(super) dispcnt: DISPCNT<E>,
@@ -42,9 +44,112 @@ pub struct Engine2D<E: EngineType> {
 
     // Important Rendering Variables
     pixels: Vec<u16>,
+
+    // #[serde(with = "array2d")]
     bg_lines: [[u16; GPU::WIDTH]; 4],
+    // #[serde(with = "serde_big_array::BigArray")]
     objs_line: [OBJPixel; GPU::WIDTH],
+    // #[serde(with = "array2d")]
     windows_lines: [[bool; GPU::WIDTH]; 3],
+}
+
+impl<E: EngineType> Engine2D<E> {
+    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"dispcnt")?;
+        save.load_into(&mut self.dispcnt)?;
+
+        save.start_field(b"bgcnts")?;
+        save.load_into(&mut self.bgcnts)?;
+
+        save.start_field(b"hofs")?;
+        save.load_into(&mut self.hofs)?;
+
+        save.start_field(b"vofs")?;
+        save.load_into(&mut self.vofs)?;
+
+        save.start_field(b"dxs")?;
+        save.load_into(&mut self.dxs)?;
+
+        save.start_field(b"dmxs")?;
+        save.load_into(&mut self.dmxs)?;
+
+        save.start_field(b"dys")?;
+        save.load_into(&mut self.dys)?;
+
+        save.start_field(b"dmys")?;
+        save.load_into(&mut self.dmys)?;
+
+        save.start_field(b"bgxs")?;
+        save.load_into(&mut self.bgxs)?;
+
+        save.start_field(b"bgys")?;
+        save.load_into(&mut self.bgys)?;
+
+        save.start_field(b"bgxs_latch")?;
+        save.load_into(&mut self.bgxs_latch)?;
+
+        save.start_field(b"bgys_latch")?;
+        save.load_into(&mut self.bgys_latch)?;
+
+        save.start_field(b"mosaic")?;
+        save.load_into(&mut self.mosaic)?;
+
+        save.start_field(b"master_bright")?;
+        save.load_into(&mut self.master_bright)?;
+
+        save.start_field(b"winhs")?;
+        save.load_into(&mut self.winhs)?;
+
+        save.start_field(b"winvs")?;
+        save.load_into(&mut self.winvs)?;
+
+        save.start_field(b"win_0_cnt")?;
+        save.load_into(&mut self.win_0_cnt)?;
+
+        save.start_field(b"win_1_cnt")?;
+        save.load_into(&mut self.win_1_cnt)?;
+
+        save.start_field(b"win_out_cnt")?;
+        save.load_into(&mut self.win_out_cnt)?;
+
+        save.start_field(b"win_obj_cnt")?;
+        save.load_into(&mut self.win_obj_cnt)?;
+
+        save.start_field(b"bldcnt")?;
+        save.load_into(&mut self.bldcnt)?;
+
+        save.start_field(b"bldalpha")?;
+        save.load_into(&mut self.bldalpha)?;
+
+        save.start_field(b"bldy")?;
+        save.load_into(&mut self.bldy)?;
+
+        save.start_field(b"bg_palettes")?;
+        save.load_into(&mut self.bg_palettes)?;
+
+        save.start_field(b"obj_palettes")?;
+        save.load_into(&mut self.obj_palettes)?;
+
+        save.start_field(b"oam")?;
+        save.load_into(&mut self.oam)?;
+
+        save.start_field(b"pixels")?;
+        save.load_into(&mut self.pixels)?;
+
+        save.start_field(b"bg_lines")?;
+        save.load_into(&mut self.bg_lines)?;
+
+        save.start_field(b"objs_line")?;
+        save.load_into(&mut self.objs_line)?;
+
+        save.start_field(b"windows_lines")?;
+        save.load_into(&mut self.windows_lines)?;
+
+        save.end_struct()?;
+        Ok(())
+    }
 }
 
 impl<E: EngineType> Engine2D<E> {
@@ -348,11 +453,8 @@ impl<E: EngineType> Engine2D<E> {
         let y1 = self.winvs[window_i].coord1;
         let y2 = self.winvs[window_i].coord2;
         let vcount = vcount as u8; // Only lower 8 bits compared
-        let y_not_in_window = if y1 > y2 {
-            vcount < y1 && vcount >= y2
-        } else {
-            !(y1..y2).contains(&vcount)
-        };
+        let y_not_in_window =
+            if y1 > y2 { vcount < y1 && vcount >= y2 } else { !(y1..y2).contains(&vcount) };
         if y_not_in_window {
             for dot_x in 0..GPU::WIDTH {
                 self.windows_lines[window_i][dot_x] = false;
@@ -406,11 +508,7 @@ impl<E: EngineType> Engine2D<E> {
                 if !affine && double_size_or_disable {
                     return false;
                 }
-                let obj_y_bounds = if double_size_or_disable {
-                    obj_height * 2
-                } else {
-                    obj_height
-                };
+                let obj_y_bounds = if double_size_or_disable { obj_height * 2 } else { obj_height };
 
                 let obj_y = obj[0] & 0xFF;
                 let y_end = obj_y + obj_y_bounds;
@@ -419,10 +517,7 @@ impl<E: EngineType> Engine2D<E> {
             })
             .collect::<Vec<_>>();
         objs.sort_by_key(|a| (*a)[2] >> 10 & 0x3);
-        let obj_window_enabled = self
-            .dispcnt
-            .flags
-            .contains(DISPCNTFlags::DISPLAY_OBJ_WINDOW);
+        let obj_window_enabled = self.dispcnt.flags.contains(DISPCNTFlags::DISPLAY_OBJ_WINDOW);
 
         for dot_x in 0..GPU::WIDTH {
             self.objs_line[dot_x] = OBJPixel::none();
@@ -438,18 +533,10 @@ impl<E: EngineType> Engine2D<E> {
                 let dot_x_signed = (dot_x as i16) / self.mosaic.obj_size.h_size as i16
                     * self.mosaic.obj_size.h_size as i16;
                 let obj_x = obj[1] & 0x1FF;
-                let obj_x = if obj_x & 0x100 != 0 {
-                    0xFE00 | obj_x
-                } else {
-                    obj_x
-                } as i16;
+                let obj_x = if obj_x & 0x100 != 0 { 0xFE00 | obj_x } else { obj_x } as i16;
                 let obj_y = obj[0] & 0xFF;
                 let double_size = obj[0] >> 9 & 0x1 != 0;
-                let obj_x_bounds = if double_size {
-                    obj_width * 2
-                } else {
-                    obj_width
-                };
+                let obj_x_bounds = if double_size { obj_width * 2 } else { obj_width };
                 if !(obj_x..obj_x + obj_x_bounds).contains(&dot_x_signed) {
                     continue;
                 }
@@ -460,10 +547,7 @@ impl<E: EngineType> Engine2D<E> {
                 let y_diff = y.wrapping_sub(obj_y) & 0xFF;
                 let (x_diff, y_diff) = if affine {
                     let (x_diff, y_diff) = if double_size {
-                        (
-                            x_diff - obj_width / 2,
-                            y_diff as i16 - obj_height as i16 / 2,
-                        )
+                        (x_diff - obj_width / 2, y_diff as i16 - obj_height as i16 / 2)
                     } else {
                         (x_diff, y_diff as i16)
                     };
@@ -496,16 +580,8 @@ impl<E: EngineType> Engine2D<E> {
                     let flip_x = obj[1] >> 12 & 0x1 != 0;
                     let flip_y = obj[1] >> 13 & 0x1 != 0;
                     (
-                        if flip_x {
-                            obj_width - 1 - x_diff
-                        } else {
-                            x_diff
-                        },
-                        if flip_y {
-                            obj_height - 1 - y_diff
-                        } else {
-                            y_diff
-                        },
+                        if flip_x { obj_width - 1 - x_diff } else { x_diff },
+                        if flip_y { obj_height - 1 - y_diff } else { y_diff },
                     )
                 };
                 let mode = obj[0] >> 10 & 0x3;
@@ -514,39 +590,34 @@ impl<E: EngineType> Engine2D<E> {
                 if mode == 3 {
                     // Bitmap
                     assert!(!bpp8);
-                    let (tile_start_addr, width) =
-                        if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_1D) {
-                            // Reserved, displays nothing
-                            if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_SQUARE) {
-                                continue;
-                            }
-                            let boundary =
-                                if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_1D_BOUND) {
-                                    256
-                                } else {
-                                    128
-                                };
-                            (base_tile_num * boundary, obj_width)
+                    let (tile_start_addr, width) = if self
+                        .dispcnt
+                        .contains(DISPCNTFlags::BITMAP_OBJ_1D)
+                    {
+                        // Reserved, displays nothing
+                        if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_SQUARE) {
+                            continue;
+                        }
+                        let boundary = if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_1D_BOUND) {
+                            256
                         } else {
-                            let (mask_x, width) =
-                                if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_SQUARE) {
-                                    (0x1F, 256)
-                                } else {
-                                    (0x0F, 128)
-                                };
-                            (
-                                (base_tile_num & mask_x) * 0x10 + (base_tile_num & !mask_x) * 0x80,
-                                width,
-                            )
+                            128
                         };
+                        (base_tile_num * boundary, obj_width)
+                    } else {
+                        let (mask_x, width) =
+                            if self.dispcnt.contains(DISPCNTFlags::BITMAP_OBJ_SQUARE) {
+                                (0x1F, 256)
+                            } else {
+                                (0x0F, 128)
+                            };
+                        ((base_tile_num & mask_x) * 0x10 + (base_tile_num & !mask_x) * 0x80, width)
+                    };
                     let addr = tile_start_addr + 2 * (y_diff as i16 * width + x_diff) as usize;
                     let color = vram.get_obj::<E, u16>(addr);
                     if color & 0x8000 != 0 {
-                        self.objs_line[dot_x] = OBJPixel {
-                            color,
-                            priority,
-                            semitransparent: false,
-                        };
+                        self.objs_line[dot_x] =
+                            OBJPixel { color, priority, semitransparent: false };
                         set_color = true;
                         // Continue to look for OBJ window pixels if not yet found and window is enabled
                         if self.windows_lines[2][dot_x] || !obj_window_enabled {
@@ -562,10 +633,7 @@ impl<E: EngineType> Engine2D<E> {
                         (y_diff as i16 / 8 * obj_width + x_diff) / 8,
                     )
                 } else {
-                    (
-                        32,
-                        y_diff as i16 / 8 * 0x80 / (bit_depth as i16) + x_diff / 8,
-                    )
+                    (32, y_diff as i16 / 8 * 0x80 / (bit_depth as i16) + x_diff / 8)
                 };
                 let addr = boundary * base_tile_num + tile_offset as usize * bit_depth * 8;
                 let tile_x = x_diff % 8;
@@ -598,11 +666,8 @@ impl<E: EngineType> Engine2D<E> {
                         } else {
                             self.obj_palettes[palette_num * 16 + color_num]
                         } | 0x8000;
-                    self.objs_line[dot_x] = OBJPixel {
-                        color,
-                        priority,
-                        semitransparent: mode == 1,
-                    };
+                    self.objs_line[dot_x] =
+                        OBJPixel { color, priority, semitransparent: mode == 1 };
                     set_color = true;
                     // Continue to look for OBJ window pixels if not yet found and window is enabled
                     if self.windows_lines[2][dot_x] || !obj_window_enabled {
@@ -668,10 +733,7 @@ impl<E: EngineType> Engine2D<E> {
         let bit_depth = 8; // Always 8bpp - Also bytes per row of tileper row of tile
         let map_size = 128 << bgcnt.screen_size(); // In Pixels
         let (mosaic_x, mosaic_y) = if bgcnt.mosaic() {
-            (
-                self.mosaic.bg_size.h_size as usize,
-                self.mosaic.bg_size.v_size as usize,
-            )
+            (self.mosaic.bg_size.h_size as usize, self.mosaic.bg_size.v_size as usize)
         } else {
             (1, 1)
         };
@@ -683,10 +745,7 @@ impl<E: EngineType> Engine2D<E> {
             let (x, y) =
                 if x_raw < 0 || x_raw > map_size as i32 || y_raw < 0 || y_raw > map_size as i32 {
                     if bgcnt.wrap() {
-                        (
-                            (x_raw % map_size as i32) as usize,
-                            (y_raw % map_size as i32) as usize,
-                        )
+                        ((x_raw % map_size as i32) as usize, (y_raw % map_size as i32) as usize)
                     } else {
                         self.bg_lines[bg_i][dot_x] = 0; // Transparent Color
                         continue;
@@ -721,10 +780,7 @@ impl<E: EngineType> Engine2D<E> {
         let map_start_addr = self.calc_map_start_addr(&bgcnt);
         let bit_depth = if bgcnt.bpp8() { 8 } else { 4 }; // Also bytes per row of tile
         let (mosaic_x, mosaic_y) = if bgcnt.mosaic() {
-            (
-                self.mosaic.bg_size.h_size as usize,
-                self.mosaic.bg_size.v_size as usize,
-            )
+            (self.mosaic.bg_size.h_size as usize, self.mosaic.bg_size.v_size as usize)
         } else {
             (1, 1)
         };
@@ -928,11 +984,7 @@ impl<E: EngineType> Engine2D<E> {
             // Transparent Color
             else if bgcnt.bpp8() & self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) {
                 // Wrap bit is Change Ext Palette Slot for BG0/BG1
-                let slot = if bg_i < 2 && bgcnt.wrap() {
-                    bg_i + 2
-                } else {
-                    bg_i
-                };
+                let slot = if bg_i < 2 && bgcnt.wrap() { bg_i + 2 } else { bg_i };
                 vram.get_bg_ext_pal::<E>(slot, original_palette_num * 256 + color_num) | 0x8000
             } else {
                 self.bg_palettes[palette_num * 16 + color_num] | 0x8000
@@ -981,11 +1033,7 @@ impl<E: EngineType> Engine2D<E> {
         // Transparent Color
         else if bgcnt.bpp8() & self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) {
             // Wrap bit is Change Ext Palette Slot for BG0/BG1
-            let slot = if bg_i < 2 && bgcnt.wrap() {
-                bg_i + 2
-            } else {
-                bg_i
-            };
+            let slot = if bg_i < 2 && bgcnt.wrap() { bg_i + 2 } else { bg_i };
             vram.get_bg_ext_pal::<E>(slot, original_palette_num * 256 + color_num) | 0x8000
         } else {
             self.bg_palettes[palette_num * 16 + color_num] | 0x8000
@@ -1037,11 +1085,7 @@ impl<E: EngineType> Engine2D<E> {
         let tile_y = if flip_y { 7 - tile_y } else { tile_y };
         let tile =
             get_vram_byte(vram, addr + tile_y * bit_depth + tile_x / (8 / bit_depth)) as usize;
-        if bit_depth == 8 {
-            (0, tile)
-        } else {
-            (palette_num, ((tile >> (4 * (tile_x % 2))) & 0xF))
-        }
+        if bit_depth == 8 { (0, tile) } else { (palette_num, ((tile >> (4 * (tile_x % 2))) & 0xF)) }
     }
 
     pub fn latch_affine(&mut self) {
@@ -1083,6 +1127,7 @@ impl Layer {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 struct OBJPixel {
     color: u16,
@@ -1310,17 +1355,10 @@ impl<E: EngineType> Engine2D<E> {
 
     pub fn read_palette_ram(&self, addr: u32) -> u8 {
         let addr = addr as usize & (2 * GPU::PALETTE_SIZE - 1);
-        let palettes = if addr < GPU::PALETTE_SIZE {
-            &self.bg_palettes
-        } else {
-            &self.obj_palettes
-        };
+        let palettes =
+            if addr < GPU::PALETTE_SIZE { &self.bg_palettes } else { &self.obj_palettes };
         let index = (addr & (GPU::PALETTE_SIZE - 1)) / 2;
-        if addr.is_multiple_of(2) {
-            palettes[index] as u8
-        } else {
-            (palettes[index] >> 8) as u8
-        }
+        if addr.is_multiple_of(2) { palettes[index] as u8 } else { (palettes[index] >> 8) as u8 }
     }
 
     fn set_pixel(&mut self, vcount: u16, dot_x: usize, color: u16) {
@@ -1329,11 +1367,8 @@ impl<E: EngineType> Engine2D<E> {
 
     pub fn write_palette_ram(&mut self, addr: usize, value: u16) {
         let addr = addr & (2 * GPU::PALETTE_SIZE - 1);
-        let palettes = if addr < GPU::PALETTE_SIZE {
-            &mut self.bg_palettes
-        } else {
-            &mut self.obj_palettes
-        };
+        let palettes =
+            if addr < GPU::PALETTE_SIZE { &mut self.bg_palettes } else { &mut self.obj_palettes };
         let index = (addr & (GPU::PALETTE_SIZE - 1)) / 2;
         palettes[index] = value;
     }

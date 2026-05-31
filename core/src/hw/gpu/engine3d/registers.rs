@@ -1,5 +1,6 @@
 use super::{Color, Engine3D, GPU, IORegister, InterruptRequest, Scheduler, math::Vec4};
 
+#[derive(emu_utils::Savestate)]
 pub struct DISP3DCNT {
     pub texture_mapping: bool,
     pub highlight_shading: bool,
@@ -82,6 +83,7 @@ impl IORegister for DISP3DCNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct GXSTAT {
     pub test_busy: bool, // Box, Pos, Vector Test
     pub box_test_inside: bool,
@@ -91,6 +93,7 @@ pub struct GXSTAT {
     pub command_fifo_irq: CommandFifoIRQ,
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum CommandFifoIRQ {
     Never = 0,
@@ -185,6 +188,7 @@ impl Engine3D {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct ClearColor {
     pub r: u8,
     pub g: u8,
@@ -196,14 +200,7 @@ pub struct ClearColor {
 
 impl ClearColor {
     pub fn new() -> Self {
-        ClearColor {
-            r: 0,
-            g: 0,
-            b: 0,
-            fog: false,
-            a: 0,
-            polygon_id: 0,
-        }
+        ClearColor { r: 0, g: 0, b: 0, fog: false, a: 0, polygon_id: 0 }
     }
 }
 
@@ -230,6 +227,7 @@ impl IORegister for ClearColor {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct ClearDepth {
     depth: u16,
 }
@@ -258,6 +256,7 @@ impl IORegister for ClearDepth {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct TextureParams {
     pub vram_offset: usize,
@@ -308,6 +307,7 @@ impl TextureParams {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum TextureFormat {
     NoTexture = 0,
@@ -336,6 +336,7 @@ impl From<u32> for TextureFormat {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum TexCoordTransformationMode {
     None = 0,
@@ -356,6 +357,7 @@ impl From<u32> for TexCoordTransformationMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct PolygonAttributes {
     pub lights_enabled: [bool; 4],
@@ -406,6 +408,7 @@ impl PolygonAttributes {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum PolygonMode {
     Modulation = 0,
@@ -426,6 +429,7 @@ impl From<u32> for PolygonMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct FrameParams {
     pub manual_sort_translucent: bool,
@@ -434,10 +438,7 @@ pub struct FrameParams {
 
 impl FrameParams {
     pub fn new() -> Self {
-        FrameParams {
-            manual_sort_translucent: false,
-            w_buffer: false,
-        }
+        FrameParams { manual_sort_translucent: false, w_buffer: false }
     }
 
     pub fn write(&mut self, value: u32) {
@@ -446,6 +447,7 @@ impl FrameParams {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Viewport {
     x1: i32,
     y1: i32,
@@ -457,14 +459,7 @@ pub struct Viewport {
 
 impl Viewport {
     pub fn new() -> Self {
-        Viewport {
-            x1: 0,
-            y1: 0,
-            x2: 0,
-            y2: 0,
-            width: 0,
-            height: 0,
-        }
+        Viewport { x1: 0, y1: 0, x2: 0, y2: 0, width: 0, height: 0 }
     }
 
     pub fn write(&mut self, value: u32) {
@@ -503,6 +498,7 @@ impl Viewport {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub enum VertexPrimitive {
     Triangles = 0,
     Quad = 1,

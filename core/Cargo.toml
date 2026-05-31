@@ -26,6 +26,8 @@ num-traits = "0.2.12"
 priority-queue = "1.0.5"
 ringbuf = "0.2.2"
 simplelog = "0.10.0"
+emu-utils = { git = "https://github.com/Thoughts-with-friends/emu-utils", rev = "10bb6de" }
+
 
 [features]
 nightly = []

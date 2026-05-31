@@ -93,11 +93,7 @@ impl HW {
     ) {
         let mask = FromPrimitive::from_u8(0xFF).unwrap();
         for i in 0..size_of::<T>() {
-            write_fn(
-                device,
-                addr + i as u32,
-                num::cast::<T, u8>(value >> (8 * i) & mask).unwrap(),
-            );
+            write_fn(device, addr + i as u32, num::cast::<T, u8>(value >> (8 * i) & mask).unwrap());
         }
     }
 
@@ -123,6 +119,7 @@ impl MemoryValue for u16 {}
 impl MemoryValue for u32 {}
 impl MemoryValue for u64 {}
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum AccessType {
     N,
@@ -134,6 +131,7 @@ pub trait IORegister {
     fn write(&mut self, scheduler: &mut Scheduler, byte: usize, value: u8);
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct EXMEM {
     gba: [ExMemGBA; 2],
     gba_arm7_access: bool,
@@ -179,6 +177,7 @@ impl EXMEM {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct ExMemGBA {
     sram_access_time: u8,
     rom_n_access_time: u8,
@@ -188,12 +187,7 @@ pub struct ExMemGBA {
 
 impl ExMemGBA {
     pub fn new() -> Self {
-        ExMemGBA {
-            sram_access_time: 0,
-            rom_n_access_time: 0,
-            rom_s_access_time: 0,
-            phi: 0,
-        }
+        ExMemGBA { sram_access_time: 0, rom_n_access_time: 0, rom_s_access_time: 0, phi: 0 }
     }
 
     pub fn read(&self) -> u8 {
@@ -211,6 +205,7 @@ impl ExMemGBA {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct WRAMCNT {
     value: u8,
 
@@ -222,14 +217,8 @@ pub struct WRAMCNT {
 
 impl WRAMCNT {
     pub fn new(value: u8) -> Self {
-        let mut wramcnt = WRAMCNT {
-            value,
-
-            arm7_offset: 0,
-            arm7_mask: 0,
-            arm9_offset: 0,
-            arm9_mask: 0,
-        };
+        let mut wramcnt =
+            WRAMCNT { value, arm7_offset: 0, arm7_mask: 0, arm9_offset: 0, arm9_mask: 0 };
         wramcnt.changed();
         wramcnt
     }
@@ -276,6 +265,7 @@ impl IORegister for WRAMCNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct POWCNT2 {
     enable_sound: bool,
     enable_wifi: bool,
@@ -283,10 +273,7 @@ pub struct POWCNT2 {
 
 impl POWCNT2 {
     pub fn new() -> Self {
-        POWCNT2 {
-            enable_sound: true,
-            enable_wifi: false,
-        }
+        POWCNT2 { enable_sound: true, enable_wifi: false }
     }
 }
 
@@ -311,6 +298,7 @@ impl IORegister for POWCNT2 {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 enum HaltMode {
     None = 0,
@@ -331,15 +319,14 @@ impl HaltMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct HALTCNT {
     mode: HaltMode,
 }
 
 impl HALTCNT {
     pub fn new() -> Self {
-        HALTCNT {
-            mode: HaltMode::None,
-        }
+        HALTCNT { mode: HaltMode::None }
     }
 
     pub fn unhalt(&mut self) {

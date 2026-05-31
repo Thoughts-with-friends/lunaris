@@ -10,11 +10,13 @@ use super::{
 use audio::Audio;
 use registers::*;
 
+#[derive(emu_utils::Savestate)]
 pub struct SPU {
     cnt: SoundControl,
     sound_bias: u16,
     captures: [Capture; 2],
     // Sound Generation
+    #[savestate(skip)]
     audio: Audio,
     clocks_per_sample: usize,
     // Channels
@@ -147,11 +149,7 @@ impl SPU {
         } else {
             let (mixer, _, _) = self.generate_mixer();
             let mixer_value = (if capture_i == 0 { mixer.0 } else { mixer.1 } >> 16) as u16;
-            if std::mem::size_of::<T>() == 1 {
-                mixer_value >> 8
-            } else {
-                mixer_value
-            }
+            if std::mem::size_of::<T>() == 1 { mixer_value >> 8 } else { mixer_value }
         };
         if self.captures[capture_i].cnt.add {
             // TODO: Implement adding channel
@@ -359,6 +357,8 @@ impl HW {
     }
 }
 
+#[derive(emu_utils::Savestate)]
+#[load(in_place_only, post = "self.post_load(save)?")]
 pub struct Channel<T: ChannelType> {
     // Registers
     cnt: ChannelControl<T>,
@@ -378,6 +378,61 @@ pub struct Channel<T: ChannelType> {
     adpcm_value: i16,
     initial_adpcm_index: i32,
     initial_adpcm_value: i16,
+}
+
+impl<T: ChannelType> Channel<T> {
+    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"cnt")?;
+        save.load_into(&mut self.cnt)?;
+
+        save.start_field(b"src_addr")?;
+        save.load_into(&mut self.src_addr)?;
+
+        save.start_field(b"timer_val")?;
+        save.load_into(&mut self.timer_val)?;
+
+        save.start_field(b"loop_start")?;
+        save.load_into(&mut self.loop_start)?;
+
+        save.start_field(b"len")?;
+        save.load_into(&mut self.len)?;
+
+        save.start_field(b"spec")?;
+        save.load_into(&mut self.spec)?;
+
+        save.start_field(b"addr")?;
+        save.load_into(&mut self.addr)?;
+
+        save.start_field(b"num_bytes_left")?;
+        save.load_into(&mut self.num_bytes_left)?;
+
+        save.start_field(b"sample")?;
+        save.load_into(&mut self.sample)?;
+
+        save.start_field(b"adpcm_in_header")?;
+        save.load_into(&mut self.adpcm_in_header)?;
+
+        save.start_field(b"adpcm_low_nibble")?;
+        save.load_into(&mut self.adpcm_low_nibble)?;
+
+        save.start_field(b"adpcm_index")?;
+        save.load_into(&mut self.adpcm_index)?;
+
+        save.start_field(b"adpcm_value")?;
+        save.load_into(&mut self.adpcm_value)?;
+
+        save.start_field(b"initial_adpcm_index")?;
+        save.load_into(&mut self.initial_adpcm_index)?;
+
+        save.start_field(b"initial_adpcm_value")?;
+        save.load_into(&mut self.initial_adpcm_value)?;
+
+        save.end_struct()?;
+
+        Ok(())
+    }
 }
 
 impl<T: ChannelType> IORegister for Channel<T> {
@@ -494,11 +549,7 @@ impl<T: ChannelType> Channel<T> {
         let return_addr = self.addr;
         self.addr += std::mem::size_of::<M>() as u32;
         self.num_bytes_left -= std::mem::size_of::<M>();
-        let reset = if self.num_bytes_left == 0 {
-            self.handle_end()
-        } else {
-            false
-        };
+        let reset = if self.num_bytes_left == 0 { self.handle_end() } else { false };
         (return_addr, reset)
     }
 
@@ -525,11 +576,7 @@ impl<T: ChannelType> Channel<T> {
 
     pub fn set_sample<M: super::MemoryValue>(&mut self, sample: M) {
         let sample = num_traits::cast::<M, u16>(sample).unwrap();
-        self.sample = if std::mem::size_of::<M>() == 1 {
-            sample << 8
-        } else {
-            sample
-        } as i16;
+        self.sample = if std::mem::size_of::<M>() == 1 { sample << 8 } else { sample } as i16;
     }
 
     pub fn initial_adpcm_addr(&mut self) -> Option<u32> {
@@ -553,21 +600,13 @@ impl<T: ChannelType> Channel<T> {
         } else {
             self.addr += 1;
             self.num_bytes_left -= 1;
-            if self.num_bytes_left == 0 {
-                self.handle_end()
-            } else {
-                false
-            }
+            if self.num_bytes_left == 0 { self.handle_end() } else { false }
         };
         (return_addr, reset)
     }
 
     pub fn set_adpcm_data(&mut self, value: u8) {
-        let data = if self.adpcm_low_nibble {
-            value & 0xF
-        } else {
-            value >> 4 & 0xF
-        };
+        let data = if self.adpcm_low_nibble { value & 0xF } else { value >> 4 & 0xF };
         self.adpcm_low_nibble = !self.adpcm_low_nibble;
         let table_val = SPU::ADPCM_TABLE[self.adpcm_index as usize];
         let mut diff = table_val / 8;
@@ -627,6 +666,7 @@ impl<T: ChannelType> Channel<T> {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 struct Capture {
     // Registers
     cnt: CaptureControl,
@@ -698,6 +738,7 @@ impl Capture {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ChannelSpec {
     Base(usize),
@@ -710,10 +751,13 @@ pub trait ChannelType {
     fn supports_psg() -> bool;
     fn supports_noise() -> bool;
 }
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct BaseChannel {}
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct PSGChannel {}
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct NoiseChannel {}
 

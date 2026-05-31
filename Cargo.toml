@@ -25,6 +25,10 @@ resolver = "3"
 debug = true
 
 
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+
+
 [workspace.lints.clippy]
 all = {level = "warn", priority = -1}
 cargo = {level = "warn", priority = -1}

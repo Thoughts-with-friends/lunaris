@@ -43,10 +43,7 @@ pub enum InputSource {
     ///
     /// `direction` selects which half of the axis
     /// is considered active.
-    GamepadAxis {
-        axis: glfw::GamepadAxis,
-        direction: AxisDirection,
-    },
+    GamepadAxis { axis: glfw::GamepadAxis, direction: AxisDirection },
 }
 
 /// Emulator logical input.
@@ -100,12 +97,7 @@ pub struct WindowConfig {
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self {
-            pos_x: 100,
-            pos_y: 100,
-            width: 512,
-            height: 768,
-        }
+        Self { pos_x: 100, pos_y: 100, width: 512, height: 768 }
     }
 }
 
@@ -117,6 +109,7 @@ pub struct Config {
     pub bios9_path: Option<PathBuf>,
     pub firmware_path: Option<PathBuf>,
     pub last_rom_path: Option<PathBuf>,
+    pub save_state_dir: PathBuf,
 
     pub window: WindowConfig,
 
@@ -152,6 +145,7 @@ impl Default for Config {
             bios9_path: None,
             firmware_path: None,
             last_rom_path: None,
+            save_state_dir: PathBuf::from("./states"),
 
             window: WindowConfig::default(),
             audio_volume: 100.0,
@@ -213,27 +207,19 @@ impl Default for Config {
                 // Gamepad buttons (no joystick id anymore)
                 //
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonDpadUp,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonDpadUp }],
                     target: BindKey::Up,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonDpadDown,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonDpadDown }],
                     target: BindKey::Down,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonDpadLeft,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonDpadLeft }],
                     target: BindKey::Left,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonDpadRight,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonDpadRight }],
                     target: BindKey::Right,
                 },
                 InputBinding {
@@ -253,21 +239,15 @@ impl Default for Config {
                     target: BindKey::Y,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonLeftBumper,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonLeftBumper }],
                     target: BindKey::L,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonRightBumper,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonRightBumper }],
                     target: BindKey::R,
                 },
                 InputBinding {
-                    sources: vec![InputSource::GamepadButton {
-                        button: ButtonStart,
-                    }],
+                    sources: vec![InputSource::GamepadButton { button: ButtonStart }],
                     target: BindKey::Start,
                 },
                 InputBinding {

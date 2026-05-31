@@ -2,6 +2,7 @@ use super::{mem::IORegister, scheduler::Scheduler};
 
 use chrono::{Datelike, Timelike, offset::Local};
 
+#[derive(emu_utils::Savestate)]
 pub struct RTC {
     // Register
     data: bool,
@@ -59,17 +60,11 @@ impl RTC {
             }
             Parameter::Alarm1FreqDuty(byte) => {
                 self.last_byte = byte == 3 - 1;
-                (
-                    self.date_time.alarm1.read(byte),
-                    Parameter::Alarm1FreqDuty(byte + 1),
-                )
+                (self.date_time.alarm1.read(byte), Parameter::Alarm1FreqDuty(byte + 1))
             }
             Parameter::Alarm2(byte) => {
                 self.last_byte = byte == 3 - 1;
-                (
-                    self.date_time.alarm2.read(byte),
-                    Parameter::Alarm2(byte + 1),
-                )
+                (self.date_time.alarm2.read(byte), Parameter::Alarm2(byte + 1))
             }
             Parameter::ClockAdjust => {
                 self.last_byte = true;
@@ -132,11 +127,7 @@ impl IORegister for RTC {
         }
 
         let cs = if !self.cs_write { self.cs as u8 } else { 0 };
-        let sck = if !self.sck_write {
-            self.sck_write as u8
-        } else {
-            0
-        };
+        let sck = if !self.sck_write { self.sck_write as u8 } else { 0 };
         let data = if !self.data_write { self.data as u8 } else { 0 };
         (self.cs_write as u8) << 6
             | (self.sck_write as u8) << 5
@@ -229,6 +220,7 @@ impl IORegister for RTC {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 enum Mode {
     StartCmd(bool),
@@ -237,6 +229,7 @@ enum Mode {
     EndCmd,
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Parameter {
     StatusReg1,
@@ -263,12 +256,14 @@ impl Parameter {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 enum AccessType {
     Read(u8, usize),
     Write(u8, usize),
 }
 
+#[derive(emu_utils::Savestate)]
 struct DateTime {
     // Status Reg 1
     is_24h: bool,
@@ -373,6 +368,7 @@ impl DateTime {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 struct AlarmReg {
     // Day
     day: u8,

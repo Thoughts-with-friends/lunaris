@@ -18,6 +18,8 @@ pub use vram::VRAM;
 use engine2d::DisplayMode;
 use registers::CaptureSource;
 
+#[derive(emu_utils::Savestate)]
+#[load(in_place_only, post = "self.post_load(save)?")]
 pub struct GPU {
     // Registers and Values Shared between Engines
     pub dispstats: [DISPSTAT; 2],
@@ -35,6 +37,41 @@ pub struct GPU {
 }
 
 impl GPU {
+    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"dispstats")?;
+        save.load_into(&mut self.dispstats)?;
+
+        save.start_field(b"vcount")?;
+        save.load_into(&mut self.vcount)?;
+
+        save.start_field(b"engine_a")?;
+        save.load_into(&mut self.engine_a)?;
+        save.start_field(b"engine_b")?;
+        save.load_into(&mut self.engine_b)?;
+
+        save.start_field(b"engine3d")?;
+        save.load_into(&mut self.engine3d)?;
+
+        save.start_field(b"vram")?;
+        save.load_into(&mut self.vram)?;
+
+        save.start_field(b"dispcapcnt")?;
+        save.load_into(&mut self.dispcapcnt)?;
+
+        save.start_field(b"capturing")?;
+        save.load_into(&mut self.capturing)?;
+
+        save.start_field(b"powcnt1")?;
+        save.load_into(&mut self.powcnt1)?;
+
+        save.end_struct()?;
+        Ok(())
+    }
+}
+
+impl GPU {
     pub const WIDTH: usize = 256;
     pub const HEIGHT: usize = 192;
 
@@ -48,11 +85,7 @@ impl GPU {
     const NUM_LINES: usize = 263;
 
     pub fn new(scheduler: &mut Scheduler) -> GPU {
-        scheduler.schedule(
-            Event::HBlank,
-            HW::on_hblank,
-            GPU::HBLANK_DOT * GPU::CYCLES_PER_DOT,
-        );
+        scheduler.schedule(Event::HBlank, HW::on_hblank, GPU::HBLANK_DOT * GPU::CYCLES_PER_DOT);
         GPU {
             // Registers and Values Shared between Engines
             dispstats: [DISPSTAT::new(), DISPSTAT::new()],
@@ -90,15 +123,13 @@ impl GPU {
     pub fn render_line(&mut self) {
         // TODO: Use POWCNT to selectively render engines
         if self.powcnt1.contains(POWCNT1::ENABLE_ENGINE_A) {
-            self.engine_a
-                .render_line(&self.engine3d, &self.vram, self.vcount);
+            self.engine_a.render_line(&self.engine3d, &self.vram, self.vcount);
             if self.capturing && (self.vcount as usize) < self.dispcapcnt.capture_size.height() {
                 self.capture();
             }
         }
         if self.powcnt1.contains(POWCNT1::ENABLE_ENGINE_B) {
-            self.engine_b
-                .render_line(&self.engine3d, &self.vram, self.vcount)
+            self.engine_b.render_line(&self.engine3d, &self.vram, self.vcount)
         }
     }
 
@@ -258,9 +289,7 @@ impl HW {
         if self.gpu.powcnt1.contains(POWCNT1::ENABLE_3D_RENDERING) {
             self.gpu.engine3d.render(&self.gpu.vram);
 
-            self.gpu
-                .engine3d
-                .exec_commands(&mut self.interrupts[1].request);
+            self.gpu.engine3d.exec_commands(&mut self.interrupts[1].request);
             self.check_geometry_command_fifo();
         }
     }
@@ -278,8 +307,9 @@ impl HW {
 pub trait EngineType {
     fn is_a() -> bool;
 }
-
+#[derive(emu_utils::Savestate)]
 pub struct EngineA {}
+#[derive(emu_utils::Savestate)]
 pub struct EngineB {}
 
 impl EngineType for EngineA {

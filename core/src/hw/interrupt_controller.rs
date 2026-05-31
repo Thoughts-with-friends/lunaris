@@ -1,6 +1,7 @@
 use super::{Scheduler, mem::IORegister};
 use bitflags::*;
 
+#[derive(emu_utils::Savestate)]
 pub struct InterruptController {
     pub enable: InterruptEnable,
     pub master_enable: InterruptMasterEnable,
@@ -47,11 +48,15 @@ bitflags! {
     }
 }
 
+crate::impl_savestate_bitflags!(InterruptEnable);
+
 bitflags! {
     pub struct InterruptMasterEnable: u32 {
         const ENABLE = 1 << 0;
     }
 }
+
+crate::impl_savestate_bitflags!(InterruptMasterEnable);
 
 bitflags! {
     pub struct InterruptRequest: u32 {
@@ -77,6 +82,8 @@ bitflags! {
         const GEOMETRY_COMMAND_FIFO = 1 << 21; // TODO: Don't include for interrupts7
     }
 }
+
+crate::impl_savestate_bitflags!(InterruptRequest);
 
 impl IORegister for InterruptEnable {
     fn read(&self, byte: usize) -> u8 {

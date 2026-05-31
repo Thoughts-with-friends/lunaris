@@ -15,6 +15,8 @@ bitflags! {
     }
 }
 
+crate::impl_savestate_bitflags!(POWCNT1);
+
 impl IORegister for POWCNT1 {
     fn read(&self, byte: usize) -> u8 {
         assert!(byte < 4);
@@ -33,16 +35,19 @@ impl IORegister for POWCNT1 {
 }
 
 bitflags! {
-    pub struct DISPSTATFlags: u16 {
+        pub struct DISPSTATFlags: u16 {
         const VBLANK = 1 << 0;
         const HBLANK = 1 << 1;
         const VCOUNTER = 1 << 2;
         const VBLANK_IRQ_ENABLE = 1 << 3;
         const HBLANK_IRQ_ENABLE = 1 << 4;
-        const VCOUNTER_IRQ_ENALBE = 1 << 5;
+        const VCOUNTER_IRQ_ENABLE = 1 << 5;
     }
 }
 
+crate::impl_savestate_bitflags!(DISPSTATFlags);
+
+#[derive(emu_utils::Savestate)]
 pub struct DISPSTAT {
     pub flags: DISPSTATFlags,
     pub vcount_setting: u16,
@@ -50,10 +55,7 @@ pub struct DISPSTAT {
 
 impl DISPSTAT {
     pub fn new() -> DISPSTAT {
-        DISPSTAT {
-            flags: DISPSTATFlags::empty(),
-            vcount_setting: 0,
-        }
+        DISPSTAT { flags: DISPSTATFlags::empty(), vcount_setting: 0 }
     }
 }
 
@@ -95,6 +97,7 @@ impl IORegister for DISPSTAT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct DISPCAPCNT {
     pub eva: u8,
     pub evb: u8,
@@ -167,6 +170,7 @@ impl IORegister for DISPCAPCNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum CaptureOffset {
     O00000 = 0,
@@ -198,6 +202,7 @@ impl From<u8> for CaptureOffset {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum CaptureSize {
     S128x128 = 0,
@@ -238,6 +243,7 @@ impl From<u8> for CaptureSize {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum CaptureSource {
     A = 0,

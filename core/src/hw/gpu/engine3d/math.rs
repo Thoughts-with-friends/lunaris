@@ -1,5 +1,6 @@
 use std::ops::{Add, AddAssign, Index, Mul, Neg, Sub};
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 pub struct Matrix {
     elems: [FixedPoint; 16],
@@ -269,6 +270,7 @@ impl Mul<[FixedPoint; 3]> for Matrix {
 }
 
 // 12 bit fraction
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
 pub struct FixedPoint(i32);
 
@@ -369,6 +371,7 @@ impl std::fmt::Debug for FixedPoint {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 pub struct Vec4 {
     elems: [FixedPoint; 4],
@@ -376,9 +379,7 @@ pub struct Vec4 {
 
 impl Vec4 {
     pub fn new(x: FixedPoint, y: FixedPoint, z: FixedPoint, w: FixedPoint) -> Self {
-        Vec4 {
-            elems: [x, y, z, w],
-        }
+        Vec4 { elems: [x, y, z, w] }
     }
 }
 

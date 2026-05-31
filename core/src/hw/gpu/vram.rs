@@ -5,6 +5,7 @@ use super::{
     EngineType,
 };
 
+#[derive(emu_utils::Savestate)]
 pub struct VRAM {
     cnts: [VRAMCNT; 9],
     pub(super) banks: [Vec<u8>; 9],
@@ -38,9 +39,8 @@ impl VRAM {
     ];
     const MAPPING_LEN: usize = 16 * 0x400;
 
-    const LCDC_OFFSETS: [usize; 9] = [
-        0x0_0000, 0x2_0000, 0x4_0000, 0x6_0000, 0x8_0000, 0x9_0000, 0x9_4000, 0x9_8000, 0xA_0000,
-    ];
+    const LCDC_OFFSETS: [usize; 9] =
+        [0x0_0000, 0x2_0000, 0x4_0000, 0x6_0000, 0x8_0000, 0x9_0000, 0x9_4000, 0x9_8000, 0xA_0000];
     const ENGINE_A_BG_OFFSET: usize = 0x00_0000;
     const ENGINE_A_OBJ_OFFSET: usize = 0x40_0000;
     const ENGINE_B_BG_OFFSET: usize = 0x20_0000;
@@ -337,42 +337,22 @@ impl VRAM {
     }
 
     pub fn get_lcdc_bank(&self, bank: u8) -> Option<&Vec<u8>> {
-        if self.lcdc_enabled[bank as usize] {
-            Some(&self.banks[bank as usize])
-        } else {
-            None
-        }
+        if self.lcdc_enabled[bank as usize] { Some(&self.banks[bank as usize]) } else { None }
     }
 
     pub fn get_bg<E: EngineType, T: MemoryValue>(&self, addr: usize) -> T {
         if E::is_a() {
-            VRAM::read_mapping(
-                &self.banks,
-                &self.engine_a_bg[addr / VRAM::MAPPING_LEN],
-                addr,
-            )
+            VRAM::read_mapping(&self.banks, &self.engine_a_bg[addr / VRAM::MAPPING_LEN], addr)
         } else {
-            VRAM::read_mapping(
-                &self.banks,
-                &self.engine_b_bg[addr / VRAM::MAPPING_LEN],
-                addr,
-            )
+            VRAM::read_mapping(&self.banks, &self.engine_b_bg[addr / VRAM::MAPPING_LEN], addr)
         }
     }
 
     pub fn get_obj<E: EngineType, T: MemoryValue>(&self, addr: usize) -> T {
         if E::is_a() {
-            VRAM::read_mapping(
-                &self.banks,
-                &self.engine_a_obj[addr / VRAM::MAPPING_LEN],
-                addr,
-            )
+            VRAM::read_mapping(&self.banks, &self.engine_a_obj[addr / VRAM::MAPPING_LEN], addr)
         } else {
-            VRAM::read_mapping(
-                &self.banks,
-                &self.engine_b_obj[addr / VRAM::MAPPING_LEN],
-                addr,
-            )
+            VRAM::read_mapping(&self.banks, &self.engine_b_obj[addr / VRAM::MAPPING_LEN], addr)
         }
     }
 
@@ -415,11 +395,7 @@ impl VRAM {
     }
 
     pub fn get_textures_pal<T: MemoryValue>(&self, addr: usize) -> T {
-        VRAM::read_mapping(
-            &self.banks,
-            &self.textures_pal[addr / VRAM::MAPPING_LEN],
-            addr,
-        )
+        VRAM::read_mapping(&self.banks, &self.textures_pal[addr / VRAM::MAPPING_LEN], addr)
     }
 
     #[expect(clippy::ptr_arg)]
@@ -449,10 +425,7 @@ impl VRAM {
         let size = size.unwrap_or_else(|| VRAM::BANKS_LEN[bank as usize]);
         for addr in (0..size).step_by(VRAM::MAPPING_LEN) {
             assert!(
-                arr[(addr + offset) / VRAM::MAPPING_LEN]
-                    .iter()
-                    .position(|b| *b == bank)
-                    .is_none()
+                arr[(addr + offset) / VRAM::MAPPING_LEN].iter().position(|b| *b == bank).is_none()
             );
             arr[(addr + offset) / VRAM::MAPPING_LEN].push(bank);
         }
@@ -486,6 +459,7 @@ impl VRAM {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 struct VRAMCNT {
     mst: u8,
@@ -512,6 +486,7 @@ impl VRAMCNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Bank {
     A = 0,

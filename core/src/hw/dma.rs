@@ -5,6 +5,7 @@ use super::{
     scheduler::{Event, Scheduler},
 };
 
+#[derive(emu_utils::Savestate)]
 pub struct Controller {
     channels: [Channel; 4],
     pub by_type: [Vec<usize>; Occasion::num()],
@@ -247,6 +248,7 @@ impl HW {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Channel {
     pub num: usize,
     pub is_nds9: bool,
@@ -286,11 +288,7 @@ impl Channel {
         self.sad_latch = self.sad.addr & self.sad.mask;
         self.dad_latch = self.dad.addr & self.sad.mask;
         let count = self.cnt.count & self.cnt.count_mask;
-        self.count_latch = if count == 0 {
-            self.cnt.count_mask + 1
-        } else {
-            count
-        };
+        self.count_latch = if count == 0 { self.cnt.count_mask + 1 } else { count };
     }
 }
 
@@ -332,6 +330,7 @@ impl IORegister for Channel {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Occasion {
     Immediate = 0,
@@ -409,9 +408,9 @@ impl Occasion {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Control {
     count: u32,
-    #[expect(unused)]
     pub count_latch: u32,
     pub dest_addr_ctrl: u8,
     pub src_addr_ctrl: u8,
@@ -441,11 +440,7 @@ impl Control {
 
             is_nds9,
             num,
-            count_mask: if is_nds9 {
-                0x1F_FFFF
-            } else {
-                if num == 3 { 0xFFFF } else { 0x3FFF }
-            },
+            count_mask: if is_nds9 { 0x1F_FFFF } else { if num == 3 { 0xFFFF } else { 0x3FFF } },
         }
     }
 }
@@ -494,6 +489,7 @@ impl IORegister for Control {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Address {
     pub addr: u32,
     mask: u32,

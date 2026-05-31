@@ -5,6 +5,7 @@ use super::{
     scheduler::{Event, Scheduler},
 };
 
+#[derive(emu_utils::Savestate)]
 pub struct Timers {
     timers: [Timer; Timers::NUM_TIMERS],
 }
@@ -39,6 +40,7 @@ impl std::ops::IndexMut<usize> for Timers {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct Timer {
     is_nds9: bool,
@@ -112,11 +114,7 @@ impl Timer {
         trace!(
             "Starting NDS{} {} Timer{}: {} * 0x{:X}",
             if self.is_nds9 { 9 } else { 7 },
-            if self.is_count_up() {
-                "Count-Up"
-            } else {
-                "Regular"
-            },
+            if self.is_count_up() { "Count-Up" } else { "Regular" },
             self.index,
             prescaler,
             self.reload
@@ -157,11 +155,7 @@ impl Timer {
             1 => self.reload = self.reload & !0xFF00 | (value as u16) << 8,
             2 => {
                 if self.cnt.start {
-                    trace!(
-                        "Stopping NDS{} Timer{}",
-                        if self.is_nds9 { 9 } else { 7 },
-                        self.index
-                    )
+                    trace!("Stopping NDS{} Timer{}", if self.is_nds9 { 9 } else { 7 }, self.index)
                 }
                 scheduler.remove(Event::TimerOverflow(self.is_nds9, self.index));
                 let prev_start = self.cnt.start;
@@ -213,6 +207,7 @@ impl HW {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct TMCNT {
     pub prescaler: u8,
@@ -251,11 +246,6 @@ impl IORegister for TMCNT {
 
 impl TMCNT {
     pub fn new() -> TMCNT {
-        TMCNT {
-            prescaler: 0,
-            count_up: false,
-            irq: false,
-            start: false,
-        }
+        TMCNT { prescaler: 0, count_up: false, irq: false, start: false }
     }
 }

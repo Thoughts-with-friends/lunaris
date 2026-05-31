@@ -12,21 +12,23 @@ use std::sync::OnceLock;
 type ArmLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u32, IS_ARM9>; 4096];
 type ThumbLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u16, IS_ARM9>; 256];
 
+#[derive(emu_utils::Savestate)]
 pub struct ARM<const IS_ARM9: bool> {
     cycle: usize,
     regs: RegValues,
     instr_buffer: [u32; 2],
     next_access_type: AccessType,
 
+    #[savestate(skip)]
     condition_lut: &'static [bool; 256],
+    #[savestate(skip)]
     arm_lut: &'static ArmLut<IS_ARM9>,
+    #[savestate(skip)]
     thumb_lut: &'static ThumbLut<IS_ARM9>,
 }
 
 impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     pub fn new(hw: &mut HW, direct_boot: bool) -> ARM<IS_ARM9> {
-        static CONDITION_LUT: OnceLock<[bool; 256]> = OnceLock::new();
-
         let mut cpu = ARM {
             cycle: 0,
             regs: if direct_boot {
@@ -41,7 +43,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             instr_buffer: [0; 2],
             next_access_type: AccessType::N,
 
-            condition_lut: CONDITION_LUT.get_or_init(instructions::gen_condition_table),
+            condition_lut: condition_lut(),
             arm_lut: arm_lut(),
             thumb_lut: thumb_lut(),
         };
@@ -114,11 +116,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     }
 
     fn is_halted(&self, hw: &HW) -> bool {
-        if IS_ARM9 {
-            hw.cp15.arm9_halted
-        } else {
-            hw.haltcnt.halted()
-        }
+        if IS_ARM9 { hw.cp15.arm9_halted } else { hw.haltcnt.halted() }
     }
 
     pub fn handle_irq(&mut self, hw: &mut HW) {
@@ -297,8 +295,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             self.regs.set_c(result.1 || result2.1);
             self.regs.set_z(result2.0 == 0);
             self.regs.set_n(result2.0 & 0x8000_0000 != 0);
-            self.regs
-                .set_v((!(op1 ^ op2)) & (op1 ^ result2.0) & 0x8000_0000 != 0);
+            self.regs.set_v((!(op1 ^ op2)) & (op1 ^ result2.0) & 0x8000_0000 != 0);
         }
         result2.0
     }
@@ -328,6 +325,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             mask <<= 8;
         }
     }
+}
+
+fn condition_lut() -> &'static [bool; 256] {
+    static CONDITION_LUT: OnceLock<[bool; 256]> = OnceLock::new();
+    CONDITION_LUT.get_or_init(instructions::gen_condition_table)
 }
 
 /// Returns the global ARM instruction LUT for the selected CPU type.

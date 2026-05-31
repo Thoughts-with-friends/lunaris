@@ -1,5 +1,6 @@
 use bitfield::bitfield;
 
+#[derive(emu_utils::Savestate)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Mode {
     USR = 0b10000,
@@ -12,6 +13,7 @@ pub enum Mode {
 }
 
 bitfield! {
+    #[derive(emu_utils::Savestate)]
     #[derive(Debug, PartialEq, Clone, Copy)]
     struct StatusRegBits: u32 {
         n: bool @ 31,
@@ -27,6 +29,7 @@ bitfield! {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 struct StatusReg {
     pub bits: StatusRegBits,
@@ -35,10 +38,7 @@ struct StatusReg {
 
 impl StatusReg {
     pub fn reset() -> StatusReg {
-        StatusReg {
-            bits: StatusRegBits(Mode::SYS as u32),
-            mode: Mode::SYS,
-        }
+        StatusReg { bits: StatusRegBits(Mode::SYS as u32), mode: Mode::SYS }
     }
 
     pub fn get_mode(&self) -> Mode {
@@ -67,6 +67,7 @@ impl StatusReg {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegValues {
     regs: [u32; 16],

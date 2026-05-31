@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use super::interrupt_controller::InterruptRequest;
 
+#[derive(emu_utils::Savestate)]
 pub struct IPC {
     fifocnt7: FIFOCNT,
     sync7: SYNC,
@@ -42,20 +43,10 @@ impl IPC {
         self.fifocnt9.read(&self.output9, &self.output7, byte)
     }
     pub fn arm7_recv(&mut self) -> (u32, InterruptRequest) {
-        IPC::recv(
-            &self.fifocnt9,
-            &mut self.fifocnt7,
-            &mut self.output9,
-            &mut self.prev_value9,
-        )
+        IPC::recv(&self.fifocnt9, &mut self.fifocnt7, &mut self.output9, &mut self.prev_value9)
     }
     pub fn arm9_recv(&mut self) -> (u32, InterruptRequest) {
-        IPC::recv(
-            &self.fifocnt7,
-            &mut self.fifocnt9,
-            &mut self.output7,
-            &mut self.prev_value7,
-        )
+        IPC::recv(&self.fifocnt7, &mut self.fifocnt9, &mut self.output7, &mut self.prev_value7)
     }
 
     pub fn write_sync7(&mut self, byte: usize, value: u8) -> InterruptRequest {
@@ -66,14 +57,12 @@ impl IPC {
     }
     pub fn write_fifocnt7(&mut self, byte: usize, value: u8) -> InterruptRequest {
         let prev_fifocnt = self.fifocnt7;
-        self.fifocnt7
-            .write(&mut self.output7, &mut self.prev_value7, byte, value);
+        self.fifocnt7.write(&mut self.output7, &mut self.prev_value7, byte, value);
         IPC::check_fifo_interrupt(&self.output7, &self.output9, &prev_fifocnt, &self.fifocnt7)
     }
     pub fn write_fifocnt9(&mut self, byte: usize, value: u8) -> InterruptRequest {
         let prev_fifocnt = self.fifocnt9;
-        self.fifocnt9
-            .write(&mut self.output9, &mut self.prev_value9, byte, value);
+        self.fifocnt9.write(&mut self.output9, &mut self.prev_value9, byte, value);
         IPC::check_fifo_interrupt(&self.output9, &self.output7, &prev_fifocnt, &self.fifocnt9)
     }
     pub fn arm7_send(&mut self, value: u32) -> InterruptRequest {
@@ -154,6 +143,7 @@ impl IPC {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 struct SYNC {
     input: u8,
     output: u8,
@@ -162,11 +152,7 @@ struct SYNC {
 
 impl SYNC {
     fn new() -> Self {
-        SYNC {
-            input: 0,
-            output: 0,
-            sync_irq: false,
-        }
+        SYNC { input: 0, output: 0, sync_irq: false }
     }
 
     fn read(&self, byte: usize) -> u8 {
@@ -199,6 +185,7 @@ impl SYNC {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 struct FIFOCNT {
     send_fifo_empty_irq: bool,

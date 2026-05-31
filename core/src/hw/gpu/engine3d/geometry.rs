@@ -49,10 +49,7 @@ impl Engine3D {
 
         use GeometryCommand::*;
         let param = command_entry.param;
-        info!(
-            "Executing Geometry Command {:?} {:?}",
-            command_entry.command, self.params
-        );
+        info!("Executing Geometry Command {:?} {:?}", command_entry.command, self.params);
         match command_entry.command {
             NOP => (),
             MtxMode => self.mtx_mode = MatrixMode::from(param as u8 & 0x3),
@@ -76,11 +73,7 @@ impl Engine3D {
             },
             MtxPop => {
                 let offset = param & 0x3F;
-                let offset = if offset & 0x20 != 0 {
-                    0xC0 | offset
-                } else {
-                    offset
-                } as i8;
+                let offset = if offset & 0x20 != 0 { 0xC0 | offset } else { offset } as i8;
                 match self.mtx_mode {
                     MatrixMode::Proj => {
                         self.proj_stack_sp -= 1;
@@ -217,11 +210,8 @@ impl Engine3D {
                     ]
             }
             LightColor => {
-                self.lights[(param >> 30 & 0x3) as usize].color = [
-                    (param & 0x1F) as i32,
-                    (param >> 5 & 0x1F) as i32,
-                    (param >> 10 & 0x1F) as i32,
-                ]
+                self.lights[(param >> 30 & 0x3) as usize].color =
+                    [(param & 0x1F) as i32, (param >> 5 & 0x1F) as i32, (param >> 10 & 0x1F) as i32]
             }
             Shininess => {
                 for (i, word) in self.params.iter().enumerate() {
@@ -397,21 +387,9 @@ impl Engine3D {
             }
         }
         self.color = Color::new5(
-            if final_color[0] > 0x1F {
-                0x1F
-            } else {
-                final_color[0]
-            } as u8,
-            if final_color[1] > 0x1F {
-                0x1F
-            } else {
-                final_color[1]
-            } as u8,
-            if final_color[2] > 0x1F {
-                0x1F
-            } else {
-                final_color[2]
-            } as u8,
+            if final_color[0] > 0x1F { 0x1F } else { final_color[0] } as u8,
+            if final_color[1] > 0x1F { 0x1F } else { final_color[1] } as u8,
+            if final_color[2] > 0x1F { 0x1F } else { final_color[2] } as u8,
         );
     }
 
@@ -527,11 +505,8 @@ impl Engine3D {
             self.cur_poly_verts[2].clip_coords[1] - self.cur_poly_verts[1].clip_coords[1],
             self.cur_poly_verts[2].clip_coords[3] - self.cur_poly_verts[1].clip_coords[3],
         );
-        let mut normal = (
-            ((a.1 * b.2) - (a.2 * b.1)),
-            ((a.2 * b.0) - (a.0 * b.2)),
-            ((a.0 * b.1) - (a.1 * b.0)),
-        );
+        let mut normal =
+            (((a.1 * b.2) - (a.2 * b.1)), ((a.2 * b.0) - (a.0 * b.2)), ((a.0 * b.1) - (a.1 * b.0)));
         while (normal.0 >> 31) ^ (normal.0 >> 63) != 0
             || (normal.1 >> 31) ^ (normal.1 >> 63) != 0
             || (normal.2 >> 31) ^ (normal.2 >> 63) != 0
@@ -605,11 +580,8 @@ impl Engine3D {
             let vert = Vertex {
                 screen_coords: self.viewport.screen_coords(&vert.clip_coords),
                 z_depth: ((((z * 0x4000 / w as i64) + 0x3FFF) * 0x200) & 0xFFFFFF) as u32,
-                normalized_w: if w_size < 16 {
-                    w << (16 - w_size)
-                } else {
-                    w >> (w_size - 16)
-                } as i16,
+                normalized_w: if w_size < 16 { w << (16 - w_size) } else { w >> (w_size - 16) }
+                    as i16,
                 ..vert
             };
             if vert.screen_coords[1] < top {
@@ -658,11 +630,7 @@ impl Engine3D {
         // Chekc positive plane
         for i in 0..self.cur_poly_verts.len() {
             let cur_vertex = &self.cur_poly_verts[i];
-            let prev_index = if i == 0 {
-                self.cur_poly_verts.len() - 1
-            } else {
-                i - 1
-            };
+            let prev_index = if i == 0 { self.cur_poly_verts.len() - 1 } else { i - 1 };
             let prev_vertex = &self.cur_poly_verts[prev_index];
 
             // Cur Point inside positive part of plane
@@ -762,6 +730,7 @@ impl Engine3D {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GeometryCommand {
     NOP = 0x00,
@@ -938,6 +907,7 @@ impl GeometryCommand {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GeometryCommandEntry {
     command: GeometryCommand,
@@ -950,6 +920,7 @@ impl GeometryCommandEntry {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub enum MatrixMode {
     Proj = 0,
     Pos = 1,
@@ -969,6 +940,7 @@ impl From<u8> for MatrixMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct Light {
     direction: [FixedPoint; 3],
@@ -984,6 +956,7 @@ impl Light {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Material {
     diffuse: [i32; 3],
     ambient: [i32; 3],
@@ -1006,11 +979,7 @@ impl Material {
     }
 
     pub fn set_dif_amb(&mut self, val: u32) -> bool {
-        self.diffuse = [
-            (val & 0x1F) as i32,
-            (val >> 5 & 0x1F) as i32,
-            (val >> 10 & 0x1F) as i32,
-        ];
+        self.diffuse = [(val & 0x1F) as i32, (val >> 5 & 0x1F) as i32, (val >> 10 & 0x1F) as i32];
         self.ambient = [
             (val >> 16 & 0x1F) as i32,
             (val >> (16 + 5) & 0x1F) as i32,
@@ -1020,11 +989,7 @@ impl Material {
     }
 
     pub fn set_spe_emi(&mut self, val: u32) {
-        self.specular = [
-            (val & 0x1F) as i32,
-            (val >> 5 & 0x1F) as i32,
-            (val >> 10 & 0x1F) as i32,
-        ];
+        self.specular = [(val & 0x1F) as i32, (val >> 5 & 0x1F) as i32, (val >> 10 & 0x1F) as i32];
         self.use_shininess_table = val & 0x8000 != 0;
         self.emission = [
             (val >> 16 & 0x1F) as i32,
@@ -1034,6 +999,7 @@ impl Material {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 pub struct Color {
     r: u8,
@@ -1043,30 +1009,18 @@ pub struct Color {
 
 impl From<u16> for Color {
     fn from(value: u16) -> Self {
-        Color::new5(
-            (value & 0x1F) as u8,
-            ((value >> 5) & 0x1F) as u8,
-            ((value >> 10) & 0x1F) as u8,
-        )
+        Color::new5((value & 0x1F) as u8, ((value >> 5) & 0x1F) as u8, ((value >> 10) & 0x1F) as u8)
     }
 }
 impl Color {
     // Expands 5 bit components to internal 6-bit
     pub fn new5(r: u8, g: u8, b: u8) -> Self {
-        Color::new6(
-            Self::upscale::<1>(r),
-            Self::upscale::<1>(g),
-            Self::upscale::<1>(b),
-        )
+        Color::new6(Self::upscale::<1>(r), Self::upscale::<1>(g), Self::upscale::<1>(b))
     }
 
     // Expands 6 bit components to 8 bits for interpolation
     pub fn new6(r: u8, g: u8, b: u8) -> Self {
-        Color {
-            r: Self::upscale::<2>(r),
-            g: Self::upscale::<2>(g),
-            b: Self::upscale::<2>(b),
-        }
+        Color { r: Self::upscale::<2>(r), g: Self::upscale::<2>(g), b: Self::upscale::<2>(b) }
     }
 
     pub fn new8(r: u8, g: u8, b: u8) -> Self {
@@ -1119,6 +1073,7 @@ impl Color {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 pub struct Vertex {
     pub clip_coords: Vec4,
@@ -1147,6 +1102,7 @@ impl Vertex {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Polygon {
     pub start_vert: usize,
     pub end_vert: usize,

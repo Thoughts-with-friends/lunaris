@@ -32,11 +32,7 @@ impl HW {
 
     pub fn cycle_at_next_event(&self) -> usize {
         let (_wrapper, Reverse(cycle)) = self.scheduler.event_queue.peek().unwrap();
-        if self.scheduler.cycle > *cycle {
-            self.scheduler.cycle
-        } else {
-            *cycle
-        }
+        if self.scheduler.cycle > *cycle { self.scheduler.cycle } else { *cycle }
     }
 
     fn dummy_handler(&mut self, _event: Event) {
@@ -44,28 +40,23 @@ impl HW {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Scheduler {
     pub cycle: usize,
+    #[savestate(skip)] // FIXME?
     event_queue: PriorityQueue<EventWrapper, Reverse<usize>>,
 }
 
 impl Scheduler {
     pub fn new() -> Scheduler {
         let queue = PriorityQueue::new();
-        Scheduler {
-            cycle: 0,
-            event_queue: queue,
-        }
+        Scheduler { cycle: 0, event_queue: queue }
     }
 
     fn get_next_event(&mut self) -> Option<EventWrapper> {
         // There should always be at least one event in the queue
         let (_event_type, Reverse(cycle)) = self.event_queue.peek().unwrap();
-        if self.cycle >= *cycle {
-            Some(self.event_queue.pop().unwrap().0)
-        } else {
-            None
-        }
+        if self.cycle >= *cycle { Some(self.event_queue.pop().unwrap().0) } else { None }
     }
 
     pub fn schedule(&mut self, event: Event, handler: EventHandler, delay: usize) {
@@ -83,6 +74,7 @@ impl Scheduler {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Event {
     DMA(bool, usize),

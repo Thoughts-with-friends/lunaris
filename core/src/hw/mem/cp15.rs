@@ -3,6 +3,7 @@ use bitflags::*;
 
 use super::HW;
 
+#[derive(emu_utils::Savestate)]
 pub struct CP15 {
     control: Control,
     interrupt_base: u32,
@@ -74,10 +75,7 @@ impl CP15 {
 
     fn read_control_reg(&self, m: u32, p: u32) -> u32 {
         if m != 0 || p != 0 {
-            warn!(
-                "m and p are not 0 for CP15 Control Register Read: {} {}",
-                m, p
-            );
+            warn!("m and p are not 0 for CP15 Control Register Read: {} {}", m, p);
             return 0;
         }
         self.control.bits
@@ -103,19 +101,13 @@ impl CP15 {
 
     fn write_control_reg(&mut self, m: u32, p: u32, value: u32) {
         if m != 0 || p != 0 {
-            warn!(
-                "m and p are not 0 for CP15 Control Register Write: {} {}",
-                m, p
-            );
+            warn!("m and p are not 0 for CP15 Control Register Write: {} {}", m, p);
             return;
         }
         info!("Writing to CP15 Control Register 0x{:X}", value);
         self.control.bits = value & Control::MASK | Control::ALWAYS_SET;
-        self.interrupt_base = if self.control.contains(Control::INTERRUPT_BASE) {
-            0xFFFF_0000
-        } else {
-            0x0000_0000
-        };
+        self.interrupt_base =
+            if self.control.contains(Control::INTERRUPT_BASE) { 0xFFFF_0000 } else { 0x0000_0000 };
     }
 
     fn write_cachability(&mut self, m: u32, p: u32, value: u32) {
@@ -128,10 +120,7 @@ impl CP15 {
 
     fn write_cache_write_bufferability(&mut self, m: u32, p: u32, value: u32) {
         if m != 0 || p != 0 {
-            warn!(
-                "m and p are not 0 for CP15 Cache write Bufferability: {} {}",
-                m, p
-            );
+            warn!("m and p are not 0 for CP15 Cache write Bufferability: {} {}", m, p);
             return;
         }
         info!("Cache Write Bufferability: 0x{:X}", value);
@@ -193,6 +182,7 @@ impl CP15 {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 struct TCMControl {
     pub base: u32,
     pub virtual_size: u32,
@@ -208,11 +198,7 @@ impl TCMControl {
             v_size_copy >>= 1;
             assert!(v_size_copy >= 0x200);
         }
-        TCMControl {
-            base,
-            virtual_size,
-            virtual_size_shift: shift,
-        }
+        TCMControl { base, virtual_size, virtual_size_shift: shift }
     }
 
     pub fn read(&self) -> u32 {
@@ -248,6 +234,8 @@ bitflags! {
         const PU_ENABLE = 1 << 0;
     }
 }
+
+crate::impl_savestate_bitflags!(Control);
 
 impl Control {
     const MASK: u32 = (1 << 19)

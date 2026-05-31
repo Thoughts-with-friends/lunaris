@@ -8,6 +8,7 @@ mod display;
 mod input;
 
 use std::{
+    borrow::Borrow as _,
     collections::HashSet,
     fs::File,
     path::{Path, PathBuf},
@@ -44,9 +45,9 @@ fn setup_logging() {
         ColorChoice::Auto,
     )];
 
-    let arm7 = File::create("ROMs/arm7.log");
-    let arm9 = File::create("ROMs/arm9.log");
-    let save = File::create("ROMs/savedata.log");
+    let arm7 = File::create("logs/arm7.log");
+    let arm9 = File::create("logs/arm9.log");
+    let save = File::create("logs/savedata.log");
 
     let mut config = ConfigBuilder::new();
     config
@@ -60,10 +61,7 @@ fn setup_logging() {
     if let Ok(file) = arm7 {
         loggers.push(WriteLogger::new(
             LevelFilter::Off,
-            config
-                .clone()
-                .add_filter_allow_str("nds_core::arm7")
-                .build(),
+            config.clone().add_filter_allow_str("nds_core::arm7").build(),
             file,
         ));
     }
@@ -71,10 +69,7 @@ fn setup_logging() {
     if let Ok(file) = arm9 {
         loggers.push(WriteLogger::new(
             LevelFilter::Off,
-            config
-                .clone()
-                .add_filter_allow_str("nds_core::arm9")
-                .build(),
+            config.clone().add_filter_allow_str("nds_core::arm9").build(),
             file,
         ));
     }
@@ -82,10 +77,7 @@ fn setup_logging() {
     if let Ok(file) = save {
         loggers.push(WriteLogger::new(
             LevelFilter::Off,
-            config
-                .clone()
-                .add_filter_allow_str("nds_core::savedata")
-                .build(),
+            config.clone().add_filter_allow_str("nds_core::savedata").build(),
             file,
         ));
     }
@@ -111,9 +103,7 @@ fn resolve_rom_path(config: &config::Config) -> Option<PathBuf> {
         }
     }
 
-    rfd::FileDialog::new()
-        .add_filter("NDS ROM", &["nds"])
-        .pick_file()
+    rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
 }
 
 fn create_nds(rom: &Path, config: &config::Config) -> NDS {
@@ -237,16 +227,63 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
     ui.main_menu_bar(|| {
         ui.menu(im_str!("File"), true, || {
             if MenuItem::new(im_str!("Open ROM")).build(ui) {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("NDS ROM", &["nds"])
-                    .pick_file()
+                if let Some(p) = rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
                 {
                     ctx.nds = create_nds(&p, &ctx.config);
                     ctx.paused = false;
-                    ctx.config.last_rom_path = Some(p);
+                    ctx.config.last_rom_path = Some(p.to_path_buf());
                     ctx.config.save();
                 }
             }
+
+            ui.menu(im_str!("Save State"), true, || {
+                for i in 1..=5 {
+                    if MenuItem::new(imgui::ImString::new(format!("State {i}")).borrow()).build(ui)
+                    {
+                        match ctx.nds.save_state() {
+                            Ok(state_bytes) => {
+                                let path = ctx.config.save_state_dir.join(format!("state_{i}.bin"));
+                                let _ = std::fs::create_dir_all(&ctx.config.save_state_dir);
+                                std::fs::write(&path, state_bytes).unwrap_or_else(|e| {
+                                    nds_core::log::error!(target: "nds_core::savedata", "Failed to save state: {e}");
+                                });
+                            }
+                            Err(e) => {
+                                nds_core::log::error!(target: "nds_core::savedata", "Failed to save state: {e}");
+                            }
+                        }
+                    }
+                }
+            });
+
+            ui.menu(im_str!("Load State"), true, || {
+                for i in 1..=5 {
+                    if MenuItem::new(imgui::ImString::new(format!("State {i}")).borrow()).build(ui)
+                    {
+                        let path = ctx.config.save_state_dir.join(format!("state_{i}.bin"));
+                        let state_bytes = match std::fs::read(&path) {
+                            Ok(state_bytes) => state_bytes,
+                            Err(e) => {
+                                nds_core::log::error!(
+                                    target: "nds_core::savedata",
+                                    "Failed to load state: {e}"
+                                );
+                                return;
+                            }
+                        };
+
+                        match ctx.nds.load_state(&state_bytes) {
+                            Ok(()) => {
+                                ctx.paused = false;
+                                nds_core::log::info!(target: "nds_core::savedata", "loaded state. {}", path.display());
+                            }
+                            Err(e) => {
+                                nds_core::log::error!(target: "nds_core::savedata", "Failed to load state: {e}");
+                            }
+                        }
+                    }
+                }
+            });
 
             if MenuItem::new(im_str!("Exit")).build(ui) {
                 std::process::exit(0);
@@ -254,17 +291,11 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
         });
 
         ui.menu(im_str!("Emulation"), true, || {
-            if MenuItem::new(im_str!("Run"))
-                .selected(!ctx.paused)
-                .build(ui)
-            {
+            if MenuItem::new(im_str!("Run")).selected(!ctx.paused).build(ui) {
                 ctx.paused = false;
             }
 
-            if MenuItem::new(im_str!("Stop"))
-                .selected(ctx.paused)
-                .build(ui)
-            {
+            if MenuItem::new(im_str!("Stop")).selected(ctx.paused).build(ui) {
                 ctx.paused = true;
             }
 
@@ -319,9 +350,7 @@ fn render_audio(config: &mut config::Config, nds: &mut NDS, ui: &Ui, state: &mut
         .opened(&mut state.show_audio)
         .size([300.0, 120.0], Condition::FirstUseEver)
         .build(ui, || {
-            if Slider::new(im_str!("Volume"))
-                .range(0.0..=100.0)
-                .build(ui, &mut config.audio_volume)
+            if Slider::new(im_str!("Volume")).range(0.0..=100.0).build(ui, &mut config.audio_volume)
             {
                 nds.set_audio_volume(config.audio_volume);
                 config.save();
@@ -351,12 +380,8 @@ fn main() {
 
     let mut debug = DebugState::new();
     let mut ui_state = UiState::new();
-    let mut ctx = FrameCtx {
-        nds: create_nds(&rom, &config),
-        config,
-        paused: false,
-        menu_height: 0.0,
-    };
+    let mut ctx =
+        FrameCtx { nds: create_nds(&rom, &config), config, paused: false, menu_height: 0.0 };
 
     let main_loop = move |display: &mut Display| {
         frame(display, &mut imgui, &mut ctx, &mut debug, &mut ui_state);

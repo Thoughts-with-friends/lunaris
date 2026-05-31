@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use super::{ChannelType, IORegister, Scheduler};
 
+#[derive(emu_utils::Savestate)]
 pub struct SoundControl {
     master_volume: u8,
     pub left_output: ChannelOutput,
@@ -56,14 +57,11 @@ impl SoundControl {
     }
 
     pub fn master_volume(&self) -> i32 {
-        if self.master_volume == 127 {
-            128
-        } else {
-            self.master_volume as i32
-        }
+        if self.master_volume == 127 { 128 } else { self.master_volume as i32 }
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum ChannelOutput {
     Mixer = 0,
@@ -95,6 +93,74 @@ pub struct ChannelControl<T: ChannelType> {
     pub format: Format,
     pub busy: bool,
     channel_type: PhantomData<T>,
+}
+
+impl<T: ChannelType> emu_utils::Storable for ChannelControl<T> {
+    fn store<S: emu_utils::WriteSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"volume_mul")?;
+        save.store(&mut self.volume_mul)?;
+
+        save.start_field(b"volume_div")?;
+        save.store(&mut self.volume_div)?;
+
+        save.start_field(b"hold")?;
+        save.store(&mut self.hold)?;
+
+        save.start_field(b"panning")?;
+        save.store(&mut self.panning)?;
+
+        save.start_field(b"wave_duty")?;
+        save.store(&mut self.wave_duty)?;
+
+        save.start_field(b"repeat_mode")?;
+        save.store(&mut self.repeat_mode)?;
+
+        save.start_field(b"format")?;
+        save.store(&mut self.format)?;
+
+        save.start_field(b"busy")?;
+        save.store(&mut self.busy)?;
+
+        save.end_struct()
+    }
+}
+
+impl<T: ChannelType> emu_utils::LoadableInPlace for ChannelControl<T> {
+    fn load_in_place<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
+        save.start_struct()?;
+
+        save.start_field(b"volume_mul")?;
+        save.load_into(&mut self.volume_mul)?;
+
+        save.start_field(b"volume_div")?;
+        save.load_into(&mut self.volume_div)?;
+
+        save.start_field(b"hold")?;
+        save.load_into(&mut self.hold)?;
+
+        save.start_field(b"panning")?;
+        save.load_into(&mut self.panning)?;
+
+        save.start_field(b"wave_duty")?;
+        save.load_into(&mut self.wave_duty)?;
+
+        save.start_field(b"repeat_mode")?;
+        save.load_into(&mut self.repeat_mode)?;
+
+        save.start_field(b"format")?;
+        save.load_into(&mut self.format)?;
+
+        save.start_field(b"busy")?;
+        save.load_into(&mut self.busy)?;
+
+        save.end_struct()?;
+
+        self.channel_type = PhantomData;
+
+        Ok(())
+    }
 }
 
 impl<T: ChannelType> IORegister for ChannelControl<T> {
@@ -152,22 +218,15 @@ impl<T: ChannelType> ChannelControl<T> {
     }
 
     pub fn volume_factor(&self) -> i32 {
-        if self.volume_mul == 127 {
-            128
-        } else {
-            self.volume_mul as i32
-        }
+        if self.volume_mul == 127 { 128 } else { self.volume_mul as i32 }
     }
 
     pub fn pan_factor(&self) -> i32 {
-        if self.panning == 127 {
-            128
-        } else {
-            self.panning as i32
-        }
+        if self.panning == 127 { 128 } else { self.panning as i32 }
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum RepeatMode {
     Manual = 0,
@@ -187,6 +246,7 @@ impl From<u8> for RepeatMode {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]
 pub enum Format {
     PCM8 = 0,
@@ -209,6 +269,7 @@ impl From<u8> for Format {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct CaptureControl {
     pub add: bool,
     pub use_channel: bool,

@@ -13,6 +13,7 @@ use math::{FixedPoint, Matrix};
 use registers::*;
 use rendering::FrameBufferPixel;
 
+#[derive(emu_utils::Savestate)]
 pub struct Engine3D {
     pub bus_stalled: bool,
     // Registers
@@ -169,12 +170,8 @@ impl Engine3D {
     ) {
         assert_eq!(addr >> 12, 0x04000);
         match addr & 0xFFF {
-            0x350..=0x353 => self
-                .clear_color
-                .write(scheduler, addr as usize & 0x3, value),
-            0x354..=0x355 => self
-                .clear_depth
-                .write(scheduler, addr as usize & 0x1, value),
+            0x350..=0x353 => self.clear_color.write(scheduler, addr as usize & 0x3, value),
+            0x354..=0x355 => self.clear_depth.write(scheduler, addr as usize & 0x1, value),
             0x380..=0x3BF => {
                 self.write_toon_table(addr as usize & (2 * self.toon_table.len() - 1), value)
             }

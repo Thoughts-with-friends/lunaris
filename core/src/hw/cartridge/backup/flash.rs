@@ -100,12 +100,14 @@ impl Backup for Flash {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 enum Mode {
     ReadInstr,
     HandleInstr(Instr),
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 enum Instr {
     IR,

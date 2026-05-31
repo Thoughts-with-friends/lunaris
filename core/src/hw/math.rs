@@ -1,6 +1,7 @@
 use super::{HW, mem::IORegister, scheduler::Scheduler};
 use num_integer::Roots;
 
+#[derive(emu_utils::Savestate)]
 pub struct Div {
     pub cnt: DIVCNT,
     numer: MathParam,
@@ -24,16 +25,10 @@ impl Div {
         // TODO: Take correct num of cycles
         self.cnt.div_by_0 = self.denom.value == 0;
         let (numer, denom) = match self.cnt.mode {
-            0 => (
-                self.numer.value as u32 as i32 as i64,
-                self.denom.value as u32 as i32 as i64,
-            ),
+            0 => (self.numer.value as u32 as i32 as i64, self.denom.value as u32 as i32 as i64),
             // Although 3 is reserved, it is used with `kingdom hearts 365`, and according to the reference below, it is apparently equivalent to 1.
             // ref: https://problemkaputt.de/gbatek.htm#dsmaths
-            1 | 3 => (
-                self.numer.value as i64,
-                self.denom.value as u32 as i32 as i64,
-            ),
+            1 | 3 => (self.numer.value as i64, self.denom.value as u32 as i32 as i64),
             2 => (self.numer.value as i64, self.denom.value as i64),
             _ => unreachable!(),
         };
@@ -83,6 +78,7 @@ impl Div {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct Sqrt {
     pub cnt: SQRTCNT,
     param: MathParam,
@@ -91,11 +87,7 @@ pub struct Sqrt {
 
 impl Sqrt {
     pub fn new() -> Self {
-        Sqrt {
-            cnt: SQRTCNT::new(),
-            param: MathParam::new(),
-            result: 0,
-        }
+        Sqrt { cnt: SQRTCNT::new(), param: MathParam::new(), result: 0 }
     }
 
     pub fn read_param(&self, byte: usize) -> u8 {
@@ -116,6 +108,7 @@ impl Sqrt {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct MathParam {
     value: u64,
 }
@@ -138,6 +131,7 @@ impl IORegister for MathParam {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct DIVCNT {
     mode: u8,
     div_by_0: bool,
@@ -146,11 +140,7 @@ pub struct DIVCNT {
 
 impl DIVCNT {
     pub fn new() -> Self {
-        DIVCNT {
-            mode: 0,
-            div_by_0: false,
-            busy: false,
-        }
+        DIVCNT { mode: 0, div_by_0: false, busy: false }
     }
 }
 
@@ -173,6 +163,7 @@ impl IORegister for DIVCNT {
     }
 }
 
+#[derive(emu_utils::Savestate)]
 pub struct SQRTCNT {
     is_64bit: bool,
     busy: bool,
@@ -180,10 +171,7 @@ pub struct SQRTCNT {
 
 impl SQRTCNT {
     pub fn new() -> Self {
-        SQRTCNT {
-            is_64bit: false,
-            busy: false,
-        }
+        SQRTCNT { is_64bit: false, busy: false }
     }
 }
 
