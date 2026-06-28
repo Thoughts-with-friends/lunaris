@@ -9,48 +9,25 @@ use crate::hw::HW;
 
 pub use crate::hw::{Engine, GraphicsType, Key};
 
+pub const WIDTH: usize = crate::hw::GPU::WIDTH;
+pub const HEIGHT: usize = crate::hw::GPU::HEIGHT;
+
+/// Top-level Nintendo DS emulator state.
+///
+/// Owns both CPU cores and all hardware peripherals.
+/// Call [`NDS::emulate_frame`] repeatedly to drive emulation.
 #[derive(emu_utils::Savestate)]
-#[load(in_place_only, post = "self.post_load(save)?")]
-#[store(post = "self.post_store(save)?")]
+#[load(in_place_only)]
 pub struct NDS {
+    /// ARM7TDMI sub-processor (audio, Wi-Fi, I/O assist).
     arm7: ARM<false>,
+    /// ARM946E-S main processor (game code, 3D, main memory).
     arm9: ARM<true>,
     hw: HW,
 }
 
 impl NDS {
-    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
-        save.start_struct()?;
-
-        save.start_field(b"arm7")?;
-        save.load_into(&mut self.arm7)?;
-
-        save.start_field(b"arm9")?;
-        save.load_into(&mut self.arm9)?;
-
-        save.start_field(b"hw")?;
-        save.load_into(&mut self.hw)?;
-
-        save.end_struct()?;
-        Ok(())
-    }
-
-    fn post_store<S: emu_utils::WriteSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
-        save.start_struct()?;
-
-        save.start_field(b"arm7")?;
-        save.store(&mut self.arm7)?;
-
-        save.start_field(b"arm9")?;
-        save.store(&mut self.arm9)?;
-
-        save.start_field(b"hw")?;
-        save.store(&mut self.hw)?;
-
-        save.end_struct()?;
-        Ok(())
-    }
-
+    /// Deserializes a previously saved state into `self`.
     pub fn load_state(&mut self, state: &[u8]) -> Result<(), emu_utils::ReadError> {
         use emu_utils::ReadSavestate as _;
         let mut reader = emu_utils::PersistentReadSavestate::new(state)
@@ -59,6 +36,7 @@ impl NDS {
         Ok(())
     }
 
+    /// Serializes the full emulator state into a byte vector.
     pub fn save_state(&mut self) -> Result<Vec<u8>, emu_utils::WriteError> {
         use emu_utils::WriteSavestate as _;
 
@@ -69,6 +47,7 @@ impl NDS {
 }
 
 impl NDS {
+    /// Master clock frequency in Hz (33.513982 MHz).
     pub const CLOCK_RATE: usize = 33513982;
 
     pub fn new(
@@ -88,6 +67,11 @@ impl NDS {
         self.hw.set_audio_volume(volume_percent);
     }
 
+    /// Runs both CPUs until the GPU signals that a full frame has been rendered.
+    ///
+    /// Each iteration advances in ≤30-cycle slices to limit desync between
+    /// ARM7 and ARM9.  When the 3-D engine stalls the bus the scheduler is
+    /// clocked directly and both CPUs are re-synced to avoid starvation.
     pub fn emulate_frame(&mut self) {
         while !self.hw.rendered_frame() {
             if likely(!self.hw.gpu.bus_stalled()) {
@@ -168,6 +152,11 @@ impl NDS {
         self.hw.render_bank(ignore_alpha, bank)
     }
 
+    /// Convenience constructor: loads BIOS / firmware / ROM from the filesystem
+    /// and returns a ready-to-run [`NDS`].
+    ///
+    /// Falls back to the bundled free BIOS / firmware when paths are `None`.
+    /// The save file is created automatically next to the ROM if absent.
     pub fn load_rom(
         bios7_path: Option<&Path>,
         bios9_path: Option<&Path>,
@@ -222,6 +211,3 @@ impl NDS {
         nds
     }
 }
-
-pub const WIDTH: usize = crate::hw::GPU::WIDTH;
-pub const HEIGHT: usize = crate::hw::GPU::HEIGHT;

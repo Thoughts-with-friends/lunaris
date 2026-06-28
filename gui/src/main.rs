@@ -30,7 +30,7 @@ use self::{
         DebugWindow, MapsWindowState, PalettesWindowState, StatsWindow, TilesWindowState,
         VRAMWindowState,
     },
-    display::Display,
+    display::{Display, StateAction},
 };
 
 // =========================================================
@@ -202,7 +202,38 @@ fn frame(
         debug.stats.frame_completed();
     }
 
-    let (keys, dropped) = display.render_main(&mut ctx.nds, imgui, ctx.menu_height);
+    let (keys, dropped, state_actions) = display.render_main(&mut ctx.nds, imgui, ctx.menu_height);
+
+    for action in state_actions {
+        match action {
+            StateAction::Save(slot) => match ctx.nds.save_state() {
+                Ok(bytes) => {
+                    let path = ctx.config.save_state_dir.join(format!("state_{slot}.bin"));
+                    let _ = std::fs::create_dir_all(&ctx.config.save_state_dir);
+                    std::fs::write(&path, bytes).unwrap_or_else(|e| {
+                        nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
+                    });
+                }
+                Err(e) => {
+                    nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
+                }
+            },
+            StateAction::Load(slot) => {
+                let path = ctx.config.save_state_dir.join(format!("state_{slot}.bin"));
+                match std::fs::read(&path) {
+                    Ok(bytes) => match ctx.nds.load_state(&bytes) {
+                        Ok(()) => ctx.paused = false,
+                        Err(e) => {
+                            nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
+                        }
+                    },
+                    Err(e) => {
+                        nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
+                    }
+                }
+            }
+        }
+    }
 
     display.render_imgui(imgui, keys, |ui, keys| {
         render_menu(ctx, ui, debug, ui_state);

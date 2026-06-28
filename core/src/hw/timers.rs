@@ -1,3 +1,23 @@
+//! NDS hardware timers (TM0CNT – TM3CNT).
+//!
+//! Each CPU (ARM7 / ARM9) has four independent 16-bit up-counting timers.
+//! Registers are at 4000100h–400010Fh (same address space on both CPUs).
+//!
+//! ## Prescaler
+//! TMCNT_H bits [1:0] select the clock divider applied to the master clock
+//! before the counter increments:
+//! | Value | Divisor | ARM9 effective rate | ARM7 effective rate |
+//! |-------|---------|---------------------|---------------------|
+//! |   0   |    1    |  ~66.233 MHz        | ~33.513 MHz         |
+//! |   1   |   64    |  ~1034 kHz          | ~523 kHz            |
+//! |   2   |  256    |  ~258 kHz           | ~131 kHz            |
+//! |   3   | 1024    |  ~64.7 kHz          | ~32.7 kHz           |
+//!
+//! ## Count-up (cascade) mode
+//! TMCNT_H bit 2: when set, the timer increments on each overflow of the
+//! *previous* timer instead of the clock.  Not available for Timer 0.
+//! GBATEK ref: "NDS Timers" § "TMCNT_H Bit2 – Count-Up Timing"
+
 use super::{
     HW,
     interrupt_controller::InterruptRequest,
@@ -12,6 +32,8 @@ pub struct Timers {
 
 impl Timers {
     const NUM_TIMERS: usize = 4;
+    /// Clock divisors matching TMCNT_H bits [1:0] → 0=1, 1=64, 2=256, 3=1024.
+    /// GBATEK: "NDS Timers – Prescaler Selection".
     const PRESCALERS: [usize; Self::NUM_TIMERS] = [1, 64, 256, 1024];
 
     pub fn new(is_nds9: bool) -> Timers {
@@ -40,10 +62,23 @@ impl std::ops::IndexMut<usize> for Timers {
     }
 }
 
+/// Single hardware timer.
+///
+/// Two counting modes (selected by TMCNT_H bit 2):
+///
+/// - **Regular**: counter is derived on-the-fly from `(global_cycle - start_cycle)`
+///   so reads are O(1) without per-cycle updates.  An overflow event is
+///   pre-scheduled in the [`Scheduler`] at construction.
+///
+/// - **Count-up (cascade)**: counter incremented explicitly by the previous
+///   timer's overflow handler.  No scheduler event is used.
+///
+/// GBATEK: "NDS Timers – Regular vs Count-Up Timing".
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct Timer {
     is_nds9: bool,
+    /// Reload value written to TMCNT_L; copied to `counter` on overflow or start.
     pub reload: u16,
     pub cnt: TMCNT,
     pub index: usize,
@@ -52,8 +87,11 @@ pub struct Timer {
     // Count-Up Timing
     counter: u16,
     // Regular Timing
+    /// Master clock cycle at which the timer was (re)started.
     start_cycle: usize,
+    /// Cycles from `start_cycle` until the counter first increments (prescaler sync).
     time_till_first_clock: usize,
+    /// Total cycles from start until the next overflow event.
     timer_len: usize,
 }
 
@@ -107,6 +145,12 @@ impl Timer {
         self.counter = self.reload
     }
 
+    /// Schedules the overflow event for a regular (non-cascade) timer.
+    ///
+    /// The prescaler is aligned to the global cycle counter so that the
+    /// first increment happens at the correct absolute cycle even when the
+    /// timer is started mid-prescaler-period.
+    /// GBATEK: "Timer start adds 1 cycle delay before first clock".
     pub fn create_event(&mut self, scheduler: &mut Scheduler, delay: usize) {
         self.start_cycle = scheduler.cycle + delay;
         // Syncs prescaler to global cycle
@@ -183,7 +227,7 @@ impl Timer {
 }
 
 impl HW {
-    fn on_timer_overflow(&mut self, event: Event) {
+    pub fn on_timer_overflow(&mut self, event: Event) {
         let (is_nds9, num) = match event {
             Event::TimerOverflow(is_nds9, num) => (is_nds9, num),
             _ => unreachable!(),

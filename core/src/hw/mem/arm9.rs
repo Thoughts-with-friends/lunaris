@@ -81,16 +81,12 @@ impl HW {
                 }
                 MemoryRegion::Palette => HW::write_palette_ram(&mut self.gpu.engine_b, addr, value),
                 MemoryRegion::VRAM => self.gpu.vram.arm9_write(addr, value),
-                MemoryRegion::OAM if addr & 0x7FFF < 0x400 => HW::write_mem(
-                    &mut self.gpu.engine_a.oam,
-                    addr & GPU::OAM_MASK as u32,
-                    value,
-                ),
-                MemoryRegion::OAM => HW::write_mem(
-                    &mut self.gpu.engine_b.oam,
-                    addr & GPU::OAM_MASK as u32,
-                    value,
-                ),
+                MemoryRegion::OAM if addr & 0x7FFF < 0x400 => {
+                    HW::write_mem(&mut self.gpu.engine_a.oam, addr & GPU::OAM_MASK as u32, value)
+                }
+                MemoryRegion::OAM => {
+                    HW::write_mem(&mut self.gpu.engine_b.oam, addr & GPU::OAM_MASK as u32, value)
+                }
                 MemoryRegion::GBAROM => (),
                 MemoryRegion::GBARAM => todo!(),
                 MemoryRegion::Unknown => warn!("Writing to Unknown 0x{:08X} = 0x{:X}", addr, value),

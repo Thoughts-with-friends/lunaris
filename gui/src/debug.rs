@@ -52,21 +52,18 @@ where
         self.texture.update_pixels(pixels, width, height);
         let title = self.title.clone();
         let mut opened = self.opened;
-        Window::new(&title)
-            .always_auto_resize(true)
-            .opened(&mut opened)
-            .build(ui, || {
-                if ui.is_window_focused() {
-                    if keys_pressed.contains(&Key::Equal) {
-                        self.scale += Self::SCALE_OFFSET
-                    }
-                    if keys_pressed.contains(&Key::Minus) {
-                        self.scale -= Self::SCALE_OFFSET
-                    }
+        Window::new(&title).always_auto_resize(true).opened(&mut opened).build(ui, || {
+            if ui.is_window_focused() {
+                if keys_pressed.contains(&Key::Equal) {
+                    self.scale += Self::SCALE_OFFSET
                 }
-                self.state.render(ui);
-                self.texture.render(self.scale).build(ui);
-            });
+                if keys_pressed.contains(&Key::Minus) {
+                    self.scale -= Self::SCALE_OFFSET
+                }
+            }
+            self.state.render(ui);
+            self.texture.render(self.scale).build(ui);
+        });
         self.opened = opened;
     }
 }
@@ -88,11 +85,7 @@ struct Texture {
 
 impl Texture {
     pub fn new() -> Texture {
-        Texture {
-            tex: 0,
-            width: 0.0,
-            height: 0.0,
-        }
+        Texture { tex: 0, width: 0.0, height: 0.0 }
     }
 
     pub fn update_pixels(&mut self, pixels: Vec<u16>, width: usize, height: usize) {
@@ -133,10 +126,7 @@ impl Texture {
     }
 
     pub fn render(&self, scale: f32) -> Image {
-        Image::new(
-            TextureId::from(self.tex as usize),
-            [self.width * scale, self.height * scale],
-        )
+        Image::new(TextureId::from(self.tex as usize), [self.width * scale, self.height * scale])
     }
 }
 

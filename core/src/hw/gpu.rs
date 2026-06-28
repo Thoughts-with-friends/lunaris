@@ -1,3 +1,20 @@
+//! NDS GPU – dual 2D engines plus one 3D engine.
+//!
+//! ## Display timing (GBATEK: "NDS Display Timings")
+//! - Resolution per screen: **256 × 192** pixels.
+//! - Total scanlines: **263** (lines 0-191 visible, 192-262 V-Blank).
+//! - Dots per scanline: **355** (256 visible + 99 H-Blank).
+//! - Master clock cycles per dot: **6** (33.513 MHz / 6 ≈ 5.585 MHz dot clock).
+//! - H-Blank starts at dot **264** (256 + 8-dot delay) → scheduled at
+//!   `HBLANK_DOT * CYCLES_PER_DOT`.
+//!
+//! ## Engines (GBATEK: "NDS 2D/3D Engines")
+//! - **Engine A** (`engine_a`): supports BG0-BG3, OBJ, 3D output, display capture.
+//! - **Engine B** (`engine_b`): BG0-BG3, OBJ only (no 3D, no capture).
+//! - **Engine 3D** (`engine3d`): software-rendered 3D; output blended into Engine A's BG0.
+//!
+//! Engine A / B can be mapped to either the top or bottom LCD via POWCNT1.
+
 pub mod debug;
 mod engine2d;
 mod engine3d;
@@ -19,11 +36,11 @@ use engine2d::DisplayMode;
 use registers::CaptureSource;
 
 #[derive(emu_utils::Savestate)]
-#[load(in_place_only, post = "self.post_load(save)?")]
 pub struct GPU {
     // Registers and Values Shared between Engines
     pub dispstats: [DISPSTAT; 2],
     pub vcount: u16,
+    #[savestate(skip)]
     rendered_frame: bool,
 
     pub engine_a: Engine2D<EngineA>,
@@ -37,51 +54,24 @@ pub struct GPU {
 }
 
 impl GPU {
-    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
-        save.start_struct()?;
+    pub const WIDTH: usize = 256; // Visible pixels per scanline
+    pub const HEIGHT: usize = 192; // Visible scanlines per frame
 
-        save.start_field(b"dispstats")?;
-        save.load_into(&mut self.dispstats)?;
-
-        save.start_field(b"vcount")?;
-        save.load_into(&mut self.vcount)?;
-
-        save.start_field(b"engine_a")?;
-        save.load_into(&mut self.engine_a)?;
-        save.start_field(b"engine_b")?;
-        save.load_into(&mut self.engine_b)?;
-
-        save.start_field(b"engine3d")?;
-        save.load_into(&mut self.engine3d)?;
-
-        save.start_field(b"vram")?;
-        save.load_into(&mut self.vram)?;
-
-        save.start_field(b"dispcapcnt")?;
-        save.load_into(&mut self.dispcapcnt)?;
-
-        save.start_field(b"capturing")?;
-        save.load_into(&mut self.capturing)?;
-
-        save.start_field(b"powcnt1")?;
-        save.load_into(&mut self.powcnt1)?;
-
-        save.end_struct()?;
-        Ok(())
-    }
-}
-
-impl GPU {
-    pub const WIDTH: usize = 256;
-    pub const HEIGHT: usize = 192;
-
-    pub const PALETTE_SIZE: usize = 0x200;
-    pub const OAM_SIZE: usize = 0x400;
+    pub const PALETTE_SIZE: usize = 0x200; // 256 BGR555 entries × 2 bytes
+    pub const OAM_SIZE: usize = 0x400; // 128 OBJ attributes × 8 bytes
     pub const OAM_MASK: usize = GPU::OAM_SIZE - 1;
 
+    /// Master-clock cycles per display dot (33.513 MHz / 5.585 MHz).
+    /// GBATEK: "NDS Display Timings – 6 cycles per dot".
     const CYCLES_PER_DOT: usize = 6;
+    /// H-Blank begins 8 dots after the last visible pixel (dot 264).
+    /// GBATEK: "NDS Display Timings – HBlank starts at dot 256+8".
     const HBLANK_DOT: usize = 256 + 8;
+    /// Total dots per scanline: 256 visible + 99 H-Blank.
+    /// GBATEK: "NDS Display Timings – 355 dots per line".
     const DOTS_PER_LINE: usize = 355;
+    /// Total scanlines: 192 visible + 71 V-Blank.
+    /// GBATEK: "NDS Display Timings – 263 scanlines total".
     const NUM_LINES: usize = 263;
 
     pub fn new(scheduler: &mut Scheduler) -> GPU {
@@ -103,6 +93,12 @@ impl GPU {
         }
     }
 
+    /// Called at dot 0 of each new scanline.
+    ///
+    /// Clears the H-Blank flag in both DISPSTAT registers and advances VCOUNT.
+    /// At scanline 262 (last V-Blank line) the affine BG reference points are
+    /// re-latched, implementing the hardware reload described in GBATEK:
+    /// "NDS BG Affine – Reference Point Reload at VBlank end".
     // Dot: 0 - TODO: Check for drift
     pub fn start_next_line(&mut self) {
         for dispstat in self.dispstats.iter_mut() {
@@ -119,6 +115,12 @@ impl GPU {
         }
     }
 
+    /// Called at dot 264 (start of H-Blank) to render the current scanline.
+    ///
+    /// Renders Engine A then Engine B when their respective POWCNT1 enable
+    /// bits are set.  Display capture (DISPCAPCNT) is also processed here if
+    /// active and the scanline is within the configured capture height.
+    /// GBATEK: "NDS DISPCAPCNT – Display Capture (Engine A only)".
     // Dot: HBLANK_DOT - TODO: Check for drift
     pub fn render_line(&mut self) {
         // TODO: Use POWCNT to selectively render engines
@@ -224,7 +226,7 @@ impl GPU {
 }
 
 impl HW {
-    fn start_next_line(&mut self, _event: Event) {
+    pub fn start_next_line(&mut self, _event: Event) {
         self.scheduler.schedule(
             Event::HBlank,
             HW::on_hblank,
@@ -263,7 +265,7 @@ impl HW {
         });
     }
 
-    fn on_hblank(&mut self, _event: Event) {
+    pub fn on_hblank(&mut self, _event: Event) {
         self.scheduler.schedule(
             Event::StartNextLine,
             HW::start_next_line,
@@ -283,7 +285,7 @@ impl HW {
         });
     }
 
-    fn on_vblank(&mut self, _event: Event) {
+    pub fn on_vblank(&mut self, _event: Event) {
         self.run_dmas_both(dma::Occasion::VBlank);
         // TODO: Render using multiple threads
         if self.gpu.powcnt1.contains(POWCNT1::ENABLE_3D_RENDERING) {

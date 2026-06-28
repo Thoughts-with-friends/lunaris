@@ -31,13 +31,9 @@ impl DebugWindowState for PalettesWindowState {
         ui.checkbox(im_str!("Extended"), &mut self.palettes_extended);
         if self.palettes_extended {
             if Self::GRAPHICS_TYPES[self.palettes_graphics_type] == GraphicsType::BG {
-                Slider::new(im_str!("Slot"))
-                    .range(0_u32..=3)
-                    .build(ui, &mut self.palettes_slot);
+                Slider::new(im_str!("Slot")).range(0_u32..=3).build(ui, &mut self.palettes_slot);
             }
-            Slider::new(im_str!("Palette"))
-                .range(0_u32..=15)
-                .build(ui, &mut self.palettes_palette);
+            Slider::new(im_str!("Palette")).range(0_u32..=15).build(ui, &mut self.palettes_palette);
         }
 
         ui.set_next_item_width(combo_width);
@@ -75,10 +71,7 @@ pub struct MapsWindowState {
 
 impl DebugWindowState for MapsWindowState {
     fn new() -> Self {
-        MapsWindowState {
-            map_engine: 0,
-            map_bg_i: 0,
-        }
+        MapsWindowState { map_engine: 0, map_bg_i: 0 }
     }
 
     fn render(&mut self, ui: &Ui) {
@@ -92,9 +85,7 @@ impl DebugWindowState for MapsWindowState {
             &(|i| Cow::from(ImString::new(i.label()))),
         );
 
-        Slider::new(im_str!("BG"))
-            .range(0_u32..=3)
-            .build(ui, &mut self.map_bg_i);
+        Slider::new(im_str!("BG")).range(0_u32..=3).build(ui, &mut self.map_bg_i);
     }
 
     fn get_pixels(&self, nds: &mut NDS) -> (Vec<u16>, usize, usize) {
@@ -199,18 +190,13 @@ pub struct VRAMWindowState {
 
 impl DebugWindowState for VRAMWindowState {
     fn new() -> Self {
-        VRAMWindowState {
-            ignore_alpha: false,
-            bank: 0,
-        }
+        VRAMWindowState { ignore_alpha: false, bank: 0 }
     }
 
     fn render(&mut self, ui: &Ui) {
         ui.checkbox(im_str!("Ignore alpha"), &mut self.ignore_alpha);
 
-        Slider::new(im_str!("Bank"))
-            .range(0_u32..=8)
-            .build(ui, &mut self.bank);
+        Slider::new(im_str!("Bank")).range(0_u32..=8).build(ui, &mut self.bank);
     }
 
     fn get_pixels(&self, nds: &mut NDS) -> (Vec<u16>, usize, usize) {
@@ -240,9 +226,7 @@ impl StatsWindow {
 
     pub fn frame_completed(&mut self) {
         let cur_time = Instant::now();
-        let frame_time = cur_time
-            .duration_since(self.prev_frame_completed)
-            .as_secs_f32();
+        let frame_time = cur_time.duration_since(self.prev_frame_completed).as_secs_f32();
         self.prev_frame_completed = cur_time;
         if self.frame_times.len() == Self::NUM_FRAME_TIMES {
             self.frame_times_sum -= self.frame_times.pop_front().unwrap();
@@ -259,8 +243,7 @@ impl StatsWindow {
         Window::new(im_str!("Performance Stats")) // TODO: Replace with const
             .opened(&mut opened)
             .build(ui, || {
-                ui.plot_lines(im_str!("Frame Times"), self.frame_times.make_contiguous())
-                    .build();
+                ui.plot_lines(im_str!("Frame Times"), self.frame_times.make_contiguous()).build();
                 ui.text(format!(
                     "Average: {}",
                     self.frame_times_sum / self.frame_times.len() as f32
@@ -270,9 +253,7 @@ impl StatsWindow {
     }
 
     pub fn menu_item(&mut self, ui: &Ui) {
-        let clicked = MenuItem::new(im_str!("Performance Stats"))
-            .selected(self.opened)
-            .build(ui);
+        let clicked = MenuItem::new(im_str!("Performance Stats")).selected(self.opened).build(ui);
         if clicked {
             self.opened = !self.opened
         }

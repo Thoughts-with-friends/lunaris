@@ -1,20 +1,46 @@
+//! NDS Inter-Processor Communication (IPC).
+//!
+//! The NDS provides two IPC mechanisms:
+//!
+//! 1. **IPCSYNC** (4000180h) – 4-bit data register each way; writing to the
+//!    output field of one CPU sets the input field of the other.  Can optionally
+//!    fire an `IPC_SYNC` IRQ on the receiving CPU.
+//!
+//! 2. **IPCFIFO** (IPCFIFOCNT 4000184h / IPCFIFOSEND 4000188h / IPCFIFORECV
+//!    4100000h) – 16-word (64-byte) first-in-first-out queues, one per
+//!    direction.  Each CPU writes to its own send-FIFO; the other CPU reads
+//!    from the same queue via IPCFIFORECV.  Fire IRQs on empty/not-empty
+//!    transitions when the corresponding enable bits are set.
+//!
+//! GBATEK ref: "NDS IPC – Inter Process Communication"
+
 use std::collections::VecDeque;
 
 use super::interrupt_controller::InterruptRequest;
 
+/// Shared IPC state visible to both CPUs.
+///
+/// Each CPU has its own [`SYNC`] and [`FIFOCNT`] registers, and a send-FIFO
+/// (`output7` / `output9`) that the *other* CPU reads from.
+/// `prev_value*` retains the last word dequeued so a read from an empty
+/// FIFO returns a defined value (last received word).
+/// GBATEK: "IPCFIFORECV returns last value if FIFO is empty".
 #[derive(emu_utils::Savestate)]
 pub struct IPC {
     fifocnt7: FIFOCNT,
     sync7: SYNC,
+    /// ARM7 send-FIFO (ARM9 reads this via IPCFIFORECV at 4100000h).
     output7: VecDeque<u32>,
     prev_value7: u32,
     fifocnt9: FIFOCNT,
     sync9: SYNC,
+    /// ARM9 send-FIFO (ARM7 reads this via IPCFIFORECV at 4100000h).
     output9: VecDeque<u32>,
     prev_value9: u32,
 }
 
 impl IPC {
+    /// Maximum words per FIFO queue.  GBATEK: "16 words (64 bytes) each direction".
     const FIFO_LEN: usize = 16;
 
     pub fn new() -> Self {
@@ -95,6 +121,14 @@ impl IPC {
         })
     }
 
+    /// Pops one word from `recv_fifo`.
+    ///
+    /// - Returns the cached `prev_value` when FIFO is empty (hardware behaviour:
+    ///   "last received word").  Sets `FIFOCNT.error` on underflow instead of
+    ///   returning garbage.  GBATEK: "Reading from empty FIFO does not advance
+    ///   the pointer; the error bit in IPCFIFOCNT is set."
+    /// - Fires `IPC_SEND_FIFO_EMPTY` on the sender when the FIFO drains and the
+    ///   sender's empty-IRQ enable is set.
     fn recv(
         send_cnt: &FIFOCNT,
         recv_cnt: &mut FIFOCNT,
@@ -119,6 +153,12 @@ impl IPC {
         (*prev_value, interrupt)
     }
 
+    /// Pushes one word onto `send_fifo`.
+    ///
+    /// Sets `FIFOCNT.error` on overflow (FIFO already has 16 words).
+    /// Fires `IPC_RECV_FIFO_NOT_EMPTY` on the receiver when the FIFO goes from
+    /// empty to non-empty and the receiver's not-empty IRQ enable is set.
+    /// GBATEK: "Writing to a full FIFO sets the error bit in IPCFIFOCNT."
     fn send(
         send_cnt: &mut FIFOCNT,
         recv_cnt: &FIFOCNT,
@@ -143,10 +183,22 @@ impl IPC {
     }
 }
 
+/// IPCSYNC register (4000180h).
+///
+/// Bit layout (16-bit view):
+/// - Bits 0-3 (byte 0): Data received from other CPU (read-only, set by other side's write).
+/// - Bits 8-11 (byte 1, bits 0-3): Data to send to other CPU (read-write).
+/// - Bit 13 (byte 1, bit 5): Send IRQ to other CPU (pulse; triggers IPC_SYNC on other side).
+/// - Bit 14 (byte 1, bit 6): Enable IPC_SYNC IRQ on *this* CPU.
+///
+/// GBATEK ref: "NDS IPCSYNC Register"
 #[derive(emu_utils::Savestate)]
 struct SYNC {
+    /// Bits [3:0] mirrored from the other CPU's `output`.
     input: u8,
+    /// Bits [11:8] written by this CPU; mirrored into the other CPU's `input`.
     output: u8,
+    /// Whether to fire IPC_SYNC IRQ on this CPU when the other side sets bit 13.
     sync_irq: bool,
 }
 
@@ -185,11 +237,28 @@ impl SYNC {
     }
 }
 
+/// IPCFIFOCNT register (4000184h).
+///
+/// Byte 0 (send side):
+/// - Bit 0: Send-FIFO empty flag (read-only).
+/// - Bit 1: Send-FIFO full flag (read-only).
+/// - Bit 2: `send_fifo_empty_irq` – fire IPC_SEND_FIFO_EMPTY when FIFO becomes empty.
+/// - Bit 3: Flush send-FIFO (write-only; also clears `prev_value`).
+///
+/// Byte 1 (recv side):
+/// - Bit 0: Recv-FIFO empty flag (read-only).
+/// - Bit 1: Recv-FIFO full flag (read-only).
+/// - Bit 2: `recv_fifo_not_empty_irq` – fire IPC_RECV_FIFO_NOT_EMPTY.
+/// - Bit 6: Error flag (read-only; write 1 to acknowledge/clear).
+/// - Bit 7: `enable` – enable FIFO mode (both FIFOs at once).
+///
+/// GBATEK ref: "NDS IPCFIFOCNT Register"
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 struct FIFOCNT {
     send_fifo_empty_irq: bool,
     recv_fifo_not_empty_irq: bool,
+    /// Set on FIFO overflow or underflow; cleared by writing 1 to bit 6.
     error: bool,
     enable: bool,
 }

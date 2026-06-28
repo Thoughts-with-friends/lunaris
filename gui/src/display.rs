@@ -6,6 +6,11 @@ use glfw::{Action, Context, Glfw, Window};
 use std::collections::HashSet;
 use std::{path::PathBuf, time::Instant};
 
+pub enum StateAction {
+    Save(usize),
+    Load(usize),
+}
+
 use crate::config::Config;
 use nds_core::nds::{self, NDS};
 
@@ -47,9 +52,7 @@ impl Display {
         });
 
         let imgui_renderer = imgui_opengl_renderer::Renderer::new(imgui, |s| {
-            window
-                .get_proc_address(s)
-                .map_or(core::ptr::null(), |f| f as *const core::ffi::c_void)
+            window.get_proc_address(s).map_or(core::ptr::null(), |f| f as *const core::ffi::c_void)
         });
         enable_dark_mode(&window);
 
@@ -119,10 +122,8 @@ impl Display {
         io.display_framebuffer_scale = [content_scale.0, content_scale.1];
         let window_size = window.get_size();
         io.display_size = [window_size.0 as f32, window_size.1 as f32];
-        io.backend_flags
-            .insert(imgui::BackendFlags::HAS_MOUSE_CURSORS);
-        io.backend_flags
-            .insert(imgui::BackendFlags::HAS_SET_MOUSE_POS);
+        io.backend_flags.insert(imgui::BackendFlags::HAS_MOUSE_CURSORS);
+        io.backend_flags.insert(imgui::BackendFlags::HAS_SET_MOUSE_POS);
         io[Key::Tab] = glfw::Key::Tab as _;
         io[Key::LeftArrow] = glfw::Key::Left as _;
         io[Key::RightArrow] = glfw::Key::Right as _;
@@ -161,8 +162,7 @@ impl Display {
 
     fn prepare_frame(&mut self, io: &mut imgui::Io) {
         if io.want_set_mouse_pos {
-            self.window
-                .set_cursor_pos(io.mouse_pos[0] as f64, io.mouse_pos[1] as f64);
+            self.window.set_cursor_pos(io.mouse_pos[0] as f64, io.mouse_pos[1] as f64);
         }
         let (window_width, window_height) = self.window.get_size();
         io.display_size = [window_width as f32, window_height as f32];
@@ -178,28 +178,24 @@ impl Display {
     fn prepare_render(&mut self, ui: &imgui::Ui) {
         use glfw::StandardCursor::*;
         let io = ui.io();
-        if io
-            .config_flags
-            .contains(imgui::ConfigFlags::NO_MOUSE_CURSOR_CHANGE)
-        {
+        if io.config_flags.contains(imgui::ConfigFlags::NO_MOUSE_CURSOR_CHANGE) {
             return;
         }
         let mouse_cursor = ui.mouse_cursor();
         match mouse_cursor {
             Some(mouse_cursor) if !io.mouse_draw_cursor => {
                 self.window.set_cursor_mode(glfw::CursorMode::Normal);
-                self.window
-                    .set_cursor(Some(glfw::Cursor::standard(match mouse_cursor {
-                        imgui::MouseCursor::Arrow => Arrow,
-                        imgui::MouseCursor::TextInput => IBeam,
-                        imgui::MouseCursor::ResizeAll => Arrow, // TODO: Fix when updating GLFW
-                        imgui::MouseCursor::ResizeNS => VResize,
-                        imgui::MouseCursor::ResizeEW => HResize,
-                        imgui::MouseCursor::ResizeNESW => Arrow, // TODO: Fix when updating GLFW
-                        imgui::MouseCursor::ResizeNWSE => Arrow, // TODO: Fix when updating GLFW
-                        imgui::MouseCursor::Hand => Hand,
-                        imgui::MouseCursor::NotAllowed => Arrow, // TODO: Fix when updating GLFW
-                    })));
+                self.window.set_cursor(Some(glfw::Cursor::standard(match mouse_cursor {
+                    imgui::MouseCursor::Arrow => Arrow,
+                    imgui::MouseCursor::TextInput => IBeam,
+                    imgui::MouseCursor::ResizeAll => Arrow, // TODO: Fix when updating GLFW
+                    imgui::MouseCursor::ResizeNS => VResize,
+                    imgui::MouseCursor::ResizeEW => HResize,
+                    imgui::MouseCursor::ResizeNESW => Arrow, // TODO: Fix when updating GLFW
+                    imgui::MouseCursor::ResizeNWSE => Arrow, // TODO: Fix when updating GLFW
+                    imgui::MouseCursor::Hand => Hand,
+                    imgui::MouseCursor::NotAllowed => Arrow, // TODO: Fix when updating GLFW
+                })));
             }
             _ => self.window.set_cursor_mode(glfw::CursorMode::Hidden),
         }
@@ -210,10 +206,10 @@ impl Display {
         nds: &mut NDS,
         imgui: &mut imgui::Context,
         main_menu_height: f32,
-    ) -> (HashSet<glfw::Key>, Vec<PathBuf>) {
+    ) -> (HashSet<glfw::Key>, Vec<PathBuf>, Vec<StateAction>) {
         let (width, height) = self.window.get_size();
 
-        let screens = nds.get_screens();
+        let [upper_img, lower_img] = nds.get_screens();
         let height = height - main_menu_height as i32;
 
         let (tex_x, tex_y) = if width * Display::HEIGHT as i32 > height * Display::WIDTH as i32 {
@@ -236,6 +232,10 @@ impl Display {
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.screen_tex);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+
+            // let upper_img = upper_img;
+            // let lower_img = lower_img;
+
             gl::TexSubImage2D(
                 gl::TEXTURE_2D,
                 0,
@@ -245,7 +245,7 @@ impl Display {
                 nds::HEIGHT as i32,
                 gl::RGBA,
                 gl::UNSIGNED_SHORT_1_5_5_5_REV,
-                screens[0].as_ptr() as *const std::ffi::c_void,
+                upper_img.as_ptr() as *const std::ffi::c_void,
             );
             gl::TexSubImage2D(
                 gl::TEXTURE_2D,
@@ -256,8 +256,9 @@ impl Display {
                 nds::HEIGHT as i32,
                 gl::RGBA,
                 gl::UNSIGNED_SHORT_1_5_5_5_REV,
-                screens[1].as_ptr() as *const std::ffi::c_void,
+                lower_img.as_ptr() as *const std::ffi::c_void,
             );
+
             // Flip src0 and src1 because OpenGL wants the texture flipped vertically
             gl::BlitFramebuffer(
                 0,
@@ -279,6 +280,7 @@ impl Display {
 
         let mut keys_pressed = HashSet::new();
         let mut files_dropped = Vec::new();
+        let mut state_actions: Vec<StateAction> = Vec::new();
 
         let old_mouse_pressed =
             self.window.get_mouse_button(glfw::MouseButtonLeft) == Action::Press;
@@ -287,7 +289,7 @@ impl Display {
             Display::handle_event(io, &event);
 
             match event {
-                glfw::WindowEvent::Key(key, _, action, _) if !io.want_capture_keyboard => {
+                glfw::WindowEvent::Key(key, _, action, modifiers) if !io.want_capture_keyboard => {
                     if action != Action::Release {
                         keys_pressed.insert(key);
                     }
@@ -299,6 +301,24 @@ impl Display {
 
                         Action::Release => {
                             crate::input::update_keyboard_input(&mut self.input_state, key, false);
+                        }
+                    }
+
+                    if action == Action::Press {
+                        let slot = match key {
+                            glfw::Key::F5 => Some(1),
+                            glfw::Key::F6 => Some(2),
+                            glfw::Key::F7 => Some(3),
+                            glfw::Key::F8 => Some(4),
+                            glfw::Key::F9 => Some(5),
+                            _ => None,
+                        };
+                        if let Some(slot) = slot {
+                            if modifiers.contains(glfw::Modifiers::Shift) {
+                                state_actions.push(StateAction::Load(slot));
+                            } else {
+                                state_actions.push(StateAction::Save(slot));
+                            }
                         }
                     }
                 }
@@ -350,7 +370,7 @@ impl Display {
         );
         crate::input::apply_input_bindings(nds, &self.config.input_bindings, &self.input_state);
 
-        (keys_pressed, files_dropped)
+        (keys_pressed, files_dropped, state_actions)
     }
 
     pub fn render_imgui<F>(
@@ -433,10 +453,8 @@ impl Display {
         let (cursor_x, cursor_y) = self.window.get_cursor_pos();
         let cursor_y = cursor_y - main_menu_height;
 
-        let (width_factor, height_factor) = (
-            tex_width as f64 / Display::WIDTH as f64,
-            tex_height as f64 / Display::HEIGHT as f64,
-        );
+        let (width_factor, height_factor) =
+            (tex_width as f64 / Display::WIDTH as f64, tex_height as f64 / Display::HEIGHT as f64);
         let clamp = |val, max| {
             if val < 0.0 {
                 0.0
@@ -448,10 +466,8 @@ impl Display {
         };
 
         let touch_x = clamp((cursor_x - tex_x as f64) / width_factor, nds::WIDTH);
-        let touch_y = clamp(
-            (cursor_y - tex_y as f64 - (tex_height / 2) as f64) / height_factor,
-            nds::HEIGHT,
-        );
+        let touch_y =
+            clamp((cursor_y - tex_y as f64 - (tex_height / 2) as f64) / height_factor, nds::HEIGHT);
         nds.press_screen(touch_x as usize, touch_y as usize);
     }
 }

@@ -1,3 +1,9 @@
+//! Core emulation library for the Nintendo DS.
+//!
+//! Exposes [`NDS`] as the top-level entry point.
+//! Internal modules:
+//! - [`arm`]  – dual ARM7TDMI / ARM946E-S CPU cores
+//! - [`hw`]   – all hardware peripherals (GPU, SPU, DMA, timers, cartridge …)
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
 #![expect(
     clippy::enum_variant_names,

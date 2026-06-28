@@ -125,50 +125,25 @@ impl HW {
     pub(super) fn arm9_write_io8(&mut self, addr: u32, value: u8) {
         match addr {
             0x0400_0000..=0x0400_0003 => {
-                self.gpu
-                    .engine_a
-                    .write_register(&mut self.scheduler, addr, value)
+                self.gpu.engine_a.write_register(&mut self.scheduler, addr, value)
             }
             0x0400_0004 => self.gpu.dispstats[1].write(&mut self.scheduler, 0, value),
             0x0400_0005 => self.gpu.dispstats[1].write(&mut self.scheduler, 1, value),
             0x0400_0006 => (), // VCOUNT is read only
             0x0400_0007 => (), // VCOUNT is read only
             0x0400_0008..=0x0400_005F => {
-                self.gpu
-                    .engine_a
-                    .write_register(&mut self.scheduler, addr, value)
+                self.gpu.engine_a.write_register(&mut self.scheduler, addr, value)
             }
             0x0400_0060..=0x0400_0063 => {
-                self.gpu
-                    .engine3d
-                    .disp3dcnt
-                    .write(&mut self.scheduler, addr as usize % 4, value)
+                self.gpu.engine3d.disp3dcnt.write(&mut self.scheduler, addr as usize % 4, value)
             }
             0x0400_0064..=0x0400_0067 => {
-                self.gpu
-                    .dispcapcnt
-                    .write(&mut self.scheduler, addr as usize % 4, value)
+                self.gpu.dispcapcnt.write(&mut self.scheduler, addr as usize % 4, value)
             }
-            0x0400_006C => self
-                .gpu
-                .engine_a
-                .master_bright
-                .write(&mut self.scheduler, 0, value),
-            0x0400_006D => self
-                .gpu
-                .engine_a
-                .master_bright
-                .write(&mut self.scheduler, 1, value),
-            0x0400_006E => self
-                .gpu
-                .engine_a
-                .master_bright
-                .write(&mut self.scheduler, 2, value),
-            0x0400_006F => self
-                .gpu
-                .engine_a
-                .master_bright
-                .write(&mut self.scheduler, 3, value),
+            0x0400_006C => self.gpu.engine_a.master_bright.write(&mut self.scheduler, 0, value),
+            0x0400_006D => self.gpu.engine_a.master_bright.write(&mut self.scheduler, 1, value),
+            0x0400_006E => self.gpu.engine_a.master_bright.write(&mut self.scheduler, 2, value),
+            0x0400_006F => self.gpu.engine_a.master_bright.write(&mut self.scheduler, 3, value),
             0x0400_00B0..=0x0400_00BB => {
                 self.dmas[1].write(0, &mut self.scheduler, addr - 0xB0, value)
             }
@@ -219,17 +194,9 @@ impl HW {
             0x0400_0185 => self.interrupts[1].request |= self.ipc.write_fifocnt9(1, value),
             0x0400_0186 => self.interrupts[1].request |= self.ipc.write_fifocnt9(2, value),
             0x0400_0187 => self.interrupts[1].request |= self.ipc.write_fifocnt9(3, value),
-            0x0400_01A0 => self
-                .cartridge
-                .spicnt
-                .write(!self.exmem.nds_arm7_access, 0, value),
-            0x0400_01A1 => self
-                .cartridge
-                .spicnt
-                .write(!self.exmem.nds_arm7_access, 1, value),
-            0x0400_01A2 => self
-                .cartridge
-                .write_spi_data(!self.exmem.nds_arm7_access, value),
+            0x0400_01A0 => self.cartridge.spicnt.write(!self.exmem.nds_arm7_access, 0, value),
+            0x0400_01A1 => self.cartridge.spicnt.write(!self.exmem.nds_arm7_access, 1, value),
+            0x0400_01A2 => self.cartridge.write_spi_data(!self.exmem.nds_arm7_access, value),
             0x0400_01A3 => (), // TODO: Does this write do anything?
             0x0400_01A4 => self.cartridge.write_romctrl(
                 &mut self.scheduler,
@@ -259,94 +226,50 @@ impl HW {
                 3,
                 value,
             ),
-            0x0400_01A8 => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 0, value),
-            0x0400_01A9 => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 1, value),
-            0x0400_01AA => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 2, value),
-            0x0400_01AB => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 3, value),
-            0x0400_01AC => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 4, value),
-            0x0400_01AD => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 5, value),
-            0x0400_01AE => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 6, value),
-            0x0400_01AF => self
-                .cartridge
-                .write_command(!self.exmem.nds_arm7_access, 7, value),
+            0x0400_01A8 => self.cartridge.write_command(!self.exmem.nds_arm7_access, 0, value),
+            0x0400_01A9 => self.cartridge.write_command(!self.exmem.nds_arm7_access, 1, value),
+            0x0400_01AA => self.cartridge.write_command(!self.exmem.nds_arm7_access, 2, value),
+            0x0400_01AB => self.cartridge.write_command(!self.exmem.nds_arm7_access, 3, value),
+            0x0400_01AC => self.cartridge.write_command(!self.exmem.nds_arm7_access, 4, value),
+            0x0400_01AD => self.cartridge.write_command(!self.exmem.nds_arm7_access, 5, value),
+            0x0400_01AE => self.cartridge.write_command(!self.exmem.nds_arm7_access, 6, value),
+            0x0400_01AF => self.cartridge.write_command(!self.exmem.nds_arm7_access, 7, value),
             0x0400_0204 => self.exmem.write_arm9(value),
             0x0400_0205 => self.exmem.write_common(value),
-            0x0400_0208 => self.interrupts[1]
-                .master_enable
-                .write(&mut self.scheduler, 0, value),
-            0x0400_0209 => self.interrupts[1]
-                .master_enable
-                .write(&mut self.scheduler, 1, value),
-            0x0400_020A => self.interrupts[1]
-                .master_enable
-                .write(&mut self.scheduler, 2, value),
-            0x0400_020B => self.interrupts[1]
-                .master_enable
-                .write(&mut self.scheduler, 3, value),
-            0x0400_0210 => self.interrupts[1]
-                .enable
-                .write(&mut self.scheduler, 0, value),
-            0x0400_0211 => self.interrupts[1]
-                .enable
-                .write(&mut self.scheduler, 1, value),
-            0x0400_0212 => self.interrupts[1]
-                .enable
-                .write(&mut self.scheduler, 2, value),
-            0x0400_0213 => self.interrupts[1]
-                .enable
-                .write(&mut self.scheduler, 3, value),
+            0x0400_0208 => self.interrupts[1].master_enable.write(&mut self.scheduler, 0, value),
+            0x0400_0209 => self.interrupts[1].master_enable.write(&mut self.scheduler, 1, value),
+            0x0400_020A => self.interrupts[1].master_enable.write(&mut self.scheduler, 2, value),
+            0x0400_020B => self.interrupts[1].master_enable.write(&mut self.scheduler, 3, value),
+            0x0400_0210 => self.interrupts[1].enable.write(&mut self.scheduler, 0, value),
+            0x0400_0211 => self.interrupts[1].enable.write(&mut self.scheduler, 1, value),
+            0x0400_0212 => self.interrupts[1].enable.write(&mut self.scheduler, 2, value),
+            0x0400_0213 => self.interrupts[1].enable.write(&mut self.scheduler, 3, value),
             0x0400_0214..=0x0400_0217 => {
-                self.interrupts[1]
-                    .request
-                    .write(&mut self.scheduler, (addr as usize) & 0x3, value);
-                self.gpu
-                    .engine3d
-                    .check_interrupts(&mut self.interrupts[1].request);
+                self.interrupts[1].request.write(&mut self.scheduler, (addr as usize) & 0x3, value);
+                self.gpu.engine3d.check_interrupts(&mut self.interrupts[1].request);
             }
             0x0400_0240..=0x0400_0246 => self.gpu.vram.write_vram_cnt(addr as usize & 0xF, value),
             0x0400_0247 => self.wramcnt.write(&mut self.scheduler, 0, value),
-            0x0400_0248..=0x0400_0249 => self
-                .gpu
-                .vram
-                .write_vram_cnt((addr as usize & 0xF) - 1, value),
+            0x0400_0248..=0x0400_0249 => {
+                self.gpu.vram.write_vram_cnt((addr as usize & 0xF) - 1, value)
+            }
             0x0400_0280..=0x0400_0283 => {
-                self.div
-                    .cnt
-                    .write(&mut self.scheduler, addr as usize & 0xF, value)
+                self.div.cnt.write(&mut self.scheduler, addr as usize & 0xF, value)
             }
             0x0400_0290..=0x0400_0297 => {
-                self.div
-                    .write_numer(&mut self.scheduler, addr as usize & 0x7, value)
+                self.div.write_numer(&mut self.scheduler, addr as usize & 0x7, value)
             }
             0x0400_0298..=0x0400_029F => {
-                self.div
-                    .write_denom(&mut self.scheduler, addr as usize & 0x7, value)
+                self.div.write_denom(&mut self.scheduler, addr as usize & 0x7, value)
             }
             0x0400_02A0..=0x0400_02A7 => (), // Div result registers are read-only
             0x0400_02A8..=0x0400_02AF => (), // Div result registers are read-only
             0x0400_02B0..=0x0400_02B3 => {
-                self.sqrt
-                    .cnt
-                    .write(&mut self.scheduler, addr as usize & 0xF, value)
+                self.sqrt.cnt.write(&mut self.scheduler, addr as usize & 0xF, value)
             }
             0x0400_02B4..=0x0400_02B7 => (), // Sqrt result register is read-only
             0x0400_02B8..=0x0400_02BF => {
-                self.sqrt
-                    .write_param(&mut self.scheduler, addr as usize & 0x7, value)
+                self.sqrt.write_param(&mut self.scheduler, addr as usize & 0x7, value)
             }
             0x0400_0300 => self.postflg9 = (self.postflg9 & !0x02 | value & 0x02) | (value & 0x1), // Only bit 1 is writable
             0x0400_0301..=0x0400_0303 => (), // Other Parts of POSTFLG
@@ -361,41 +284,18 @@ impl HW {
                 value,
             ),
             0x0400_1000..=0x0400_1003 => {
-                self.gpu
-                    .engine_b
-                    .write_register(&mut self.scheduler, addr, value)
+                self.gpu.engine_b.write_register(&mut self.scheduler, addr, value)
             }
             0x0400_1004..=0x0400_1007 => (),
             0x0400_1008..=0x0400_105F => {
-                self.gpu
-                    .engine_b
-                    .write_register(&mut self.scheduler, addr, value)
+                self.gpu.engine_b.write_register(&mut self.scheduler, addr, value)
             }
             0x0400_1060..=0x0400_106B => (),
-            0x0400_106C => self
-                .gpu
-                .engine_b
-                .master_bright
-                .write(&mut self.scheduler, 0, value),
-            0x0400_106D => self
-                .gpu
-                .engine_b
-                .master_bright
-                .write(&mut self.scheduler, 1, value),
-            0x0400_106E => self
-                .gpu
-                .engine_b
-                .master_bright
-                .write(&mut self.scheduler, 2, value),
-            0x0400_106F => self
-                .gpu
-                .engine_b
-                .master_bright
-                .write(&mut self.scheduler, 3, value),
-            _ => warn!(
-                "Ignoring ARM9 IO Register Write 0x{:08X} = {:02X}",
-                addr, value
-            ),
+            0x0400_106C => self.gpu.engine_b.master_bright.write(&mut self.scheduler, 0, value),
+            0x0400_106D => self.gpu.engine_b.master_bright.write(&mut self.scheduler, 1, value),
+            0x0400_106E => self.gpu.engine_b.master_bright.write(&mut self.scheduler, 2, value),
+            0x0400_106F => self.gpu.engine_b.master_bright.write(&mut self.scheduler, 3, value),
+            _ => warn!("Ignoring ARM9 IO Register Write 0x{:08X} = {:02X}", addr, value),
         }
     }
 
@@ -419,15 +319,11 @@ impl HW {
     }
 
     fn write_geometry_fifo(&mut self, value: u32) {
-        self.gpu
-            .engine3d
-            .write_geometry_fifo(&mut self.interrupts[1].request, value);
+        self.gpu.engine3d.write_geometry_fifo(&mut self.interrupts[1].request, value);
     }
 
     fn write_geometry_command(&mut self, addr: u32, value: u32) {
-        self.gpu
-            .engine3d
-            .write_geometry_command(&mut self.interrupts[1].request, addr, value);
+        self.gpu.engine3d.write_geometry_command(&mut self.interrupts[1].request, addr, value);
         self.check_geometry_command_fifo();
     }
 }

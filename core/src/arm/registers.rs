@@ -1,15 +1,17 @@
+//! ARM processor status register and banked register file.
 use bitfield::bitfield;
 
+/// ARM processor operating mode encoded in CPSR bits [4:0].
 #[derive(emu_utils::Savestate)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Mode {
-    USR = 0b10000,
-    FIQ = 0b10001,
-    IRQ = 0b10010,
-    SVC = 0b10011,
-    ABT = 0b10111,
-    SYS = 0b11111,
-    UND = 0b11011,
+    USR = 0b10000, // User – unprivileged execution
+    FIQ = 0b10001, // Fast IRQ – banked R8-R14, high-priority interrupts
+    IRQ = 0b10010, // Normal IRQ – banked R13/R14
+    SVC = 0b10011, // Supervisor – entered on SWI
+    ABT = 0b10111, // Abort – data/prefetch abort
+    SYS = 0b11111, // System – privileged, shares USR registers
+    UND = 0b11011, // Undefined – entered on undefined instruction
 }
 
 bitfield! {
@@ -29,6 +31,10 @@ bitfield! {
     }
 }
 
+/// Current Program Status Register (CPSR) or Saved PSR (SPSR).
+///
+/// `bits` is the raw bit-packed value; `mode` is a decoded cache of bits[4:0]
+/// kept in sync to avoid repeated matching on the hot path.
 #[derive(emu_utils::Savestate)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 struct StatusReg {
@@ -67,6 +73,11 @@ impl StatusReg {
     }
 }
 
+/// Full ARM register file with banked registers for each privilege mode.
+///
+/// `regs` holds the currently-visible R0–R15.  Mode-specific banks (`svc`,
+/// `irq`, `fiq`, `und`) store the shadowed R13/R14 (and R8–R14 for FIQ)
+/// that are swapped in on a mode change.
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegValues {
@@ -76,7 +87,8 @@ pub struct RegValues {
     irq: [u32; 2], // R13 and R14
     fiq: [u32; 7], // R8-R14
     cpsr: StatusReg,
-    spsr: [StatusReg; 4], // SVC, IRQ, IRQ
+    /// Saved PSRs: index 0=SVC, 1=IRQ, 2=ABT, 3=UND.
+    spsr: [StatusReg; 4],
 }
 
 impl RegValues {

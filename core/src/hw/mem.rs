@@ -1,3 +1,29 @@
+//! NDS memory subsystem – read/write dispatch and page-table management.
+//!
+//! ## ARM9 memory map (GBATEK: "NDS Memory Map – ARM9")
+//! | Address range      | Region                    | Size  |
+//! |--------------------|---------------------------|-------|
+//! | 00000000–00007FFF  | ITCM (mirrored)           | 32 KB |
+//! | 02000000–023FFFFF  | Main RAM                  | 4 MB  |
+//! | 03000000–03007FFF  | Shared WRAM (configurable)| ≤32 KB|
+//! | 04000000–04FFFFFF  | ARM9 I/O                  | –     |
+//! | 05000000–05FFFFFF  | Palette RAM               | 2 KB  |
+//! | 06000000–06FFFFFF  | VRAM (engine-mapped)      | –     |
+//! | 07000000–07FFFFFF  | OAM                       | 2 KB  |
+//! | FFFF0000–FFFF7FFF  | ARM9 BIOS                 | 4 KB  |
+//!
+//! ## ARM7 memory map (GBATEK: "NDS Memory Map – ARM7")
+//! | Address range      | Region                    | Size  |
+//! |--------------------|---------------------------|-------|
+//! | 00000000–00003FFF  | ARM7 BIOS                 | 16 KB |
+//! | 02000000–023FFFFF  | Main RAM (shared)         | 4 MB  |
+//! | 03000000–03007FFF  | Shared WRAM (configurable)| ≤32 KB|
+//! | 03800000–0380FFFF  | ARM7 IWRAM                | 64 KB |
+//! | 04000000–04FFFFFF  | ARM7 I/O                  | –     |
+//!
+//! Fast paths for aligned accesses are implemented via 4 KiB page tables;
+//! unresolved (null) pages fall back to the slow I/O dispatch path.
+
 pub mod arm7;
 pub mod arm9;
 pub mod cp15;
@@ -12,6 +38,10 @@ impl HW {
     const IWRAM_MASK: u32 = HW::IWRAM_SIZE as u32 - 1;
 
     // TODO: Replace with const generic
+    /// Reads one 32-bit word from the IPC receive-FIFO (IPCFIFORECV, 4100000h).
+    ///
+    /// The interrupt is routed to the *sender*'s controller (not the reading CPU)
+    /// because the empty-IRQ notifies the sender that space became available.
     fn ipc_fifo_recv(&mut self, is_arm9: bool) -> u32 {
         if is_arm9 {
             let (value, interrupt) = self.ipc.arm9_recv();
@@ -24,6 +54,10 @@ impl HW {
         }
     }
 
+    /// Writes one 32-bit word to the IPC send-FIFO (IPCFIFOSEND, 4000188h).
+    ///
+    /// Interrupt is routed to the *receiver*'s controller so it is woken when
+    /// data arrives.
     fn ipc_fifo_send(&mut self, is_arm9: bool, value: u32) {
         if is_arm9 {
             self.interrupts[1].request |= self.ipc.arm7_send(value);

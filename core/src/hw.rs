@@ -1,3 +1,9 @@
+//! Hardware layer: wires together all NDS peripherals behind a single [`HW`] struct.
+//!
+//! Memory is accessed through two separate page-table fast-paths
+//! (`arm7_page_table` / `arm9_page_table`) that map 4 KiB pages to raw
+//! pointers so the hot read/write path avoids repeated address decoding.
+
 mod cartridge;
 mod dma;
 mod gpu;
@@ -26,12 +32,27 @@ use math::{Div, Sqrt};
 pub use mem::{AccessType, MemoryValue};
 use mem::{CP15, EXMEM, HALTCNT, POWCNT2, WRAMCNT};
 use rtc::RTC;
-use scheduler::Scheduler;
+use scheduler::{Event, EventHandler, Scheduler};
 use spi::SPI;
 use spu::SPU;
 use timers::Timers;
 
+/// Aggregated hardware state of the Nintendo DS.
+///
+/// # Memory layout
+/// | Region      | Size    | Description                        |
+/// |-------------|---------|------------------------------------|
+/// | `main_mem`  | 4 MiB   | ARM9 main RAM (mirrored)           |
+/// | `iwram`     | 64 KiB  | ARM7 internal WRAM                 |
+/// | `shared_wram`| 32 KiB | Configurable ARM7/ARM9 shared WRAM |
+/// | `itcm`      | 32 KiB  | ARM9 Instruction TCM               |
+/// | `dtcm`      | 16 KiB  | ARM9 Data TCM                      |
+///
+/// # Page tables
+/// `arm7_page_table` and `arm9_page_table` are raw-pointer caches over the
+/// above buffers.  They are rebuilt on init and after every savestate load.
 #[derive(emu_utils::Savestate)]
+#[load(post = "self.post_load_hw(save)?")]
 pub struct HW {
     // Memory
     pub cp15: CP15,
@@ -44,17 +65,22 @@ pub struct HW {
     main_mem: Vec<u8>,
     iwram: Vec<u8>,
     shared_wram: Vec<u8>,
+    /// Raw-pointer page table for ARM7 memory (4 KiB pages). Not serialized.
     #[savestate(skip)]
     arm7_page_table: Vec<*mut u8>,
+    /// Raw-pointer page table for ARM9 memory (4 KiB pages). Not serialized.
     #[savestate(skip)]
     arm9_page_table: Vec<*mut u8>,
     // Devices
     pub gpu: GPU,
     spu: SPU,
     keypad: Keypad,
+    /// `[0]` = ARM7 interrupt controller, `[1]` = ARM9 interrupt controller.
     interrupts: [InterruptController; 2],
+    /// `[0]` = ARM7 DMA controller, `[1]` = ARM9 DMA controller.
     dmas: [dma::Controller; 2],
     dma_fill: [u32; 4],
+    /// `[0]` = ARM7 timers, `[1]` = ARM9 timers.
     timers: [Timers; 2],
     ipc: IPC,
     rtc: RTC,
@@ -74,11 +100,38 @@ pub struct HW {
 }
 
 impl HW {
-    const ITCM_SIZE: usize = 0x8000;
-    const DTCM_SIZE: usize = 0x4000;
-    const MAIN_MEM_SIZE: usize = 0x40_0000;
-    const IWRAM_SIZE: usize = 0x1_0000;
-    const SHARED_WRAM_SIZE: usize = 0x8000;
+    fn post_load_hw<S: emu_utils::ReadSavestate>(&mut self, _save: &mut S) -> Result<(), S::Error> {
+        self.scheduler.restore_events(HW::handler_for_event);
+        self.init_arm7_page_tables();
+        self.init_arm9_page_tables();
+        // Clear 3D bus stall so CPUs always run after state load.
+        // If the GXFIFO was full at save time, exec_commands at the next VBlank
+        // will drain it; clearing the flag here prevents permanent CPU starvation.
+        self.gpu.engine3d.bus_stalled = false;
+        Ok(())
+    }
+
+    fn handler_for_event(event: &Event) -> EventHandler {
+        match event {
+            Event::DMA(_, _) => HW::on_dma,
+            Event::StartNextLine => HW::start_next_line,
+            Event::HBlank => HW::on_hblank,
+            Event::VBlank => HW::on_vblank,
+            Event::CheckGeometryCommandFIFO => HW::check_geometry_command_fifo_handler,
+            Event::TimerOverflow(_, _) => HW::on_timer_overflow,
+            Event::ROMWordTransfered(_) => HW::on_rom_word_transfered,
+            Event::ROMBlockEnded(_) => HW::on_rom_block_ended,
+            Event::GenerateAudioSample => HW::generate_audio_sample,
+            Event::StepAudioChannel(_) => HW::step_audio_channel,
+            Event::ResetAudioChannel(_) => HW::reset_audio_channel,
+        }
+    }
+
+    const ITCM_SIZE: usize = 0x8000; // 32 KiB
+    const DTCM_SIZE: usize = 0x4000; // 16 KiB
+    const MAIN_MEM_SIZE: usize = 0x40_0000; // 4 MiB
+    const IWRAM_SIZE: usize = 0x1_0000; // 64 KiB
+    const SHARED_WRAM_SIZE: usize = 0x8000; // 32 KiB
 
     pub fn new(
         bios7: Vec<u8>,
@@ -137,10 +190,14 @@ impl HW {
         }
     }
 
+    /// Advances the scheduler to `target` cycles and fires any pending events.
     pub fn clock_until(&mut self, target: usize) {
         self.handle_events(target);
     }
 
+    /// Returns `true` if the ARM7 has pending, unmasked interrupts.
+    ///
+    /// Also propagates keypad interrupt requests into the controller.
     pub fn arm7_interrupts_requested(&mut self) -> bool {
         if unlikely(self.keypad.interrupt_requested()) {
             self.interrupts[0].request |= InterruptRequest::KEYPAD
@@ -148,6 +205,7 @@ impl HW {
         self.interrupts[0].interrupts_requested(self.haltcnt.halted())
     }
 
+    /// Returns `true` if the ARM9 has pending, unmasked interrupts.
     pub fn arm9_interrupts_requested(&mut self) -> bool {
         if unlikely(self.keypad.interrupt_requested()) {
             self.interrupts[1].request |= InterruptRequest::KEYPAD
@@ -273,6 +331,10 @@ impl HW {
         self.gpu.vram.render_bank(ignore_alpha, bank)
     }
 
+    /// Populates main memory with the ROM header and boot-info words needed for
+    /// direct-boot (skipping the firmware splash screen).
+    ///
+    /// Mirrors the setup performed by the NDS BIOS during a normal cold boot.
     pub fn init_mem(mut self) -> Self {
         let addr = 0x027F_FE00 & (HW::MAIN_MEM_SIZE - 1);
         self.main_mem[addr..addr + 0x170].copy_from_slice(&self.cartridge.rom()[..0x170]);
@@ -297,6 +359,8 @@ impl HW {
         self
     }
 
+    /// Fills `page_table` entries for the address range `[addr_start, addr_end)`
+    /// so that each 4 KiB page slot points directly into `mem` (with mirroring).
     fn map_page_table(
         page_table: &mut [*mut u8],
         page_shift: usize,
@@ -315,9 +379,12 @@ impl HW {
     }
 }
 
+/// Selects one of the two 2-D graphics engines.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Engine {
+    /// Engine A – can display 2-D and 3-D content; connected to either screen.
     A = 0,
+    /// Engine B – 2-D only; connected to the other screen.
     B = 1,
 }
 
@@ -330,6 +397,7 @@ impl Engine {
     }
 }
 
+/// Distinguishes background layers from sprite (OBJ) layers in GPU debug APIs.
 #[derive(Clone, Copy, PartialEq)]
 pub enum GraphicsType {
     BG,  // Background

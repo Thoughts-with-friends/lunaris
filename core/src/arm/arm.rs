@@ -76,19 +76,13 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     // ARM.4: Branch and Branch with Link (B, BL, BLX)
     fn branch_branch_with_link<const L: bool>(&mut self, hw: &mut HW, instr: u32) {
         let offset = instr & 0xFF_FFFF;
-        let offset = if (offset >> 23) == 1 {
-            0xFF00_0000 | offset
-        } else {
-            offset
-        };
+        let offset = if (offset >> 23) == 1 { 0xFF00_0000 | offset } else { offset };
         self.instruction_prefetch::<u32>(hw, AccessType::N);
 
         if IS_ARM9 && instr >> 28 == 0xF {
             // BLX
             self.regs.set_lr(self.regs[15].wrapping_sub(4));
-            self.regs[15] = self.regs[15]
-                .wrapping_add(offset << 2)
-                .wrapping_add((L as u32) * 2); // L acts as H
+            self.regs[15] = self.regs[15].wrapping_add(offset << 2).wrapping_add((L as u32) * 2); // L acts as H
             self.regs.set_t(true);
             self.fill_thumb_instr_buffer(hw);
         } else {
@@ -121,11 +115,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let mut temp_inc_pc = false;
         let opcode = (OP3 as u32) << 3 | (OP2 as u32) << 2 | (OP1 as u32) << 1 | (OP0 as u32);
         let dest_reg = (instr >> 12) & 0xF;
-        let (change_status, special_change_status) = if dest_reg == 15 && change_status {
-            (false, true)
-        } else {
-            (change_status, false)
-        };
+        let (change_status, special_change_status) =
+            if dest_reg == 15 && change_status { (false, true) } else { (change_status, false) };
         let op2 = if immediate_op2 {
             let shift = (instr >> 8) & 0xF;
             let operand = instr & 0xFF;
@@ -250,11 +241,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             }
         } else {
             assert!(!immediate_operand);
-            self.regs[instr >> 12 & 0xF] = if use_spsr {
-                self.regs.spsr()
-            } else {
-                self.regs.cpsr()
-            };
+            self.regs[instr >> 12 & 0xF] =
+                if use_spsr { self.regs.spsr() } else { self.regs.cpsr() };
             assert_eq!(instr & 0xFFF, 0);
         }
     }
@@ -360,16 +348,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
 
         let mut exec = |addr| {
             if load {
-                let access_type = if src_dest_reg == 15 {
-                    AccessType::N
-                } else {
-                    AccessType::S
-                };
+                let access_type = if src_dest_reg == 15 { AccessType::N } else { AccessType::S };
                 let value = if transfer_byte {
                     self.read::<u8>(hw, access_type, addr) as u32
                 } else {
-                    self.read::<u32>(hw, access_type, addr & !0x3)
-                        .rotate_right((addr & 0x3) * 8)
+                    self.read::<u32>(hw, access_type, addr & !0x3).rotate_right((addr & 0x3) * 8)
                 };
                 self.internal();
                 self.regs[src_dest_reg] = value;
@@ -387,11 +370,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 }
             } else {
                 let value = self.regs[src_dest_reg];
-                let value = if src_dest_reg == 15 {
-                    value.wrapping_add(4)
-                } else {
-                    value
-                };
+                let value = if src_dest_reg == 15 { value.wrapping_add(4) } else { value };
                 if transfer_byte {
                     self.write::<u8>(hw, AccessType::N, addr, value as u8);
                 } else {
@@ -399,11 +378,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 }
             }
         };
-        let offset_applied = if add_offset {
-            base.wrapping_add(offset)
-        } else {
-            base.wrapping_sub(offset)
-        };
+        let offset_applied =
+            if add_offset { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
         if pre_offset {
             exec(offset_applied);
             if write_back {
@@ -465,11 +441,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 if src_dest_reg == base_reg {
                     write_back = false
                 }
-                let access_type = if src_dest_reg == 15 {
-                    AccessType::N
-                } else {
-                    AccessType::S
-                };
+                let access_type = if src_dest_reg == 15 { AccessType::N } else { AccessType::S };
                 let value = if IS_ARM9 {
                     match opcode {
                         1 => self.read::<u16>(hw, access_type, addr & !0x1) as u32,
@@ -522,11 +494,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 }
             }
         };
-        let offset_applied = if add_offset {
-            base.wrapping_add(offset)
-        } else {
-            base.wrapping_sub(offset)
-        };
+        let offset_applied =
+            if add_offset { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
         if pre_offset {
             exec(offset_applied);
             if write_back {
@@ -575,22 +544,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         self.instruction_prefetch::<u32>(hw, AccessType::N);
         let mut loaded_pc = false;
         let num_regs = r_list.count_ones();
-        let start_addr = if add_offset {
-            base
-        } else {
-            base.wrapping_sub(num_regs * 4)
-        };
+        let start_addr = if add_offset { base } else { base.wrapping_sub(num_regs * 4) };
         let mut addr = start_addr;
-        let final_addr = if add_offset {
-            addr + 4 * num_regs
-        } else {
-            start_addr
-        } + base_offset;
-        let (final_addr, inc_amount) = if !IS_ARM9 && num_regs == 0 {
-            (final_addr + 0x40, 0x40)
-        } else {
-            (final_addr, 4)
-        };
+        let final_addr = if add_offset { addr + 4 * num_regs } else { start_addr } + base_offset;
+        let (final_addr, inc_amount) =
+            if !IS_ARM9 && num_regs == 0 { (final_addr + 0x40, 0x40) } else { (final_addr, 4) };
         let mut calc_addr = || {
             if pre_offset {
                 addr += inc_amount;
@@ -627,20 +585,12 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 }
             } else {
                 let value = self.regs[reg];
-                let access_type = if last_access {
-                    AccessType::N
-                } else {
-                    AccessType::S
-                };
+                let access_type = if last_access { AccessType::N } else { AccessType::S };
                 self.write::<u32>(
                     hw,
                     access_type,
                     addr,
-                    if reg == 15 {
-                        value.wrapping_add(4)
-                    } else {
-                        value
-                    },
+                    if reg == 15 { value.wrapping_add(4) } else { value },
                 );
                 if !IS_ARM9 && write_back {
                     self.regs[base_reg] = final_addr;
@@ -649,11 +599,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         };
         if num_regs == 0 {
             if IS_ARM9 && write_back {
-                let value = if add_offset {
-                    final_addr + 0x40
-                } else {
-                    final_addr - 0x40
-                };
+                let value = if add_offset { final_addr + 0x40 } else { final_addr - 0x40 };
                 self.regs[base_reg] = value;
             } else if !IS_ARM9 {
                 exec(start_addr, 15, true);
@@ -702,9 +648,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             self.write::<u8>(hw, AccessType::S, base, src as u8);
             value
         } else {
-            let value = self
-                .read::<u32>(hw, AccessType::N, base & !0x3)
-                .rotate_right((base & 0x3) * 8);
+            let value =
+                self.read::<u32>(hw, AccessType::N, base & !0x3).rotate_right((base & 0x3) * 8);
             self.write::<u32>(hw, AccessType::S, base & !0x3, src);
             value
         };
@@ -755,11 +700,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let operand1 = self.regs[instr >> 8 & 0xF];
         let operand2 = self.regs[instr & 0xF];
         let get_half = |value: u32, top| {
-            if top {
-                (value >> 16) as u16 as i16
-            } else {
-                value as u16 as i16
-            }
+            if top { (value >> 16) as u16 as i16 } else { value as u16 as i16 }
         };
         let result = match opcode {
             0b00 => {
@@ -841,12 +782,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             self.regs[arm_src_dest_reg] = hw.cp15.read(cp_src_dest_reg, cp_operand_reg, cp_info);
         } else {
             // MCR
-            hw.cp15.write(
-                cp_src_dest_reg,
-                cp_operand_reg,
-                cp_info,
-                self.regs[arm_src_dest_reg],
-            );
+            hw.cp15.write(cp_src_dest_reg, cp_operand_reg, cp_info, self.regs[arm_src_dest_reg]);
             // Check if we modified ITCM or DTCM
             if cp_src_dest_reg == 9 && cp_operand_reg == 1 && cp_info <= 1 {
                 // TODO: Only update ITCM and DTCM portions
@@ -874,11 +810,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let src2 = self.regs[instr >> 16 & 0xF] as i32;
         let dest_reg = instr >> 12 & 0xF;
         let src1 = self.regs[instr & 0xF] as i32;
-        let (src2, q1) = if D {
-            (src2.saturating_mul(2), src2.checked_mul(2).is_none())
-        } else {
-            (src2, false)
-        };
+        let (src2, q1) =
+            if D { (src2.saturating_mul(2), src2.checked_mul(2).is_none()) } else { (src2, false) };
         let (result, q2) = if OP {
             (src1.saturating_sub(src2), src1.checked_sub(src2).is_none())
         } else {

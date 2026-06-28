@@ -147,9 +147,7 @@ fn parse_tokens(input: proc_macro::TokenStream) -> Result<TokenStream> {
 
 #[proc_macro]
 pub fn bitfield(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    parse_tokens(input)
-        .unwrap_or_else(Error::into_compile_error)
-        .into()
+    parse_tokens(input).unwrap_or_else(Error::into_compile_error).into()
 }
 
 struct BitfieldRange {
@@ -203,13 +201,7 @@ impl Parse for BitfieldRange {
                 hi_token: Some(hi_token),
             })
         } else {
-            Ok(BitfieldRange {
-                lo,
-                hi: lo,
-                lo_token,
-                range_limit: None,
-                hi_token: None,
-            })
+            Ok(BitfieldRange { lo, hi: lo, lo_token, range_limit: None, hi_token: None })
         }
     }
 }
@@ -229,20 +221,14 @@ impl Parse for BitfieldField {
         let mut skip_getter = false;
         let mut skip_setter = false;
         if attrs.len() > 1 {
-            return Err(Error::new_spanned(
-                &attrs[1],
-                "Only up to one attribute is allowed",
-            ));
+            return Err(Error::new_spanned(&attrs[1], "Only up to one attribute is allowed"));
         }
         if attrs.len() == 1 {
             let attr = attrs.first().unwrap();
             match attr.style {
                 AttrStyle::Outer => (),
                 _ => {
-                    return Err(Error::new_spanned(
-                        attr,
-                        "Bitfield field attribute must be outer",
-                    ));
+                    return Err(Error::new_spanned(attr, "Bitfield field attribute must be outer"));
                 }
             }
             if attr.path.leading_colon.is_some() {
@@ -352,10 +338,7 @@ impl Parse for BitfieldStruct {
         if base_type_size as usize > MAX_BITS {
             return Err(syn::Error::new(
                 base_type.span(),
-                format!(
-                    "Bitfield base type size can only be up to {} bits",
-                    MAX_BITS
-                ),
+                format!("Bitfield base type size can only be up to {} bits", MAX_BITS),
             ));
         }
         let fields = input.parse()?;

@@ -1,3 +1,12 @@
+//! ARM CPU core – generic over `IS_ARM9`.
+//!
+//! `ARM<true>`  → ARM946E-S (ARM9, runs at 2× the master clock).
+//! `ARM<false>` → ARM7TDMI  (ARM7, runs at 1× the master clock).
+//!
+//! Both cores share the same execution loop; instruction decoding is done via
+//! pre-built lookup tables ([`ArmLut`] / [`ThumbLut`]) stored in `OnceLock`
+//! statics so they are generated only once per process.
+
 #[macro_use]
 mod instructions;
 mod arm;
@@ -9,16 +18,26 @@ use crate::{likely, num, unlikely};
 use registers::{Mode, RegValues};
 use std::sync::OnceLock;
 
+/// 4096-entry ARM instruction dispatch table (bits [27:20] + [7:4] of opcode).
 type ArmLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u32, IS_ARM9>; 4096];
+/// 256-entry THUMB instruction dispatch table (bits [15:8] of opcode).
 type ThumbLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u16, IS_ARM9>; 256];
 
+/// Emulated ARM CPU core.
+///
+/// `IS_ARM9 = true` selects the ARM946E-S; `false` selects the ARM7TDMI.
+/// The three lookup tables are static and shared across all instances of the
+/// same `IS_ARM9` variant (built lazily via [`OnceLock`]).
 #[derive(emu_utils::Savestate)]
 pub struct ARM<const IS_ARM9: bool> {
+    /// Current cycle count (ARM9 counts at 2×, ARM7 at 1×).
     cycle: usize,
     regs: RegValues,
+    /// Two-word prefetch pipeline buffer (`[0]` = current, `[1]` = next).
     instr_buffer: [u32; 2],
     next_access_type: AccessType,
 
+    /// Condition-code evaluation table indexed by `(NZCV << 4) | cond`.
     #[savestate(skip)]
     condition_lut: &'static [bool; 256],
     #[savestate(skip)]
@@ -56,6 +75,10 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         self.cycle = cycle;
     }
 
+    /// Executes instructions until `self.cycle >= target`.
+    ///
+    /// Checks for IRQs and halt state before every instruction.
+    /// Dispatches to the THUMB or ARM path based on the T-bit in CPSR.
     pub fn emulate(&mut self, hw: &mut HW, target: usize) {
         while self.cycle < target {
             self.handle_irq(hw);
@@ -119,6 +142,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         if IS_ARM9 { hw.cp15.arm9_halted } else { hw.haltcnt.halted() }
     }
 
+    /// Handles a pending IRQ: unhalt the CPU, switch to IRQ mode, push LR,
+    /// disable further IRQs (I-bit), and jump to the IRQ vector.
     pub fn handle_irq(&mut self, hw: &mut HW) {
         let (interrupts_requested, interrupt_base) = if IS_ARM9 {
             (hw.arm9_interrupts_requested(), hw.cp15.interrupt_base())
@@ -153,6 +178,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         self.condition_lut[((self.regs.get_flags() & 0xF0) | condition) as usize]
     }
 
+    /// Performs a barrel-shifter operation and optionally updates CPSR flags.
+    ///
+    /// `shift_type`: 0=LSL, 1=LSR, 2=ASR, 3=ROR/RRX.
+    /// `immediate`: when `true` the shift amount came from the instruction
+    ///   encoding (special-case rules for shift==0 apply).
     pub(self) fn shift(
         &mut self,
         shift_type: u32,
@@ -277,6 +307,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         }
     }
 
+    /// ADD: `op1 + op2`, optionally setting NZCV flags.
     pub(self) fn add(&mut self, op1: u32, op2: u32, change_status: bool) -> u32 {
         let result = op1.overflowing_add(op2);
         if change_status {
@@ -288,6 +319,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         result.0
     }
 
+    /// ADC: `op1 + op2 + C`, optionally setting NZCV flags.
     pub(self) fn adc(&mut self, op1: u32, op2: u32, change_status: bool) -> u32 {
         let result = op1.overflowing_add(op2);
         let result2 = result.0.overflowing_add(self.regs.get_c() as u32);
@@ -300,6 +332,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         result2.0
     }
 
+    /// SUB: `op1 - op2` implemented as `op1 + NOT(op2) + 1` via [`adc`](Self::adc).
     pub(self) fn sub(&mut self, op1: u32, op2: u32, change_status: bool) -> u32 {
         let old_c = self.regs.get_c();
         self.regs.set_c(true);
@@ -310,10 +343,13 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         result
     }
 
+    /// SBC: `op1 - op2 - NOT(C)` = `op1 + NOT(op2) + C` via [`adc`](Self::adc).
     pub(self) fn sbc(&mut self, op1: u32, op2: u32, change_status: bool) -> u32 {
         self.adc(op1, !op2, change_status)
     }
 
+    /// Adds extra internal cycles for a multiply instruction based on the number
+    /// of non-trivial bytes in `op1` (ARM7TDMI / ARM9 multiplier early-out).
     pub(self) fn inc_mul_clocks(&mut self, op1: u32, signed: bool) {
         let mut mask = 0xFF_FF_FF_00;
         loop {

@@ -1,3 +1,27 @@
+//! NDS game cartridge – ROM transfer, KEY1 encryption, and save backup.
+//!
+//! ## Transfer protocol (GBATEK: "NDS Cartridge Protocol")
+//! Communication follows a command/response cycle driven by ROMCTRL (4001A4h):
+//! 1. Software writes an 8-byte command to ROMCTRL[0-7].
+//! 2. Software sets ROMCTRL bit 31 (Start/Busy).
+//! 3. Hardware sends the command and streams up to `data_block_size` words.
+//! 4. Each ready word triggers `Event::ROMWordTransfered`; end triggers
+//!    `Event::ROMBlockEnded` which clears the busy flag and fires an IRQ if
+//!    enabled in SPICNT.
+//!
+//! ## KEY1 / KEY2 encryption (GBATEK: "NDS Cart KEY1/KEY2 Encryption")
+//! Early boot commands use Blowfish-based KEY1 encryption keyed from the BIOS.
+//! The **secure area** (ROM 4000h-7FFFh) is encrypted at two levels:
+//! - Entire 2 KiB: KEY1 level 3.
+//! - First 8 bytes: additionally KEY1 level 2.
+//! After the BIOS decrypts the secure area it overwrites the first 8 bytes with
+//! the ASCII string `"encryObj"`.  `encrypt_secure_area` re-applies this
+//! encryption for ROMs stored in decrypted form on disk.
+//!
+//! ## Backup types (GBATEK: "NDS Cartridge Backup")
+//! Detected automatically from the ROM header game code via `game_db`.
+//! Supported: EEPROM (small/large), Flash, no-backup.
+
 mod backup;
 mod header;
 mod key1_encryption;
@@ -18,21 +42,30 @@ use key1_encryption::Key1Encryption;
 
 pub(super) use backup::{Backup, Flash}; // For Firmware
 
+/// NDS cartridge slot state.
 #[derive(emu_utils::Savestate)]
 pub struct Cartridge {
+    /// Chip ID returned by the 0xB7 "Get ROM chip ID" command.
+    /// TODO: derive from ROM size and manufacturer code.
     chip_id: u32,
     header: Header,
     rom: Vec<u8>,
     key1_encryption: Key1Encryption,
     // Registers
+    /// AUXSPICNT (4001A0h): SPI bus control (baud rate, CS, IRQ enable).
     pub spicnt: SPICNT,
+    /// ROMCTRL (4001A4h): transfer size, CLK rate, busy flag, KEY2 flags.
     romctrl: ROMCTRL,
+    /// 8-byte command buffer written to ROMCMD (4001A8h-4001AFh).
     command: [u8; 8],
     cur_game_card_word: u32,
     // Data Transfer
+    /// Remaining bytes to transfer in the current block (always a multiple of 4).
     rom_bytes_left: usize,
+    /// Prefetched words queued for CPU reads via ROMDATA (4100010h).
     game_card_words: VecDeque<u32>,
     // Backup
+    /// Save-data backend (EEPROM / Flash / none). Not serialized; re-opened from file.
     #[savestate(skip)]
     backup: Box<dyn Backup>,
 }
@@ -373,7 +406,7 @@ impl Cartridge {
 }
 
 impl HW {
-    fn on_rom_word_transfered(&mut self, event: Event) {
+    pub fn on_rom_word_transfered(&mut self, event: Event) {
         let is_arm9 = match event {
             Event::ROMWordTransfered(is_arm9) => is_arm9,
             _ => unreachable!(),
@@ -383,7 +416,7 @@ impl HW {
         self.run_dmas_single(dma::Occasion::DSCartridge, is_arm9);
     }
 
-    fn on_rom_block_ended(&mut self, event: Event) {
+    pub fn on_rom_block_ended(&mut self, event: Event) {
         let is_arm9 = match event {
             Event::ROMBlockEnded(is_arm9) => is_arm9,
             _ => unreachable!(),

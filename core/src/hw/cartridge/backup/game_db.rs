@@ -10,11 +10,7 @@ pub struct GameInfo {
 
 impl GameInfo {
     pub const fn new(game_code: u32, rom_size: usize, sram_type: usize) -> Self {
-        GameInfo {
-            game_code,
-            rom_size,
-            sram_type,
-        }
+        GameInfo { game_code, rom_size, sram_type }
     }
 }
 

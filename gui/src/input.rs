@@ -75,10 +75,7 @@ pub fn apply_input_bindings(nds: &mut NDS, bindings: &[InputBinding], input: &In
     let mut active_keys = HashSet::new();
 
     for binding in bindings {
-        let active = binding
-            .sources
-            .iter()
-            .all(|source| input.is_source_active(source));
+        let active = binding.sources.iter().all(|source| input.is_source_active(source));
 
         if active {
             active_keys.insert(binding.target);
@@ -107,11 +104,7 @@ pub fn apply_input_bindings(nds: &mut NDS, bindings: &[InputBinding], input: &In
 
     apply_key(nds, active_keys.contains(&BindKey::Start), nds::Key::Start);
 
-    apply_key(
-        nds,
-        active_keys.contains(&BindKey::Select),
-        nds::Key::Select,
-    );
+    apply_key(nds, active_keys.contains(&BindKey::Select), nds::Key::Select);
 }
 
 /// Updates raw keyboard state.

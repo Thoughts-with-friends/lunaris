@@ -1,3 +1,23 @@
+//! NDS Sound Processing Unit (SPU).
+//!
+//! The NDS has **16 hardware sound channels** (SOUNDxCNT at 4000400h + N×10h):
+//! - Channels  0-7:  PCM8 / PCM16 / ADPCM (IMA-ADPCM).  Here: `base_channels`.
+//! - Channels  8-13: PSG square-wave (six duty cycles) or PCM/ADPCM. `psg_channels`.
+//! - Channels 14-15: Noise or PCM/ADPCM. `noise_channels`.
+//!
+//! Master control via **SOUNDCNT** (4000500h): master volume, output routing,
+//! channel enable. **SOUNDBIAS** (4000504h) sets DC bias for the DAC.
+//!
+//! Output sample rate: nominally **32728 Hz** (= master clock / 1024).
+//! The current implementation derives `clocks_per_sample` from the host audio
+//! device rate and resamples; the TODO below tracks a missing 32728 Hz native
+//! path.
+//!
+//! ADPCM uses the IMA-ADPCM standard with Nintendo's fixed step and index
+//! tables (`ADPCM_TABLE` / `ADPCM_INDEX_TABLE`).
+//!
+//! GBATEK ref: "NDS Sound – Sound Channel Registers" and "NDS SOUNDCNT"
+
 mod audio;
 mod registers;
 
@@ -10,6 +30,10 @@ use super::{
 use audio::Audio;
 use registers::*;
 
+/// NDS SPU state.
+///
+/// Sound is generated on the scheduler via [`Event::GenerateAudioSample`];
+/// each individual channel step uses [`Event::StepAudioChannel`].
 #[derive(emu_utils::Savestate)]
 pub struct SPU {
     cnt: SoundControl,
@@ -36,7 +60,11 @@ macro_rules! create_channels {
 }
 
 impl SPU {
+    /// IMA-ADPCM index adjustment table (4-bit nibble high-3 bits → index delta).
+    /// GBATEK: "NDS Sound – ADPCM Decoding".
     pub const ADPCM_INDEX_TABLE: [i32; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
+    /// IMA-ADPCM step-size table (89 entries, index 0–88).
+    /// GBATEK: "NDS Sound – ADPCM Step Table".
     pub const ADPCM_TABLE: [u16; 89] = [
         0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x0010, 0x0011, 0x0013,
         0x0015, 0x0017, 0x0019, 0x001C, 0x001F, 0x0022, 0x0025, 0x0029, 0x002D, 0x0032, 0x0037,
@@ -213,7 +241,7 @@ impl IORegister for SPU {
 }
 
 impl HW {
-    fn generate_audio_sample(&mut self, _event: Event) {
+    pub fn generate_audio_sample(&mut self, _event: Event) {
         self.scheduler.schedule(
             Event::GenerateAudioSample,
             HW::generate_audio_sample,
@@ -222,7 +250,7 @@ impl HW {
         self.spu.generate_sample();
     }
 
-    fn step_audio_channel(&mut self, event: Event) {
+    pub fn step_audio_channel(&mut self, event: Event) {
         let channel_spec = match event {
             Event::StepAudioChannel(channel_spec) => channel_spec,
             _ => unreachable!(),
@@ -344,7 +372,7 @@ impl HW {
         }
     }
 
-    fn reset_audio_channel(&mut self, event: Event) {
+    pub fn reset_audio_channel(&mut self, event: Event) {
         let channel_spec = match event {
             Event::ResetAudioChannel(channel_spec) => channel_spec,
             _ => unreachable!(),
@@ -358,7 +386,7 @@ impl HW {
 }
 
 #[derive(emu_utils::Savestate)]
-#[load(in_place_only, post = "self.post_load(save)?")]
+#[load(in_place_only)]
 pub struct Channel<T: ChannelType> {
     // Registers
     cnt: ChannelControl<T>,
@@ -378,61 +406,6 @@ pub struct Channel<T: ChannelType> {
     adpcm_value: i16,
     initial_adpcm_index: i32,
     initial_adpcm_value: i16,
-}
-
-impl<T: ChannelType> Channel<T> {
-    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
-        save.start_struct()?;
-
-        save.start_field(b"cnt")?;
-        save.load_into(&mut self.cnt)?;
-
-        save.start_field(b"src_addr")?;
-        save.load_into(&mut self.src_addr)?;
-
-        save.start_field(b"timer_val")?;
-        save.load_into(&mut self.timer_val)?;
-
-        save.start_field(b"loop_start")?;
-        save.load_into(&mut self.loop_start)?;
-
-        save.start_field(b"len")?;
-        save.load_into(&mut self.len)?;
-
-        save.start_field(b"spec")?;
-        save.load_into(&mut self.spec)?;
-
-        save.start_field(b"addr")?;
-        save.load_into(&mut self.addr)?;
-
-        save.start_field(b"num_bytes_left")?;
-        save.load_into(&mut self.num_bytes_left)?;
-
-        save.start_field(b"sample")?;
-        save.load_into(&mut self.sample)?;
-
-        save.start_field(b"adpcm_in_header")?;
-        save.load_into(&mut self.adpcm_in_header)?;
-
-        save.start_field(b"adpcm_low_nibble")?;
-        save.load_into(&mut self.adpcm_low_nibble)?;
-
-        save.start_field(b"adpcm_index")?;
-        save.load_into(&mut self.adpcm_index)?;
-
-        save.start_field(b"adpcm_value")?;
-        save.load_into(&mut self.adpcm_value)?;
-
-        save.start_field(b"initial_adpcm_index")?;
-        save.load_into(&mut self.initial_adpcm_index)?;
-
-        save.start_field(b"initial_adpcm_value")?;
-        save.load_into(&mut self.initial_adpcm_value)?;
-
-        save.end_struct()?;
-
-        Ok(())
-    }
 }
 
 impl<T: ChannelType> IORegister for Channel<T> {

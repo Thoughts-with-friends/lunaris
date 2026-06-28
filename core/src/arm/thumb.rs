@@ -69,19 +69,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let immediate = I;
         let sub = SUB;
         let operand = (instr >> 6 & 0x7) as u32;
-        let operand = if immediate {
-            operand
-        } else {
-            self.regs[operand]
-        };
+        let operand = if immediate { operand } else { self.regs[operand] };
         let src = self.regs[(instr >> 3 & 0x7) as u32];
         let dest_reg = (instr & 0x7) as u32;
 
-        let result = if sub {
-            self.sub(src, operand, true)
-        } else {
-            self.add(src, operand, true)
-        };
+        let result = if sub { self.sub(src, operand, true) } else { self.add(src, operand, true) };
         self.regs[dest_reg] = result;
         self.instruction_prefetch::<u16>(hw, AccessType::S);
     }
@@ -215,9 +207,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let offset = (instr & 0xFF) as u32;
         let addr = (self.regs[15] & !0x2).wrapping_add(offset * 4);
         self.instruction_prefetch::<u16>(hw, AccessType::N);
-        let value = self
-            .read::<u32>(hw, AccessType::N, addr & !0x3)
-            .rotate_right((addr & 0x3) * 8);
+        let value = self.read::<u32>(hw, AccessType::N, addr & !0x3).rotate_right((addr & 0x3) * 8);
         self.regs[dest_reg] = value;
         self.internal();
     }
@@ -241,8 +231,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             let value = if opcode & 0b01 != 0 {
                 self.read::<u8>(hw, AccessType::S, addr) as u32 // LDRB
             } else {
-                self.read::<u32>(hw, AccessType::S, addr & !0x3)
-                    .rotate_right((addr & 0x3) * 8) // LDR
+                self.read::<u32>(hw, AccessType::S, addr & !0x3).rotate_right((addr & 0x3) * 8) // LDR
             };
             self.regs[src_dest_reg] = value;
             self.internal();
@@ -271,12 +260,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         self.instruction_prefetch::<u16>(hw, AccessType::N);
         if opcode == 0 {
             // STRH
-            self.write::<u16>(
-                hw,
-                AccessType::N,
-                addr & !0x1,
-                self.regs[src_dest_reg] as u16,
-            );
+            self.write::<u16>(hw, AccessType::N, addr & !0x1, self.regs[src_dest_reg] as u16);
         } else {
             // Load
             let value = if IS_ARM9 {
@@ -318,8 +302,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                 self.read::<u8>(hw, AccessType::S, addr) as u32
             } else {
                 let addr = base.wrapping_add(offset << 2);
-                self.read::<u32>(hw, AccessType::S, addr & !0x3)
-                    .rotate_right((addr & 0x3) * 8)
+                self.read::<u32>(hw, AccessType::S, addr & !0x3).rotate_right((addr & 0x3) * 8)
             };
             self.regs[src_dest_reg] = value;
             self.internal();
@@ -329,12 +312,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
             if byte {
                 self.write::<u8>(hw, AccessType::N, base.wrapping_add(offset), value as u8);
             } else {
-                self.write::<u32>(
-                    hw,
-                    AccessType::N,
-                    base.wrapping_add(offset << 2) & !0x3,
-                    value,
-                );
+                self.write::<u32>(hw, AccessType::N, base.wrapping_add(offset << 2) & !0x3, value);
             }
         }
     }
@@ -351,20 +329,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         self.instruction_prefetch::<u16>(hw, AccessType::N);
         if load {
             let value = self.read::<u16>(hw, AccessType::S, addr & !0x1) as u32;
-            let value = if IS_ARM9 {
-                value
-            } else {
-                value.rotate_right((addr & 0x1) * 8)
-            };
+            let value = if IS_ARM9 { value } else { value.rotate_right((addr & 0x1) * 8) };
             self.regs[src_dest_reg] = value;
             self.internal();
         } else {
-            self.write::<u16>(
-                hw,
-                AccessType::N,
-                addr & !0x1,
-                self.regs[src_dest_reg] as u16,
-            );
+            self.write::<u16>(hw, AccessType::N, addr & !0x1, self.regs[src_dest_reg] as u16);
         }
     }
 
@@ -381,9 +350,8 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let addr = self.regs.sp().wrapping_add(offset as u32);
         self.instruction_prefetch::<u16>(hw, AccessType::N);
         if load {
-            let value = self
-                .read::<u32>(hw, AccessType::S, addr & !0x3)
-                .rotate_right((addr & 0x3) * 8);
+            let value =
+                self.read::<u32>(hw, AccessType::S, addr & !0x3).rotate_right((addr & 0x3) * 8);
             self.regs[src_dest_reg] = value;
             self.internal();
         } else {
@@ -417,11 +385,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         let sub = instr >> 7 & 0x1 != 0;
         let offset = ((instr & 0x7F) * 4) as u32;
         let sp = self.regs.sp();
-        let value = if sub {
-            sp.wrapping_sub(offset)
-        } else {
-            sp.wrapping_add(offset)
-        };
+        let value = if sub { sp.wrapping_sub(offset) } else { sp.wrapping_add(offset) };
         self.regs.set_sp(value);
         self.instruction_prefetch::<u16>(hw, AccessType::S);
     }
@@ -606,11 +570,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     fn uncond_branch(&mut self, hw: &mut HW, instr: u16) {
         assert_eq!(instr >> 11, 0b11100);
         let offset = (instr & 0x7FF) as u32;
-        let offset = if offset >> 10 & 0x1 != 0 {
-            0xFFFF_F800 | offset
-        } else {
-            offset
-        };
+        let offset = if offset >> 10 & 0x1 != 0 { 0xFFFF_F800 | offset } else { offset };
 
         self.instruction_prefetch::<u16>(hw, AccessType::N);
         self.regs[15] = self.regs[15].wrapping_add(offset << 1);
@@ -645,11 +605,7 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         } else {
             // First Instruction
             assert!(X);
-            let offset = if offset >> 10 & 0x1 != 0 {
-                0xFFFF_F800 | offset
-            } else {
-                offset
-            };
+            let offset = if offset >> 10 & 0x1 != 0 { 0xFFFF_F800 | offset } else { offset };
             self.regs.set_lr(self.regs[15].wrapping_add(offset << 12));
             self.instruction_prefetch::<u16>(hw, AccessType::S);
         }

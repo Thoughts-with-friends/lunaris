@@ -7,7 +7,7 @@ use crate::hw::{Scheduler, mem::IORegister};
 use registers::*;
 
 #[derive(emu_utils::Savestate)]
-#[load(in_place_only, post = "self.post_load(save)?")]
+#[load(in_place_only)]
 pub struct Engine2D<E: EngineType> {
     // Registers
     pub(super) dispcnt: DISPCNT<E>,
@@ -51,105 +51,6 @@ pub struct Engine2D<E: EngineType> {
     objs_line: [OBJPixel; GPU::WIDTH],
     // #[serde(with = "array2d")]
     windows_lines: [[bool; GPU::WIDTH]; 3],
-}
-
-impl<E: EngineType> Engine2D<E> {
-    fn post_load<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
-        save.start_struct()?;
-
-        save.start_field(b"dispcnt")?;
-        save.load_into(&mut self.dispcnt)?;
-
-        save.start_field(b"bgcnts")?;
-        save.load_into(&mut self.bgcnts)?;
-
-        save.start_field(b"hofs")?;
-        save.load_into(&mut self.hofs)?;
-
-        save.start_field(b"vofs")?;
-        save.load_into(&mut self.vofs)?;
-
-        save.start_field(b"dxs")?;
-        save.load_into(&mut self.dxs)?;
-
-        save.start_field(b"dmxs")?;
-        save.load_into(&mut self.dmxs)?;
-
-        save.start_field(b"dys")?;
-        save.load_into(&mut self.dys)?;
-
-        save.start_field(b"dmys")?;
-        save.load_into(&mut self.dmys)?;
-
-        save.start_field(b"bgxs")?;
-        save.load_into(&mut self.bgxs)?;
-
-        save.start_field(b"bgys")?;
-        save.load_into(&mut self.bgys)?;
-
-        save.start_field(b"bgxs_latch")?;
-        save.load_into(&mut self.bgxs_latch)?;
-
-        save.start_field(b"bgys_latch")?;
-        save.load_into(&mut self.bgys_latch)?;
-
-        save.start_field(b"mosaic")?;
-        save.load_into(&mut self.mosaic)?;
-
-        save.start_field(b"master_bright")?;
-        save.load_into(&mut self.master_bright)?;
-
-        save.start_field(b"winhs")?;
-        save.load_into(&mut self.winhs)?;
-
-        save.start_field(b"winvs")?;
-        save.load_into(&mut self.winvs)?;
-
-        save.start_field(b"win_0_cnt")?;
-        save.load_into(&mut self.win_0_cnt)?;
-
-        save.start_field(b"win_1_cnt")?;
-        save.load_into(&mut self.win_1_cnt)?;
-
-        save.start_field(b"win_out_cnt")?;
-        save.load_into(&mut self.win_out_cnt)?;
-
-        save.start_field(b"win_obj_cnt")?;
-        save.load_into(&mut self.win_obj_cnt)?;
-
-        save.start_field(b"bldcnt")?;
-        save.load_into(&mut self.bldcnt)?;
-
-        save.start_field(b"bldalpha")?;
-        save.load_into(&mut self.bldalpha)?;
-
-        save.start_field(b"bldy")?;
-        save.load_into(&mut self.bldy)?;
-
-        save.start_field(b"bg_palettes")?;
-        save.load_into(&mut self.bg_palettes)?;
-
-        save.start_field(b"obj_palettes")?;
-        save.load_into(&mut self.obj_palettes)?;
-
-        save.start_field(b"oam")?;
-        save.load_into(&mut self.oam)?;
-
-        save.start_field(b"pixels")?;
-        save.load_into(&mut self.pixels)?;
-
-        save.start_field(b"bg_lines")?;
-        save.load_into(&mut self.bg_lines)?;
-
-        save.start_field(b"objs_line")?;
-        save.load_into(&mut self.objs_line)?;
-
-        save.start_field(b"windows_lines")?;
-        save.load_into(&mut self.windows_lines)?;
-
-        save.end_struct()?;
-        Ok(())
-    }
 }
 
 impl<E: EngineType> Engine2D<E> {

@@ -1,3 +1,9 @@
+//! DMA (Direct Memory Access) controllers for ARM7 and ARM9.
+//!
+//! Each CPU has a [`Controller`] with four [`Channel`]s.  Channels are
+//! indexed in the `by_type` table by their [`Occasion`] (start trigger) so
+//! that hardware events can quickly locate channels that should fire.
+
 use super::{
     HW,
     interrupt_controller::InterruptRequest,
@@ -5,6 +11,11 @@ use super::{
     scheduler::{Event, Scheduler},
 };
 
+/// DMA controller for one CPU (ARM7 or ARM9).
+///
+/// `by_type[occasion]` lists the channel indices currently armed for that
+/// start trigger, enabling O(n_active) dispatch instead of scanning all four
+/// channels on every potential trigger.
 #[derive(emu_utils::Savestate)]
 pub struct Controller {
     channels: [Channel; 4],
@@ -93,7 +104,12 @@ impl std::ops::IndexMut<usize> for Controller {
 }
 
 impl HW {
-    fn on_dma(&mut self, event: Event) {
+    /// Scheduler callback: execute the DMA transfer for the given channel.
+    ///
+    /// Dispatches to [`run_dma`](HW::run_dma) with the correct CPU memory
+    /// accessors and transfer width (16-bit or 32-bit).
+    /// GBATEK: "NDS DMA Transfers – DMACNT Bit 10 (Transfer Type)".
+    pub fn on_dma(&mut self, event: Event) {
         let (is_nds9, num) = match event {
             Event::DMA(is_nds9, num) => (is_nds9, num),
             _ => unreachable!(),
@@ -222,7 +238,7 @@ impl HW {
         }
     }
 
-    fn check_geometry_command_fifo_handler(&mut self, _event: Event) {
+    pub fn check_geometry_command_fifo_handler(&mut self, _event: Event) {
         self.check_geometry_command_fifo();
     }
 
@@ -330,17 +346,40 @@ impl IORegister for Channel {
     }
 }
 
+/// DMA start trigger (DMACNT_H bits [27:24] for ARM9 / bits [29:28] for ARM7).
+///
+/// ARM9 DMACNT_H bits [27:24]:
+/// | Value | Occasion               |
+/// |-------|------------------------|
+/// | 0     | Immediately            |
+/// | 1     | V-Blank                |
+/// | 2     | H-Blank                |
+/// | 3     | Start of display (TODO)|
+/// | 4     | Main-memory display (TODO)|
+/// | 5     | DS card slot transfer  |
+/// | 6     | GBA cart slot (TODO)   |
+/// | 7     | Geometry command FIFO  |
+///
+/// ARM7 DMACNT_H bits [29:28] (2-bit, mapped to different subset):
+/// 0=Immediately, 1=V-Blank (TODO), 2=DS Card, 3=GBA/Wireless (TODO).
+///
+/// GBATEK ref: "NDS DMA Transfers – DMA Start Timing"
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Occasion {
     Immediate = 0,
     VBlank = 1,
     HBlank = 2,
+    /// ARM9 only: triggered at the start of the display period. **Not yet implemented.**
     StartOfDisplay = 3,
+    /// ARM9 only: triggered once per scanline for display capture. **Not yet implemented.**
     MainMemoryDisplay = 4,
     DSCartridge = 5,
+    /// GBA cartridge slot DMA. **Not yet implemented.**
     GBACartridge = 6,
+    /// ARM9 only: triggered when GXFIFO drops below half-full (< 128 entries).
     GeometryCommandFIFO = 7,
+    /// ARM7 only: triggered by wireless interrupt. **Not yet implemented.**
     WirelessInterrupt = 8,
 }
 
@@ -408,6 +447,19 @@ impl Occasion {
     }
 }
 
+/// DMACNT register (bits [31:16] of the 32-bit control word).
+///
+/// Bit layout (ARM9 DMACNT_H):
+/// - Bits [15:0]:  Word count (ARM9: 21-bit; ARM7 ch0-2: 14-bit; ARM7 ch3: 16-bit).
+/// - Bits [21:20]: Dest address control  (0=incr, 1=decr, 2=fixed, 3=incr+reload).
+/// - Bits [23:22]: Src address control   (0=incr, 1=decr, 2=fixed).
+/// - Bit  [24]:    Repeat (re-arm on next trigger when not Immediate).
+/// - Bit  [25]:    Transfer type (0=16-bit, 1=32-bit).
+/// - Bits [29:26]: Start timing ([`Occasion`]).
+/// - Bit  [30]:    IRQ on completion.
+/// - Bit  [31]:    Enable.
+///
+/// GBATEK ref: "NDS DMA Transfers – DMA Control Register"
 #[derive(emu_utils::Savestate)]
 pub struct Control {
     count: u32,
@@ -422,6 +474,7 @@ pub struct Control {
 
     is_nds9: bool,
     num: usize,
+    /// Maximum word count mask (differs by CPU and channel number).
     count_mask: u32,
 }
 

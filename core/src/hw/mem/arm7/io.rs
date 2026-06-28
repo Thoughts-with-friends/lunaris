@@ -135,17 +135,9 @@ impl HW {
             0x0400_0185 => self.interrupts[0].request |= self.ipc.write_fifocnt7(1, value),
             0x0400_0186 => self.interrupts[0].request |= self.ipc.write_fifocnt7(2, value),
             0x0400_0187 => self.interrupts[0].request |= self.ipc.write_fifocnt7(3, value),
-            0x0400_01A0 => self
-                .cartridge
-                .spicnt
-                .write(self.exmem.nds_arm7_access, 0, value),
-            0x0400_01A1 => self
-                .cartridge
-                .spicnt
-                .write(self.exmem.nds_arm7_access, 1, value),
-            0x0400_01A2 => self
-                .cartridge
-                .write_spi_data(self.exmem.nds_arm7_access, value),
+            0x0400_01A0 => self.cartridge.spicnt.write(self.exmem.nds_arm7_access, 0, value),
+            0x0400_01A1 => self.cartridge.spicnt.write(self.exmem.nds_arm7_access, 1, value),
+            0x0400_01A2 => self.cartridge.write_spi_data(self.exmem.nds_arm7_access, value),
             0x0400_01A3 => (), // TODO: Does this write do anything?
             0x0400_01A4 => self.cartridge.write_romctrl(
                 &mut self.scheduler,
@@ -175,72 +167,32 @@ impl HW {
                 3,
                 value,
             ),
-            0x0400_01A8 => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 0, value),
-            0x0400_01A9 => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 1, value),
-            0x0400_01AA => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 2, value),
-            0x0400_01AB => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 3, value),
-            0x0400_01AC => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 4, value),
-            0x0400_01AD => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 5, value),
-            0x0400_01AE => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 6, value),
-            0x0400_01AF => self
-                .cartridge
-                .write_command(self.exmem.nds_arm7_access, 7, value),
+            0x0400_01A8 => self.cartridge.write_command(self.exmem.nds_arm7_access, 0, value),
+            0x0400_01A9 => self.cartridge.write_command(self.exmem.nds_arm7_access, 1, value),
+            0x0400_01AA => self.cartridge.write_command(self.exmem.nds_arm7_access, 2, value),
+            0x0400_01AB => self.cartridge.write_command(self.exmem.nds_arm7_access, 3, value),
+            0x0400_01AC => self.cartridge.write_command(self.exmem.nds_arm7_access, 4, value),
+            0x0400_01AD => self.cartridge.write_command(self.exmem.nds_arm7_access, 5, value),
+            0x0400_01AE => self.cartridge.write_command(self.exmem.nds_arm7_access, 6, value),
+            0x0400_01AF => self.cartridge.write_command(self.exmem.nds_arm7_access, 7, value),
             0x0400_01C0 => self.spi.write_cnt(&mut self.scheduler, 0, value),
             0x0400_01C1 => self.spi.write_cnt(&mut self.scheduler, 1, value),
             0x0400_01C2 => self.spi.write_data(value),
             0x0400_01C3 => (), // SPI bug makes upper 8 bits always 0
             0x0400_0204 => self.exmem.write_arm7(value),
             0x0400_0205 => (), // Upper bits are read-only for ARM7
-            0x0400_0208 => self.interrupts[0]
-                .master_enable
-                .write(&mut self.scheduler, 0, value),
-            0x0400_0209 => self.interrupts[0]
-                .master_enable
-                .write(&mut self.scheduler, 1, value),
-            0x0400_020A => self.interrupts[0]
-                .master_enable
-                .write(&mut self.scheduler, 2, value),
-            0x0400_020B => self.interrupts[0]
-                .master_enable
-                .write(&mut self.scheduler, 3, value),
-            0x0400_0210 => self.interrupts[0]
-                .enable
-                .write(&mut self.scheduler, 0, value),
-            0x0400_0211 => self.interrupts[0]
-                .enable
-                .write(&mut self.scheduler, 1, value),
-            0x0400_0212 => self.interrupts[0]
-                .enable
-                .write(&mut self.scheduler, 2, value),
-            0x0400_0213 => self.interrupts[0]
-                .enable
-                .write(&mut self.scheduler, 3, value),
-            0x0400_0214 => self.interrupts[0]
-                .request
-                .write(&mut self.scheduler, 0, value),
-            0x0400_0215 => self.interrupts[0]
-                .request
-                .write(&mut self.scheduler, 1, value),
-            0x0400_0216 => self.interrupts[0]
-                .request
-                .write(&mut self.scheduler, 2, value),
-            0x0400_0217 => self.interrupts[0]
-                .request
-                .write(&mut self.scheduler, 3, value),
+            0x0400_0208 => self.interrupts[0].master_enable.write(&mut self.scheduler, 0, value),
+            0x0400_0209 => self.interrupts[0].master_enable.write(&mut self.scheduler, 1, value),
+            0x0400_020A => self.interrupts[0].master_enable.write(&mut self.scheduler, 2, value),
+            0x0400_020B => self.interrupts[0].master_enable.write(&mut self.scheduler, 3, value),
+            0x0400_0210 => self.interrupts[0].enable.write(&mut self.scheduler, 0, value),
+            0x0400_0211 => self.interrupts[0].enable.write(&mut self.scheduler, 1, value),
+            0x0400_0212 => self.interrupts[0].enable.write(&mut self.scheduler, 2, value),
+            0x0400_0213 => self.interrupts[0].enable.write(&mut self.scheduler, 3, value),
+            0x0400_0214 => self.interrupts[0].request.write(&mut self.scheduler, 0, value),
+            0x0400_0215 => self.interrupts[0].request.write(&mut self.scheduler, 1, value),
+            0x0400_0216 => self.interrupts[0].request.write(&mut self.scheduler, 2, value),
+            0x0400_0217 => self.interrupts[0].request.write(&mut self.scheduler, 3, value),
             0x0400_0241 => (),                           // WRAMCNT is read-only
             0x0400_0300 => self.postflg7 |= value & 0x1, // Should only be written to during boot
             0x0400_0301 => self.haltcnt.write(&mut self.scheduler, 0, value),
@@ -249,15 +201,11 @@ impl HW {
             0x0400_0306 => self.powcnt2.write(&mut self.scheduler, 2, value),
             0x0400_0307 => self.powcnt2.write(&mut self.scheduler, 3, value),
             0x0400_0400..=0x0400_051F => {
-                self.spu
-                    .write(&mut self.scheduler, addr as usize & 0xFFF, value)
+                self.spu.write(&mut self.scheduler, addr as usize & 0xFFF, value)
             }
             0x0480_4000..=0x0480_5FFF => (), // TODO: WiFi RAM
             0x0480_8000..=0x0480_8FFF => (), // TOOD: WiFi Registers
-            _ => warn!(
-                "Ignoring ARM7 IO Register Write 0x{:08X} = {:02X}",
-                addr, value
-            ),
+            _ => warn!("Ignoring ARM7 IO Register Write 0x{:08X} = {:02X}", addr, value),
         }
     }
 
