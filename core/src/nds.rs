@@ -67,6 +67,18 @@ impl NDS {
         self.hw.set_audio_volume(volume_percent);
     }
 
+    /// Test-only: shifts every absolute cycle counter (ARM9/ARM7 CPU cycles,
+    /// scheduler cycle, timer start cycles) by `offset`, simulating a long
+    /// play session without actually running billions of cycles. ARM9 runs
+    /// at 2× the master clock, so its counter is shifted by `2 * offset`.
+    /// See `docs/design/savestate-and-video-design.md` §3.4.
+    #[cfg(test)]
+    pub(crate) fn offset_cycles_for_test(&mut self, offset: usize) {
+        self.arm9.offset_cycle_for_test(offset * 2);
+        self.arm7.offset_cycle_for_test(offset);
+        self.hw.offset_cycles_for_test(offset);
+    }
+
     /// Runs both CPUs until the GPU signals that a full frame has been rendered.
     ///
     /// Each iteration advances in ≤30-cycle slices to limit desync between
@@ -209,5 +221,132 @@ impl NDS {
         let mut nds = NDS::new(bios7, bios9, firmware_file, fs::read(rom_path).unwrap(), save_file);
         nds.set_audio_volume(audio_volume);
         nds
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use std::fs::OpenOptions;
+
+    fn make_nds() -> NDS {
+        let bios7 = free_bios::arm7::BIOS_ARM7_BIN.to_vec();
+        let bios9 = free_bios::arm9::BIOS_ARM9_BIN.to_vec();
+
+        let fw_path = std::env::temp_dir().join("lunaris_test_fw.bin");
+        if !fw_path.exists() {
+            fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+        }
+        let firmware_file = OpenOptions::new().read(true).write(true).open(&fw_path).unwrap();
+
+        let save_path = std::env::temp_dir().join("lunaris_test.sav");
+        #[allow(clippy::suspicious_open_options)]
+        let save_file =
+            OpenOptions::new().read(true).write(true).create(true).open(&save_path).unwrap();
+
+        // Binary of the smallest valid NDS file: Only the hex-dump
+        // https://imrannazar.com/The-Smallest-NDS-File#:~:text=Final%20binary%3A%20352%20bytes
+        let tiny_rom = std::fs::read("../target/tiny_rom.nds").unwrap();
+        NDS::new(bios7, bios9, firmware_file, tiny_rom, save_file)
+    }
+
+    #[ignore = "because we need external test files"]
+    #[test]
+    fn test_rom_size() {
+        // NDS init_mem copies the first 0x170 bytes of the ROM into main memory.
+        let tiny_rom = std::fs::read("../target/tiny_rom.nds").unwrap();
+        assert_eq!(tiny_rom.len(), 0x170);
+    }
+
+    #[ignore = "because we need external test files"]
+    #[test]
+    fn test_emulate_one_frame() {
+        let mut nds = make_nds();
+        nds.emulate_frame();
+    }
+
+    #[ignore = "because we need external test files"]
+    #[test]
+    fn test_save_state_non_empty() {
+        let mut nds = make_nds();
+        nds.emulate_frame();
+        let state = nds.save_state().unwrap();
+        assert!(!state.is_empty());
+    }
+
+    #[ignore = "because we need external test files"]
+    #[test]
+    fn test_load_state_after_save() {
+        let mut nds = make_nds();
+        for _ in 0..3 {
+            nds.emulate_frame();
+        }
+        let state = nds.save_state().unwrap();
+        nds.load_state(&state).unwrap();
+        // Emulate a few more frames to ensure the state is valid and the emulator continues to run.
+        for _ in 0..3 {
+            nds.emulate_frame();
+        }
+    }
+
+    #[ignore = "because we need external test files"]
+    #[test]
+    fn test_load_state_deterministic() {
+        let mut nds = make_nds();
+        for _ in 0..5 {
+            nds.emulate_frame();
+        }
+        let state = nds.save_state().unwrap();
+
+        nds.load_state(&state).unwrap();
+        let state2 = nds.save_state().unwrap();
+
+        nds.load_state(&state).unwrap();
+        let state3 = nds.save_state().unwrap();
+
+        assert_eq!(state2, state3, "State should be deterministic after loading the same state.");
+    }
+
+    /// Regression test for the emu-utils `usize`-as-`u32` truncation bug
+    /// (see `docs/design/savestate-and-video-design.md` §3): without the
+    /// `u64` serialization fix on ARM/Scheduler/Timer cycle counters, a
+    /// save/load cycle after crossing the 2^32 cycle boundary corrupts
+    /// ARM9's cycle counter, which desyncs it from the scheduler and causes
+    /// `emulate_frame` to spin effectively forever trying to catch up.
+    #[ignore = "because we need external test files"]
+    #[test]
+    fn test_load_state_after_u32_cycle_overflow() {
+        let mut nds = make_nds();
+        for _ in 0..2 {
+            nds.emulate_frame();
+        }
+
+        // Simulate ~2-3 minutes of real play by jumping every absolute cycle
+        // counter past the u32 boundary.
+        nds.offset_cycles_for_test(0x1_0000_0000);
+
+        for _ in 0..2 {
+            nds.emulate_frame();
+        }
+
+        let state = nds.save_state().unwrap();
+
+        // Must not hang: pre-fix, ARM9's truncated cycle counter desyncs from
+        // the scheduler and this loop never returns.
+        nds.load_state(&state).unwrap();
+        for _ in 0..3 {
+            nds.emulate_frame();
+        }
+
+        // Determinism check, mirroring `test_load_state_deterministic`.
+        nds.load_state(&state).unwrap();
+        let state2 = nds.save_state().unwrap();
+        nds.load_state(&state).unwrap();
+        let state3 = nds.save_state().unwrap();
+        assert_eq!(
+            state2, state3,
+            "State should be deterministic after loading a state saved past the u32 cycle boundary."
+        );
     }
 }

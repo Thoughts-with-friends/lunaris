@@ -56,14 +56,23 @@ use timers::Timers;
 pub struct HW {
     // Memory
     pub cp15: CP15,
+    /// `Vec<u8>::load_in_place` does not consume the stored length prefix, so
+    /// route through `Loadable` instead. See `docs/design/savestate-and-video-design.md`.
+    #[load(with = "save.load()?", with_in_place = "*bios7 = save.load()?")]
     bios7: Vec<u8>,
+    #[load(with = "save.load()?", with_in_place = "*bios9 = save.load()?")]
     bios9: Vec<u8>,
     cartridge: Cartridge,
+    #[load(with = "save.load()?", with_in_place = "*itcm = save.load()?")]
     itcm: Vec<u8>,
+    #[load(with = "save.load()?", with_in_place = "*dtcm = save.load()?")]
     dtcm: Vec<u8>,
     // #[savestate(skip)] // Skip Dust too
+    #[load(with = "save.load()?", with_in_place = "*main_mem = save.load()?")]
     main_mem: Vec<u8>,
+    #[load(with = "save.load()?", with_in_place = "*iwram = save.load()?")]
     iwram: Vec<u8>,
+    #[load(with = "save.load()?", with_in_place = "*shared_wram = save.load()?")]
     shared_wram: Vec<u8>,
     /// Raw-pointer page table for ARM7 memory (4 KiB pages). Not serialized.
     #[savestate(skip)]
@@ -109,6 +118,16 @@ impl HW {
         // will drain it; clearing the flag here prevents permanent CPU starvation.
         self.gpu.engine3d.bus_stalled = false;
         Ok(())
+    }
+
+    /// Test-only: shifts the scheduler's and every timer's absolute cycle
+    /// counters by `offset`, simulating a long play session for u32-overflow
+    /// regression tests. See `docs/design/savestate-and-video-design.md` §3.4.
+    #[cfg(test)]
+    pub(crate) fn offset_cycles_for_test(&mut self, offset: usize) {
+        self.scheduler.offset_cycle_for_test(offset);
+        self.timers[0].offset_cycles_for_test(offset);
+        self.timers[1].offset_cycles_for_test(offset);
     }
 
     fn handler_for_event(event: &Event) -> EventHandler {

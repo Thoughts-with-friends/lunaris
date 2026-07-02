@@ -25,7 +25,12 @@ pub struct Engine3D {
     cur_command: GeometryCommand, // Current Packed Command processing
     num_params: usize,
     params_processed: usize,
+    /// `Vec`/`VecDeque::load_in_place` does not consume the stored length
+    /// prefix, so route through `Loadable` instead.
+    /// See `docs/design/savestate-and-video-design.md`.
+    #[load(with = "save.load()?", with_in_place = "*params = save.load()?")]
     params: Vec<u32>,
+    #[load(with = "save.load()?", with_in_place = "*gxfifo = save.load()?")]
     gxfifo: VecDeque<GeometryCommandEntry>,
     // Matrices
     mtx_mode: MatrixMode,
@@ -46,6 +51,7 @@ pub struct Engine3D {
     viewport: Viewport,
     clear_color: ClearColor,
     clear_depth: ClearDepth,
+    #[load(with = "save.load()?", with_in_place = "*frame_buffer = save.load()?")]
     frame_buffer: Vec<FrameBufferPixel>,
     polygons_submitted: bool,
     // Polygons
@@ -55,9 +61,13 @@ pub struct Engine3D {
     prev_pos: [FixedPoint; 3],
     swap_verts: bool,
     clip_mat: Matrix,
+    #[load(with = "save.load()?", with_in_place = "*cur_poly_verts = save.load()?")]
     cur_poly_verts: Vec<Vertex>,
+    #[load(with = "save.load()?", with_in_place = "*vertices = save.load()?")]
     vertices: Vec<Vertex>,
+    #[load(with = "save.load()?", with_in_place = "*polygons = save.load()?")]
     polygons: Vec<Polygon>,
+    #[load(with = "save.load()?", with_in_place = "*original_verts = save.load()?")]
     original_verts: Vec<(Matrix, [FixedPoint; 3])>,
     // Lighting
     lights: [Light; 4],

@@ -68,17 +68,22 @@ pub struct Scheduler {
     pending_fire_cycles: Vec<usize>,
 }
 
+// `cycle` and `fire_cycles` are absolute master-clock cycle counters. They are
+// stored as `u64` because emu-utils serializes `usize` as `u32`, which
+// silently truncates after ~128s of real play.
+// See `docs/design/savestate-and-video-design.md` §3.
 impl emu_utils::Storable for Scheduler {
     fn store<S: emu_utils::WriteSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
         let mut event_types: Vec<Event> = Vec::with_capacity(self.event_queue.len());
-        let mut fire_cycles: Vec<usize> = Vec::with_capacity(self.event_queue.len());
+        let mut fire_cycles: Vec<u64> = Vec::with_capacity(self.event_queue.len());
         for (wrapper, Reverse(cycle)) in &self.event_queue {
             event_types.push(wrapper.event);
-            fire_cycles.push(*cycle);
+            fire_cycles.push(*cycle as u64);
         }
+        let mut cycle_u64 = self.cycle as u64;
         save.start_struct()?;
         save.start_field(b"cycle")?;
-        save.store(&mut self.cycle)?;
+        save.store(&mut cycle_u64)?;
         save.start_field(b"event_types")?;
         save.store(&mut event_types)?;
         save.start_field(b"fire_cycles")?;
@@ -92,11 +97,11 @@ impl emu_utils::Loadable for Scheduler {
     fn load<S: emu_utils::ReadSavestate>(save: &mut S) -> Result<Self, S::Error> {
         save.start_struct()?;
         save.start_field(b"cycle")?;
-        let cycle = save.load::<usize>()?;
+        let cycle = save.load::<u64>()? as usize;
         save.start_field(b"event_types")?;
         let pending_event_types = save.load::<Vec<Event>>()?;
         save.start_field(b"fire_cycles")?;
-        let pending_fire_cycles = save.load::<Vec<usize>>()?;
+        let pending_fire_cycles = save.load::<Vec<u64>>()?.into_iter().map(|c| c as usize).collect();
         save.end_struct()?;
         Ok(Scheduler {
             cycle,
@@ -111,11 +116,12 @@ impl emu_utils::LoadableInPlace for Scheduler {
     fn load_in_place<S: emu_utils::ReadSavestate>(&mut self, save: &mut S) -> Result<(), S::Error> {
         save.start_struct()?;
         save.start_field(b"cycle")?;
-        save.load_into(&mut self.cycle)?;
+        self.cycle = save.load::<u64>()? as usize;
         save.start_field(b"event_types")?;
         self.pending_event_types = save.load::<Vec<Event>>()?;
         save.start_field(b"fire_cycles")?;
-        self.pending_fire_cycles = save.load::<Vec<usize>>()?;
+        self.pending_fire_cycles =
+            save.load::<Vec<u64>>()?.into_iter().map(|c| c as usize).collect();
         self.event_queue.clear();
         save.end_struct()?;
         Ok(())
@@ -142,6 +148,21 @@ impl Scheduler {
         {
             let handler = handler_fn(&event);
             self.event_queue.push(EventWrapper { event, handler }, Reverse(fire_cycle));
+        }
+    }
+
+    /// Test-only: shifts `cycle` and every queued event's fire cycle by
+    /// `offset`, simulating a long play session for u32-overflow regression
+    /// tests. See `docs/design/savestate-and-video-design.md` §3.4.
+    #[cfg(test)]
+    pub(crate) fn offset_cycle_for_test(&mut self, offset: usize) {
+        self.cycle = self.cycle.wrapping_add(offset);
+        let mut shifted = Vec::with_capacity(self.event_queue.len());
+        while let Some((wrapper, Reverse(cycle))) = self.event_queue.pop() {
+            shifted.push((wrapper, cycle.wrapping_add(offset)));
+        }
+        for (wrapper, cycle) in shifted {
+            self.event_queue.push(wrapper, Reverse(cycle));
         }
     }
 

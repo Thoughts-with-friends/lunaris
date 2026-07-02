@@ -5,23 +5,39 @@ use super::{
     EngineType,
 };
 
+/// `Vec::load_in_place` does not consume the stored length prefix, so every
+/// `Vec`/array-of-`Vec` field below routes through `Loadable` instead.
+/// See `docs/design/savestate-and-video-design.md`.
 #[derive(emu_utils::Savestate)]
 pub struct VRAM {
     cnts: [VRAMCNT; 9],
+    #[load(with = "save.load()?", with_in_place = "*banks = save.load()?")]
     pub(super) banks: [Vec<u8>; 9],
     // Functions
     lcdc_enabled: [bool; 9],
+    #[load(with = "save.load()?", with_in_place = "*lcdc = save.load()?")]
     lcdc: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_a_bg = save.load()?")]
     engine_a_bg: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_a_obj = save.load()?")]
     engine_a_obj: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_a_bg_ext_pal = save.load()?")]
     engine_a_bg_ext_pal: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_a_obj_ext_pal = save.load()?")]
     engine_a_obj_ext_pal: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*textures = save.load()?")]
     textures: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*textures_pal = save.load()?")]
     textures_pal: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_b_bg = save.load()?")]
     engine_b_bg: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_b_obj = save.load()?")]
     engine_b_obj: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_b_bg_ext_pal = save.load()?")]
     engine_b_bg_ext_pal: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*engine_b_obj_ext_pal = save.load()?")]
     engine_b_obj_ext_pal: Vec<Vec<Bank>>,
+    #[load(with = "save.load()?", with_in_place = "*arm7_wram = save.load()?")]
     arm7_wram: Vec<Vec<Bank>>,
 }
 

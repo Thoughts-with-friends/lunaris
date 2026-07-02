@@ -14,6 +14,7 @@
 //! The **secure area** (ROM 4000h-7FFFh) is encrypted at two levels:
 //! - Entire 2 KiB: KEY1 level 3.
 //! - First 8 bytes: additionally KEY1 level 2.
+//!
 //! After the BIOS decrypts the secure area it overwrites the first 8 bytes with
 //! the ASCII string `"encryObj"`.  `encrypt_secure_area` re-applies this
 //! encryption for ROMs stored in decrypted form on disk.
@@ -49,6 +50,9 @@ pub struct Cartridge {
     /// TODO: derive from ROM size and manufacturer code.
     chip_id: u32,
     header: Header,
+    /// `Vec<u8>::load_in_place` does not consume the stored length prefix, so
+    /// route through `Loadable` instead. See `docs/design/savestate-and-video-design.md`.
+    #[load(with = "save.load()?", with_in_place = "*rom = save.load()?")]
     rom: Vec<u8>,
     key1_encryption: Key1Encryption,
     // Registers
@@ -63,6 +67,7 @@ pub struct Cartridge {
     /// Remaining bytes to transfer in the current block (always a multiple of 4).
     rom_bytes_left: usize,
     /// Prefetched words queued for CPU reads via ROMDATA (4100010h).
+    #[load(with = "save.load()?", with_in_place = "*game_card_words = save.load()?")]
     game_card_words: VecDeque<u32>,
     // Backup
     /// Save-data backend (EEPROM / Flash / none). Not serialized; re-opened from file.

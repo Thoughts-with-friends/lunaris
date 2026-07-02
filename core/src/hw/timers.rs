@@ -46,6 +46,15 @@ impl Timers {
             ],
         }
     }
+
+    /// Test-only: shifts every timer's `start_cycle` by `offset`.
+    /// See `docs/design/savestate-and-video-design.md` §3.4.
+    #[cfg(test)]
+    pub(crate) fn offset_cycles_for_test(&mut self, offset: usize) {
+        for timer in &mut self.timers {
+            timer.offset_start_cycle_for_test(offset);
+        }
+    }
 }
 
 impl std::ops::Index<usize> for Timers {
@@ -88,6 +97,15 @@ pub struct Timer {
     counter: u16,
     // Regular Timing
     /// Master clock cycle at which the timer was (re)started.
+    ///
+    /// Serialized as `u64`: emu-utils stores `usize` as `u32`, which silently
+    /// truncates this absolute cycle counter after ~128s of real play.
+    /// See `docs/design/savestate-and-video-design.md` §3.
+    #[store(with = "save.store(&mut (*start_cycle as u64))?")]
+    #[load(
+        with = "save.load::<u64>()? as usize",
+        with_in_place = "*start_cycle = save.load::<u64>()? as usize"
+    )]
     start_cycle: usize,
     /// Cycles from `start_cycle` until the counter first increments (prescaler sync).
     time_till_first_clock: usize,
@@ -175,6 +193,14 @@ impl Timer {
 
     pub fn is_count_up(&self) -> bool {
         self.cnt.count_up
+    }
+
+    /// Test-only: shifts `start_cycle` by `offset`, simulating a long play
+    /// session for u32-overflow regression tests.
+    /// See `docs/design/savestate-and-video-design.md` §3.4.
+    #[cfg(test)]
+    pub(crate) fn offset_start_cycle_for_test(&mut self, offset: usize) {
+        self.start_cycle = self.start_cycle.wrapping_add(offset);
     }
 
     pub fn read(&self, scheduler: &Scheduler, byte: usize) -> u8 {

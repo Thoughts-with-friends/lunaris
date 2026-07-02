@@ -30,11 +30,17 @@ pub struct IPC {
     fifocnt7: FIFOCNT,
     sync7: SYNC,
     /// ARM7 send-FIFO (ARM9 reads this via IPCFIFORECV at 4100000h).
+    ///
+    /// `VecDeque::load_in_place` does not consume the stored length prefix,
+    /// so route through `Loadable` instead.
+    /// See `docs/design/savestate-and-video-design.md`.
+    #[load(with = "save.load()?", with_in_place = "*output7 = save.load()?")]
     output7: VecDeque<u32>,
     prev_value7: u32,
     fifocnt9: FIFOCNT,
     sync9: SYNC,
     /// ARM9 send-FIFO (ARM7 reads this via IPCFIFORECV at 4100000h).
+    #[load(with = "save.load()?", with_in_place = "*output9 = save.load()?")]
     output9: VecDeque<u32>,
     prev_value9: u32,
 }

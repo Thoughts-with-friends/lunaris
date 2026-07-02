@@ -38,11 +38,18 @@ pub struct Engine2D<E: EngineType> {
     bldy: BLDY,
 
     // Palettes
+    //
+    // `Vec::load_in_place` does not consume the stored length prefix, so
+    // route through `Loadable` instead. See `docs/design/savestate-and-video-design.md`.
+    #[load(with_in_place = "*bg_palettes = save.load()?")]
     bg_palettes: Vec<u16>,
+    #[load(with_in_place = "*obj_palettes = save.load()?")]
     obj_palettes: Vec<u16>,
+    #[load(with_in_place = "*oam = save.load()?")]
     pub oam: Vec<u8>,
 
     // Important Rendering Variables
+    #[load(with_in_place = "*pixels = save.load()?")]
     pixels: Vec<u16>,
 
     // #[serde(with = "array2d")]
