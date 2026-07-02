@@ -54,19 +54,8 @@ A Nintendo DS emulator - Rust-based
 
 ## How to Build
 
-- Install nvm: Example - v0.39.7 on Linux.
-
 ```shell
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-nvm install --lts
-npm -v  # e.g. 11.10.0
-```
-
-- Build
-
-```shell
-npm i
-npm run build
+cargo build --release
 ```
 
 ## Todo List
@@ -78,7 +67,7 @@ npm run build
 - [x] **Phase 4 (100%)**: GPU Infrastructure
 - [x] **Phase 5 (100%)**: BIOS / ROM Loading
 - [x] **Phase 6 (100%)**: UI / Threading
-- [ ] **Phase 7 ( 40%)**: Audio System
+- [x] **Phase 7 (100%)**: Audio System
 - [x] **Phase 8 (100%)**: Interrupt System
 - [x] **Phase 9 (100%)**: Instruction Set Completion (ARM9)
 - [x] **Phase 10 (100%)**: ARM7 Implementation
@@ -88,17 +77,6 @@ npm run build
 - [ ] **Phase 14 ( 20%)**: Optimization / Debugging
 - [ ] **Phase 15 ( 0%)**: VPN Network support
 - [ ] **Phase 16 ( 0%)**: JIT Compile
-
-## Dependencies
-
-- rust stable = "1.91"
-- Backend: ./core
-  - tracing = "0.1.44"
-  - snafu = "0.8.9"
-
-- Frontend: ./gui/tauri
-  - tauri-build = 2.5.3
-  - [Other Web Libraries](gui/tauri/package.json)
 
 ## CI Tests
 
@@ -111,3 +89,5 @@ npm run build
 - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
 - [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator, sorta
 - [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
+- [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528)
+- [TinyFB.nds](https://imrannazar.com/The-Smallest-NDS-File): The smallest Nintendo DS file
