@@ -31,6 +31,15 @@ type ThumbLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u16, IS_A
 #[derive(emu_utils::Savestate)]
 pub struct ARM<const IS_ARM9: bool> {
     /// Current cycle count (ARM9 counts at 2×, ARM7 at 1×).
+    ///
+    /// Serialized as `u64`: emu-utils stores `usize` as `u32`, which silently
+    /// truncates this absolute cycle counter after ~64s (ARM9) / ~128s (ARM7)
+    /// of real play. See `docs/design/savestate-and-video-design.md` §3.
+    #[store(with = "save.store(&mut (*cycle as u64))?")]
+    #[load(
+        with = "save.load::<u64>()? as usize",
+        with_in_place = "*cycle = save.load::<u64>()? as usize"
+    )]
     cycle: usize,
     regs: RegValues,
     /// Two-word prefetch pipeline buffer (`[0]` = current, `[1]` = next).
@@ -73,6 +82,14 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
 
     pub fn set_cycle(&mut self, cycle: usize) {
         self.cycle = cycle;
+    }
+
+    /// Test-only: shifts `cycle` by `offset`, simulating a long play session
+    /// for u32-overflow regression tests.
+    /// See `docs/design/savestate-and-video-design.md` §3.4.
+    #[cfg(test)]
+    pub(crate) fn offset_cycle_for_test(&mut self, offset: usize) {
+        self.cycle = self.cycle.wrapping_add(offset);
     }
 
     /// Executes instructions until `self.cycle >= target`.
