@@ -13,6 +13,15 @@ pub struct Flash {
 }
 
 impl Flash {
+    /// SPI flash page size in bytes. A Page Write must not cross this
+    /// boundary: the address wraps back to the start of the *same* page
+    /// instead of advancing into the next one.
+    ///
+    /// GBATEK "0Ah PW Page Write (Write 3-Byte-Address, write 1..256 data
+    /// bytes) ... Write/Program may not cross page-boundaries":
+    /// <https://problemkaputt.de/gbatek.htm#dsfirmwareserialflashmemory>
+    const PAGE_SIZE: usize = 256;
+
     pub fn new_backup(save_file: File, size: usize) -> Self {
         Flash {
             mem: <dyn Backup>::mmap(save_file, 0xFF, size),
@@ -36,6 +45,7 @@ impl Flash {
     }
 
     fn set_instr(&mut self, instr: Instr) -> Mode {
+        eprintln!("[flash] instr: {instr:?}");
         match instr {
             Instr::IR => Mode::ReadInstr, // TODO: Actually implement IR
             Instr::WREN => {
@@ -56,7 +66,11 @@ impl Flash {
                 Mode::HandleInstr(Instr::READ(0, addr + 1))
             }
             Instr::READ(addr_bytes_left, addr) => {
-                Mode::HandleInstr(Instr::READ(addr_bytes_left - 1, addr << 8 | value as usize))
+                let new_addr = addr << 8 | value as usize;
+                if addr_bytes_left == 1 {
+                    eprintln!("[flash] READ session start addr=0x{new_addr:X}");
+                }
+                Mode::HandleInstr(Instr::READ(addr_bytes_left - 1, new_addr))
             }
 
             Instr::RDSR => {
@@ -71,7 +85,14 @@ impl Flash {
             Instr::PW(0, addr) => {
                 self.value = self.mem[addr];
                 self.mem[addr] = value;
-                Mode::HandleInstr(Instr::PW(0, addr + 1))
+                // Wrap within the current page instead of spilling into the
+                // next one (see `PAGE_SIZE` doc comment). Without this, a
+                // write session that (intentionally or not) transfers more
+                // than 256 bytes silently corrupts the *next* page instead
+                // of wrapping, which can clobber unrelated save data.
+                let next_addr =
+                    (addr & !(Self::PAGE_SIZE - 1)) | ((addr + 1) & (Self::PAGE_SIZE - 1));
+                Mode::HandleInstr(Instr::PW(0, next_addr))
             }
             Instr::PW(addr_bytes_left, addr) => {
                 Mode::HandleInstr(Instr::PW(addr_bytes_left - 1, addr << 8 | value as usize))

@@ -19,7 +19,12 @@ impl<T: EEPROMType> EEPROM<T> {
     pub fn new(save_file: File, size: usize) -> EEPROM<T> {
         EEPROM {
             eeprom_type: PhantomData,
-            mem: <dyn Backup>::mmap(save_file, 0, size),
+            // Real EEPROM/Flash chips are 0xFF-filled ("erased") from the
+            // factory; a fresh save must match that so its contents look
+            // identical to a fresh save from other emulators/flashcarts.
+            // GBATEK "erased memory is FFh-filled":
+            // <https://problemkaputt.de/gbatek.htm#gbacartbackupeeprom>
+            mem: <dyn Backup>::mmap(save_file, 0xFF, size),
 
             mode: Mode::ReadCommand,
             value: 0,
@@ -111,8 +116,8 @@ impl Command {
         match value {
             0x02 if T::is_small() => Command::WR(1, 0), // WRLO
             0x03 if T::is_small() => Command::RD(1, 0), // RDLO
-            0x02 => Command::WR(2, 0),
-            0x03 => Command::RD(2, 0),
+            0x02 => Command::WR(T::addr_bytes(), 0),
+            0x03 => Command::RD(T::addr_bytes(), 0),
             0x05 => Command::RDSR,
             0x06 => Command::WREN,
             0x0A if T::is_small() => Command::WR(1, 1), // WRHI
@@ -130,17 +135,34 @@ enum WriteProtect {
     _All = 3,
 }
 
+/// GBATEK "DS Cartridge Backup" distinguishes EEPROM chips not just by
+/// size but by address-bus width:
+/// - 0.5K: 8+1 bit address, split RDLO/RDHI/WRLO/WRHI commands.
+/// - 8K/64K: plain 16-bit (2-byte) address.
+/// - 128K: 24-bit (3-byte) address.
+///
+/// Using the wrong `addr_bytes` silently mis-addresses every read/write on
+/// 128K carts (e.g. *Pokémon Mystery Dungeon: Explorers of Sky*): the top
+/// address byte never gets sent, so all accesses alias into the first 64
+/// KiB and corrupt/lose the rest of the save.
+///
+/// GBATEK: <https://problemkaputt.de/gbatek.htm#dscartridgebackup>
 pub trait EEPROMType {
     fn is_small() -> bool;
+    fn addr_bytes() -> usize;
     fn debug_str() -> &'static str;
 }
 
 pub struct EEPROMSmall {}
 pub struct EEPROMNormal {}
+pub struct EEPROMLarge {}
 
 impl EEPROMType for EEPROMSmall {
     fn is_small() -> bool {
         true
+    }
+    fn addr_bytes() -> usize {
+        1
     }
     fn debug_str() -> &'static str {
         "Small"
@@ -150,7 +172,21 @@ impl EEPROMType for EEPROMNormal {
     fn is_small() -> bool {
         false
     }
+    fn addr_bytes() -> usize {
+        2
+    }
     fn debug_str() -> &'static str {
         "Normal"
+    }
+}
+impl EEPROMType for EEPROMLarge {
+    fn is_small() -> bool {
+        false
+    }
+    fn addr_bytes() -> usize {
+        3
+    }
+    fn debug_str() -> &'static str {
+        "Large"
     }
 }
