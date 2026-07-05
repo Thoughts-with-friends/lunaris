@@ -1,5 +1,15 @@
+//! KEY1 (Blowfish) cartridge encryption, keyed from the table at
+//! BIOS7 offset 30h..1077h and the ROM game code.
+//!
+//! GBATEK "DS Encryption by Gamecode/Idcode (KEY1)" (key_buf setup,
+//! apply_keycode, level 1-3 usage):
+//! <https://problemkaputt.de/gbatek.htm#dsencryptionbygamecodeidcodekey1>
+
 use std::convert::TryInto;
 
+/// Blowfish state for KEY1: 1048h-byte key buffer (P-array + S-boxes).
+///
+/// GBATEK: <https://problemkaputt.de/gbatek.htm#dsencryptionbygamecodeidcodekey1>
 #[derive(emu_utils::Savestate)]
 pub struct Key1Encryption {
     pub in_use: bool,

@@ -16,7 +16,14 @@
 //! ADPCM uses the IMA-ADPCM standard with Nintendo's fixed step and index
 //! tables (`ADPCM_TABLE` / `ADPCM_INDEX_TABLE`).
 //!
-//! GBATEK ref: "NDS Sound – Sound Channel Registers" and "NDS SOUNDCNT"
+//! GBATEK references:
+//! - Sound overview: <https://problemkaputt.de/gbatek.htm#dssound>
+//! - Channel registers (SOUNDxCNT/SAD/TMR/PNT/LEN):
+//!   <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
+//! - Control registers (SOUNDCNT/SOUNDBIAS):
+//!   <https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters>
+//! - Sound capture: <https://problemkaputt.de/gbatek.htm#dssoundcapture>
+//! - Timing / mixing notes: <https://problemkaputt.de/gbatek.htm#dssoundnotes>
 
 mod audio;
 mod registers;
@@ -61,10 +68,14 @@ macro_rules! create_channels {
 
 impl SPU {
     /// IMA-ADPCM index adjustment table (4-bit nibble high-3 bits → index delta).
-    /// GBATEK: "NDS Sound – ADPCM Decoding".
+    ///
+    /// GBATEK "DS Sound Notes – ADPCM decoding":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundnotes>
     pub const ADPCM_INDEX_TABLE: [i32; 8] = [-1, -1, -1, -1, 2, 4, 6, 8];
     /// IMA-ADPCM step-size table (89 entries, index 0–88).
-    /// GBATEK: "NDS Sound – ADPCM Step Table".
+    ///
+    /// GBATEK "DS Sound Notes – AdpcmTable":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundnotes>
     pub const ADPCM_TABLE: [u16; 89] = [
         0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x0010, 0x0011, 0x0013,
         0x0015, 0x0017, 0x0019, 0x001C, 0x001F, 0x0022, 0x0025, 0x0029, 0x002D, 0x0032, 0x0037,
@@ -125,6 +136,14 @@ impl SPU {
         (mixer, ch1, ch3)
     }
 
+    /// Mixes all 16 channels into one stereo output sample.
+    ///
+    /// Applies per-channel volume/pan, the SOUNDCNT left/right output
+    /// selector (mixer / ch1 / ch3 / ch1+ch3), and master volume, then
+    /// pushes the sample to the host audio ring buffer.
+    ///
+    /// GBATEK "SOUNDCNT – Left/Right Output Source, Master Volume":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters>
     pub fn generate_sample(&mut self) {
         let (mixer, ch1, ch3) = self.generate_mixer();
         let left_sample = match self.cnt.left_output {
@@ -241,6 +260,13 @@ impl IORegister for SPU {
 }
 
 impl HW {
+    /// Scheduler handler for [`Event::GenerateAudioSample`]; re-schedules
+    /// itself every `clocks_per_sample` master-clock cycles.
+    ///
+    /// Hardware mixes at 32.768 kHz (one sample per 1024 cycles of the
+    /// 33.554432 MHz sound clock); this implementation matches the host
+    /// device rate instead.  GBATEK "DS Sound Notes – sample rate":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundnotes>
     pub fn generate_audio_sample(&mut self, _event: Event) {
         self.scheduler.schedule(
             Event::GenerateAudioSample,
@@ -250,6 +276,12 @@ impl HW {
         self.spu.generate_sample();
     }
 
+    /// Scheduler handler for [`Event::StepAudioChannel`]: fetches the next
+    /// PCM8 / PCM16 / ADPCM sample (or advances PSG/noise state) for one
+    /// channel via ARM7 bus reads.
+    ///
+    /// GBATEK "DS Sound Channels 0..15" (formats, ADPCM header word):
+    /// <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
     pub fn step_audio_channel(&mut self, event: Event) {
         let channel_spec = match event {
             Event::StepAudioChannel(channel_spec) => channel_spec,
@@ -385,6 +417,14 @@ impl HW {
     }
 }
 
+/// One of the 16 sound channels (registers SOUNDxCNT / SOUNDxSAD /
+/// SOUNDxTMR / SOUNDxPNT / SOUNDxLEN at 40004x0h).
+///
+/// The channel timer counts up at 2× the master clock from `timer_val` to
+/// 10000h, i.e. one sample every `(10000h - timer_val) * 2` cycles.
+///
+/// GBATEK "DS Sound Channels 0..15":
+/// <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
 #[derive(emu_utils::Savestate)]
 #[load(in_place_only)]
 pub struct Channel<T: ChannelType> {
@@ -526,6 +566,11 @@ impl<T: ChannelType> Channel<T> {
         (return_addr, reset)
     }
 
+    /// Handles reaching the end of sample data according to the repeat mode
+    /// (manual / loop-to-PNT / one-shot).
+    ///
+    /// GBATEK "SOUNDxCNT Bit 27-28 Repeat Mode":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
     fn handle_end(&mut self) -> bool {
         // TODO: Verify out timing of busy bit for other modes
         let (reset, new_busy) = match self.cnt.repeat_mode {
@@ -578,6 +623,12 @@ impl<T: ChannelType> Channel<T> {
         (return_addr, reset)
     }
 
+    /// Decodes one 4-bit IMA-ADPCM nibble into the running sample value,
+    /// following the reference decode algorithm (diff accumulation with
+    /// saturation, index clamped to 0..88).
+    ///
+    /// GBATEK "DS Sound Notes – ADPCM pseudo-code":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundnotes>
     pub fn set_adpcm_data(&mut self, value: u8) {
         let data = if self.adpcm_low_nibble { value & 0xF } else { value >> 4 & 0xF };
         self.adpcm_low_nibble = !self.adpcm_low_nibble;
@@ -639,6 +690,13 @@ impl<T: ChannelType> Channel<T> {
     }
 }
 
+/// Sound capture unit 0/1 (SNDCAPxCNT 4000508h, SNDCAPxDAD/LEN 4000510h+).
+///
+/// Captures the mixer (or a channel) output back into ARM7-visible memory;
+/// capture 0 pairs with channel 1, capture 1 with channel 3.
+///
+/// GBATEK "DS Sound Capture":
+/// <https://problemkaputt.de/gbatek.htm#dssoundcapture>
 #[derive(emu_utils::Savestate)]
 struct Capture {
     // Registers

@@ -3,6 +3,10 @@
 //! Each CPU has a [`Controller`] with four [`Channel`]s.  Channels are
 //! indexed in the `by_type` table by their [`Occasion`] (start trigger) so
 //! that hardware events can quickly locate channels that should fire.
+//!
+//! GBATEK "DS DMA Transfers" (register layout, start timings, count limits):
+//! <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
+//! Base GBA behaviour: <https://problemkaputt.de/gbatek.htm#gbadmatransfers>
 
 use super::{
     HW,
@@ -108,7 +112,9 @@ impl HW {
     ///
     /// Dispatches to [`run_dma`](HW::run_dma) with the correct CPU memory
     /// accessors and transfer width (16-bit or 32-bit).
-    /// GBATEK: "NDS DMA Transfers – DMACNT Bit 10 (Transfer Type)".
+    ///
+    /// GBATEK "DMACNT – Transfer Type bit":
+    /// <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
     pub fn on_dma(&mut self, event: Event) {
         let (is_nds9, num) = match event {
             Event::DMA(is_nds9, num) => (is_nds9, num),
@@ -363,7 +369,8 @@ impl IORegister for Channel {
 /// ARM7 DMACNT_H bits [29:28] (2-bit, mapped to different subset):
 /// 0=Immediately, 1=V-Blank (TODO), 2=DS Card, 3=GBA/Wireless (TODO).
 ///
-/// GBATEK ref: "NDS DMA Transfers – DMA Start Timing"
+/// GBATEK "DS DMA Transfers – Start Timing":
+/// <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Occasion {
@@ -459,7 +466,8 @@ impl Occasion {
 /// - Bit  [30]:    IRQ on completion.
 /// - Bit  [31]:    Enable.
 ///
-/// GBATEK ref: "NDS DMA Transfers – DMA Control Register"
+/// GBATEK "DS DMA Transfers – 40000BAh DMA0CNT_H etc.":
+/// <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
 #[derive(emu_utils::Savestate)]
 pub struct Control {
     count: u32,

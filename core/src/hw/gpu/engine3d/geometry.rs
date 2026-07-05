@@ -1,3 +1,13 @@
+//! Geometry engine: GXFIFO command processing, matrix stacks, vertex
+//! submission, lighting, and clipping.
+//!
+//! GBATEK references:
+//! - Command list & FIFO: <https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands>
+//! - Matrix load/multiply commands: <https://problemkaputt.de/gbatek.htm#ds3dmatrixloadmultiply>
+//! - Matrix stack (MTX_PUSH/POP/STORE): <https://problemkaputt.de/gbatek.htm#ds3dmatrixstack>
+//! - Polygon definition by vertices: <https://problemkaputt.de/gbatek.htm#ds3dpolygondefinitionsbyvertices>
+//! - Polygon attributes & lights: <https://problemkaputt.de/gbatek.htm#ds3dpolygonattributes>
+
 use super::{
     Engine3D, InterruptRequest,
     math::{FixedPoint, Matrix, Vec4},
@@ -5,6 +15,11 @@ use super::{
 };
 
 impl Engine3D {
+    /// True when the FIFO has room for a DMA-triggered refill (less than
+    /// half full, i.e. fewer than 128 entries).
+    ///
+    /// GBATEK "DMA start mode 7: Geometry Command FIFO":
+    /// <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
     pub fn should_run_fifo(&self) -> bool {
         !self.polygons_submitted && self.gxfifo.len() < Engine3D::FIFO_LEN / 2
     }
@@ -20,6 +35,15 @@ impl Engine3D {
         self.exec_commands(interrupts);
     }
 
+    /// Drains and executes buffered GXFIFO commands.
+    ///
+    /// Execution pauses once SwapBuffers is issued (`polygons_submitted`);
+    /// on hardware the geometry engine halts until the next V-Blank swap.
+    /// A full FIFO (256 entries) stalls the bus, mirroring the hardware
+    /// behaviour where further writes block the CPU.
+    ///
+    /// GBATEK "GXFIFO overflow / SwapBuffers halt":
+    /// <https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands>
     pub fn exec_commands(&mut self, interrupts: &mut InterruptRequest) {
         if !self.polygons_submitted {
             while let Some(entry) = self.gxfifo.pop_front() {
@@ -254,6 +278,12 @@ impl Engine3D {
         self.params.clear();
     }
 
+    /// Handles a 32-bit write to GXFIFO (4000400h): unpacks "packed"
+    /// command words (up to 4 command bytes followed by their parameter
+    /// lists) and enqueues each command.
+    ///
+    /// GBATEK "GXFIFO – Geometry Command FIFO, packed command format":
+    /// <https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands>
     pub fn write_geometry_fifo(&mut self, interrupts: &mut InterruptRequest, value: u32) {
         if self.packed_commands == 0 {
             if value == 0 {
@@ -294,6 +324,11 @@ impl Engine3D {
         }
     }
 
+    /// Handles a write to one of the per-command mirror ports
+    /// (4000440h..40005FFh); the port address encodes the command ID.
+    ///
+    /// GBATEK "Geometry Commands can be sent by writing to port
+    /// 4000440h+4*ID": <https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands>
     pub fn write_geometry_command(
         &mut self,
         interrupts: &mut InterruptRequest,

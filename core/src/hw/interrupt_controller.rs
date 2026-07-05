@@ -6,7 +6,8 @@
 //!
 //! Bits 0-13 mirror the GBA layout; bits 16-21 are NDS-specific.
 //!
-//! GBATEK ref: "NDS Interrupts" § "NDS7/NDS9 IE/IF/IME Registers"
+//! GBATEK "DS Interrupts" (IME/IE/IF, full bit table):
+//! <https://problemkaputt.de/gbatek.htm#dsinterrupts>
 
 use super::{Scheduler, mem::IORegister};
 use bitflags::*;
@@ -31,7 +32,8 @@ impl InterruptController {
     ///
     /// `ignore_ime`: ARM7 checks IME normally; ARM9 HALT state ignores IME
     /// because the CP15 halt is cleared by any enabled IRQ regardless of the
-    /// global enable bit.  GBATEK: "NDS ARM9 Halt" note.
+    /// global enable bit.  GBATEK "DS Interrupts – halt notes":
+    /// <https://problemkaputt.de/gbatek.htm#dsinterrupts>
     pub fn interrupts_requested(&self, ignore_ime: bool) -> bool {
         (ignore_ime || self.master_enable.bits() != 0)
             && (self.request.bits() & self.enable.bits()) != 0
@@ -43,7 +45,10 @@ bitflags! {
     ///
     /// Bits 0-13: shared with GBA layout.
     /// Bits 14-15: unused on NDS (reserved).
-    /// Bits 16-21: NDS-specific additions. GBATEK: "NDS IE/IF Bits 0-21".
+    /// Bits 16-21: NDS-specific additions.
+    ///
+    /// GBATEK "DS Interrupts – interrupt sources table":
+    /// <https://problemkaputt.de/gbatek.htm#dsinterrupts>
     pub struct InterruptEnable: u32 {
         const VBLANK = 1 << 0;           // LCD V-Blank
         const HBLANK = 1 << 1;           // LCD H-Blank
@@ -84,7 +89,9 @@ bitflags! {
     ///
     /// Writing a `1` to a bit **clears** it (acknowledge).  This is opposite to
     /// typical registers; hardware fires an IRQ when `(IE & IF) != 0`.
-    /// GBATEK: "NDS IE/IF – writing 1 to IF bits acknowledges (clears) them".
+    ///
+    /// GBATEK "DS Interrupts – IF acknowledge behaviour":
+    /// <https://problemkaputt.de/gbatek.htm#dsinterrupts>
     pub struct InterruptRequest: u32 {
         const VBLANK = 1 << 0;
         const HBLANK = 1 << 1;
@@ -182,7 +189,8 @@ impl IORegister for InterruptRequest {
     /// Acknowledges (clears) interrupt bits.
     ///
     /// Writing `1` to a bit clears that pending interrupt.
-    /// GBATEK: "Writing 1 to IF bits acknowledges (clears) the interrupt."
+    ///
+    /// GBATEK: <https://problemkaputt.de/gbatek.htm#dsinterrupts>
     fn write(&mut self, _scheduler: &mut Scheduler, byte: usize, value: u8) {
         match byte {
             0 => self.bits &= !(value as u32),

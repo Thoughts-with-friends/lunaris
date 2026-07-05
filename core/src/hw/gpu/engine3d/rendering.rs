@@ -1,3 +1,12 @@
+//! Software rasterizer emulating the NDS 3D rendering engine.
+//!
+//! GBATEK references:
+//! - Rendering engine overview: <https://problemkaputt.de/gbatek.htm#ds3doverview>
+//! - Texture blending (modulation/decal/toon):
+//!   <https://problemkaputt.de/gbatek.htm#ds3dtextureblending>
+//! - Texture formats: <https://problemkaputt.de/gbatek.htm#ds3dtextureformats>
+//! - Final 2D output of 3D layer: <https://problemkaputt.de/gbatek.htm#ds3dfinal2doutput>
+
 use super::{
     super::VRAM,
     Color, Engine3D, GPU, TextureFormat,
@@ -16,6 +25,16 @@ impl Engine3D {
         }
     }
 
+    /// Rasterizes all submitted polygons into the internal frame buffer.
+    ///
+    /// Runs once per frame after SwapBuffers; on hardware the rendering
+    /// engine draws scanline-by-scanline starting 48 lines ahead of the
+    /// display.  Clears to CLEAR_COLOR/CLEAR_DEPTH, then scan-converts each
+    /// polygon with perspective-correct texturing, depth test, and toon /
+    /// modulation blending.
+    ///
+    /// GBATEK "DS 3D Overview – Rendering Engine":
+    /// <https://problemkaputt.de/gbatek.htm#ds3doverview>
     pub fn render(&mut self, vram: &VRAM) {
         if !self.polygons_submitted {
             return;

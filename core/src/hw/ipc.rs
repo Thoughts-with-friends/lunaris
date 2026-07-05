@@ -12,7 +12,8 @@
 //!    from the same queue via IPCFIFORECV.  Fire IRQs on empty/not-empty
 //!    transitions when the corresponding enable bits are set.
 //!
-//! GBATEK ref: "NDS IPC – Inter Process Communication"
+//! GBATEK "DS Inter Process Communication (IPC)":
+//! <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
 
 use std::collections::VecDeque;
 
@@ -24,7 +25,9 @@ use super::interrupt_controller::InterruptRequest;
 /// (`output7` / `output9`) that the *other* CPU reads from.
 /// `prev_value*` retains the last word dequeued so a read from an empty
 /// FIFO returns a defined value (last received word).
-/// GBATEK: "IPCFIFORECV returns last value if FIFO is empty".
+///
+/// GBATEK "4100000h - IPCFIFORECV" (empty-FIFO read behaviour):
+/// <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
 #[derive(emu_utils::Savestate)]
 pub struct IPC {
     fifocnt7: FIFOCNT,
@@ -46,7 +49,9 @@ pub struct IPC {
 }
 
 impl IPC {
-    /// Maximum words per FIFO queue.  GBATEK: "16 words (64 bytes) each direction".
+    /// Maximum words per FIFO queue (16 words / 64 bytes each direction).
+    ///
+    /// GBATEK: <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
     const FIFO_LEN: usize = 16;
 
     pub fn new() -> Self {
@@ -131,8 +136,8 @@ impl IPC {
     ///
     /// - Returns the cached `prev_value` when FIFO is empty (hardware behaviour:
     ///   "last received word").  Sets `FIFOCNT.error` on underflow instead of
-    ///   returning garbage.  GBATEK: "Reading from empty FIFO does not advance
-    ///   the pointer; the error bit in IPCFIFOCNT is set."
+    ///   returning garbage.  GBATEK "IPCFIFOCNT Bit 14 Error flag":
+    ///   <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
     /// - Fires `IPC_SEND_FIFO_EMPTY` on the sender when the FIFO drains and the
     ///   sender's empty-IRQ enable is set.
     fn recv(
@@ -164,7 +169,8 @@ impl IPC {
     /// Sets `FIFOCNT.error` on overflow (FIFO already has 16 words).
     /// Fires `IPC_RECV_FIFO_NOT_EMPTY` on the receiver when the FIFO goes from
     /// empty to non-empty and the receiver's not-empty IRQ enable is set.
-    /// GBATEK: "Writing to a full FIFO sets the error bit in IPCFIFOCNT."
+    /// GBATEK "IPCFIFOSEND / error flag on full FIFO":
+    /// <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
     fn send(
         send_cnt: &mut FIFOCNT,
         recv_cnt: &FIFOCNT,
@@ -197,7 +203,8 @@ impl IPC {
 /// - Bit 13 (byte 1, bit 5): Send IRQ to other CPU (pulse; triggers IPC_SYNC on other side).
 /// - Bit 14 (byte 1, bit 6): Enable IPC_SYNC IRQ on *this* CPU.
 ///
-/// GBATEK ref: "NDS IPCSYNC Register"
+/// GBATEK "4000180h - IPCSYNC":
+/// <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
 #[derive(emu_utils::Savestate)]
 struct SYNC {
     /// Bits [3:0] mirrored from the other CPU's `output`.
@@ -258,7 +265,8 @@ impl SYNC {
 /// - Bit 6: Error flag (read-only; write 1 to acknowledge/clear).
 /// - Bit 7: `enable` – enable FIFO mode (both FIFOs at once).
 ///
-/// GBATEK ref: "NDS IPCFIFOCNT Register"
+/// GBATEK "4000184h - IPCFIFOCNT":
+/// <https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc>
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 struct FIFOCNT {

@@ -47,7 +47,11 @@ impl NDS {
 }
 
 impl NDS {
-    /// Master clock frequency in Hz (33.513982 MHz).
+    /// Master clock frequency in Hz (33.513982 MHz = ARM7 clock; the ARM9
+    /// runs at exactly 2× this rate).
+    ///
+    /// GBATEK "DS Technical Data – Processors":
+    /// <https://problemkaputt.de/gbatek.htm#dstechnicaldata>
     pub const CLOCK_RATE: usize = 33513982;
 
     pub fn new(

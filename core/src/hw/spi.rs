@@ -1,3 +1,14 @@
+//! ARM7 Serial Peripheral Interface bus (SPICNT / SPIDATA, 40001C0h).
+//!
+//! The SPI bus connects the ARM7 to three devices selected by SPICNT bits
+//! 8-9: power-management chip, firmware serial flash, and the touch-screen
+//! controller (TSC).
+//!
+//! GBATEK references:
+//! - SPI bus / SPICNT / SPIDATA: <https://problemkaputt.de/gbatek.htm#dsserialperipheralinterfacebusspi>
+//! - Firmware flash commands: <https://problemkaputt.de/gbatek.htm#dsfirmwareserialflashmemory>
+//! - Firmware user settings (touch calibration): <https://problemkaputt.de/gbatek.htm#dsfirmwareusersettings>
+
 mod tsc;
 
 use memmap::{MmapMut, MmapOptions};
@@ -66,6 +77,12 @@ impl SPI {
     pub fn release_screen(&mut self) {
         self.tsc.release_screen()
     }
+    /// Memory-maps the firmware image and patches the user-settings area
+    /// (offset 3FE00h) with touch-screen calibration matching the emulated
+    /// screen corners, then fixes up the settings CRC16.
+    ///
+    /// GBATEK "DS Firmware User Settings" (calibration bytes 58h-63h,
+    /// CRC at 72h): <https://problemkaputt.de/gbatek.htm#dsfirmwareusersettings>
     pub fn init_firmware(firmware_file: File) -> MmapMut {
         let mut mmap = unsafe { MmapOptions::new().map_mut(&firmware_file).unwrap() };
         let firmware = unsafe { std::slice::from_raw_parts_mut(mmap.as_mut_ptr(), mmap.len()) };
@@ -108,6 +125,10 @@ impl SPI {
     }
 }
 
+/// 40001C0h - NDS7 - SPICNT: baud rate, device select, transfer size,
+/// chip-select hold, IRQ, and bus enable.
+///
+/// GBATEK: <https://problemkaputt.de/gbatek.htm#dsserialperipheralinterfacebusspi>
 #[derive(emu_utils::Savestate)]
 pub struct CNT {
     baudrate: u8,

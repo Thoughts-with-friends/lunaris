@@ -1,5 +1,13 @@
+//! Parsed NDS cartridge header (first 200h bytes of the ROM).
+//!
+//! GBATEK "DS Cartridge Header" (full field table with offsets):
+//! <https://problemkaputt.de/gbatek.htm#dscartridgeheader>
+
 use std::convert::TryInto;
 
+/// Cartridge header fields, in ROM order.
+///
+/// GBATEK: <https://problemkaputt.de/gbatek.htm#dscartridgeheader>
 #[derive(emu_utils::Savestate)]
 pub struct Header {
     pub game_title: [u8; 12], // ASCII

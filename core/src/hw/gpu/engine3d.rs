@@ -1,3 +1,14 @@
+//! 3D engine: geometry engine (command FIFO, matrices, lighting, textures)
+//! plus a software rendering engine producing a 256×192 frame buffer.
+//!
+//! GBATEK references:
+//! - 3D overview (geometry + rendering engine split):
+//!   <https://problemkaputt.de/gbatek.htm#ds3doverview>
+//! - 3D I/O map: <https://problemkaputt.de/gbatek.htm#ds3diomap>
+//! - Geometry commands / GXFIFO: <https://problemkaputt.de/gbatek.htm#ds3dgeometrycommands>
+//! - GXSTAT status register: <https://problemkaputt.de/gbatek.htm#ds3dstatus>
+//! - Matrix stacks: <https://problemkaputt.de/gbatek.htm#ds3dmatrixstack>
+
 use std::collections::VecDeque;
 
 use super::{GPU, InterruptRequest, Scheduler};
@@ -145,6 +156,11 @@ impl Engine3D {
         }
     }
 
+    /// Raises the geometry-command-FIFO IRQ according to GXSTAT bits 30-31
+    /// (never / less than half full / empty).
+    ///
+    /// GBATEK "GXSTAT Bit30-31 Command FIFO IRQ":
+    /// <https://problemkaputt.de/gbatek.htm#ds3dstatus>
     pub fn check_interrupts(&self, interrupts: &mut InterruptRequest) {
         if match self.gxstat.command_fifo_irq {
             CommandFifoIRQ::Never => false,
@@ -157,6 +173,11 @@ impl Engine3D {
 }
 
 impl Engine3D {
+    /// Reads a byte from a 3D-engine I/O register (GXSTAT, RAM_COUNT,
+    /// CLIPMTX_RESULT).
+    ///
+    /// GBATEK "DS 3D I/O Map": <https://problemkaputt.de/gbatek.htm#ds3diomap>
+    /// and "DS 3D Status": <https://problemkaputt.de/gbatek.htm#ds3dstatus>
     pub fn read_register(&self, addr: u32) -> u8 {
         assert_eq!(addr >> 12, 0x04000);
         match addr & 0xFFF {
@@ -171,6 +192,13 @@ impl Engine3D {
         }
     }
 
+    /// Writes a byte to a 3D-engine I/O register (CLEAR_COLOR, CLEAR_DEPTH,
+    /// TOON_TABLE, GXSTAT).
+    ///
+    /// GBATEK references:
+    /// - Register map: <https://problemkaputt.de/gbatek.htm#ds3diomap>
+    /// - CLEAR_COLOR / CLEAR_DEPTH / TOON_TABLE:
+    ///   <https://problemkaputt.de/gbatek.htm#ds3dtoonedgefogalphablendingantialiasing>
     pub fn write_register(
         &mut self,
         interrupts: &mut InterruptRequest,

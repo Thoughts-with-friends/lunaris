@@ -1,3 +1,14 @@
+//! Keypad input (KEYINPUT / KEYCNT / EXTKEYIN).
+//!
+//! GBA-style buttons are readable by both CPUs via KEYINPUT (4000130h) and
+//! can raise a keypad IRQ via KEYCNT (4000132h).  The NDS-only X/Y buttons,
+//! touch-pen state, and hinge switch appear in the ARM7-only EXTKEYIN
+//! register (4000136h).  All bits are active-low (0 = pressed).
+//!
+//! GBATEK references:
+//! - DS Keypad (EXTKEYIN): <https://problemkaputt.de/gbatek.htm#dskeypad>
+//! - GBA keypad base (KEYINPUT/KEYCNT): <https://problemkaputt.de/gbatek.htm#gbakeypadinput>
+
 use super::{Scheduler, mem::IORegister};
 use bitflags::*;
 
@@ -54,6 +65,11 @@ impl Keypad {
         self.extkeyin.insert(EXTKEYIN::PEN_DOWN);
     }
 
+    /// Evaluates the keypad IRQ condition from KEYCNT: logical OR mode
+    /// (any selected key down) or logical AND mode (all selected keys down).
+    ///
+    /// GBATEK "4000132h - KEYCNT - Key Interrupt Control":
+    /// <https://problemkaputt.de/gbatek.htm#gbakeypadinput>
     pub fn interrupt_requested(&self) -> bool {
         if self.keycnt.contains(KEYCNT::IRQ_ENABLE) {
             let irq_keys = self.keycnt - KEYCNT::IRQ_ENABLE - KEYCNT::IRQ_COND_AND;
@@ -104,6 +120,10 @@ bitflags! {
 crate::impl_savestate_bitflags!(KEYCNT);
 
 bitflags! {
+    /// 4000136h - NDS7 - EXTKEYIN: X/Y buttons, debug button, pen-down,
+    /// and hinge-closed status (active-low).
+    ///
+    /// GBATEK "DS Keypad": <https://problemkaputt.de/gbatek.htm#dskeypad>
     pub struct EXTKEYIN: u8 {
         const X = 1 << 0;
         const Y = 1 << 1;

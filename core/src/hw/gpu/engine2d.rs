@@ -1,3 +1,14 @@
+//! 2D graphics engine (Engine A / Engine B).
+//!
+//! Each engine is essentially a GBA PPU with NDS extensions (3D layer on
+//! BG0, extended palettes, big bitmap BGs, extended OBJ modes).
+//!
+//! GBATEK references:
+//! - GBA LCD base behaviour: <https://problemkaputt.de/gbatek.htm#gbalcdvideocontroller>
+//! - DS BG modes / DISPCNT: <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
+//! - DS OBJs: <https://problemkaputt.de/gbatek.htm#dsvideoobjs>
+//! - DS extended palettes: <https://problemkaputt.de/gbatek.htm#dsvideoextendedpalettes>
+
 mod registers;
 
 pub use registers::{BGMode, DisplayMode};
@@ -111,6 +122,14 @@ impl<E: EngineType> Engine2D<E> {
         [(64, 64), (64, 32), (32, 64)],
     ];
 
+    /// Renders one scanline according to the DISPCNT display mode.
+    ///
+    /// Mode 0 = screen off (white), Mode 1 = normal BG/OBJ rendering,
+    /// Mode 2 = VRAM display (LCDC bank bitmap), Mode 3 = main-memory FIFO
+    /// display (unimplemented).
+    ///
+    /// GBATEK "DISPCNT Bit 16-17 Display Mode":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
     pub fn render_line(&mut self, engine3d: &Engine3D, vram: &VRAM, vcount: u16) {
         match self.dispcnt.display_mode {
             DisplayMode::Mode0 => {
@@ -134,6 +153,11 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Renders one scanline in normal graphics mode (display mode 1).
+    ///
+    /// Dispatches BG0-BG3 to text / affine / extended renderers according to
+    /// the BG mode table in GBATEK "DS Video BG Modes / Control":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
     fn render_normal_line(&mut self, engine3d: &Engine3D, vram: &VRAM, vcount: u16) {
         let affine_render_fn = Engine2D::<E>::render_8bit_entry;
         if self.dispcnt.contains(DISPCNTFlags::DISPLAY_WINDOW0) {
@@ -229,6 +253,15 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Composites the rendered BG/OBJ line buffers into final pixels.
+    ///
+    /// Applies priority ordering, window masking, and color special effects
+    /// (alpha blending / brightness) per dot.
+    ///
+    /// GBATEK references:
+    /// - Priority / layer ordering: <https://problemkaputt.de/gbatek.htm#lcdiobgcontrol>
+    /// - Windows: <https://problemkaputt.de/gbatek.htm#lcdiowindowfeature>
+    /// - BLDCNT/BLDALPHA/BLDY: <https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects>
     fn process_lines(&mut self, vcount: u16, start_line: usize, end_line: usize) {
         let mut bgs: Vec<(usize, u8)> = Vec::new();
         for bg_i in start_line..=end_line {
@@ -357,6 +390,11 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Computes the per-dot inside/outside mask for window 0 or 1.
+    ///
+    /// Implements the wrap-around semantics when X1 > X2 / Y1 > Y2 ("garbage
+    /// area" behaviour) from GBATEK "LCD I/O Window Feature":
+    /// <https://problemkaputt.de/gbatek.htm#lcdiowindowfeature>
     fn render_window(&mut self, vcount: u16, window_i: usize) {
         let y1 = self.winvs[window_i].coord1;
         let y2 = self.winvs[window_i].coord2;
@@ -383,6 +421,11 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Renders BG0, which on Engine A can be replaced by the 3D layer when
+    /// DISPCNT bit 3 ("BG0 2D/3D Selection") is set.
+    ///
+    /// GBATEK "DISPCNT Bit 3 - A - BG0 2D/3D Selection":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
     fn render_bg0(&mut self, engine3d: &Engine3D, vram: &VRAM, vcount: u16) {
         if E::is_a() && self.dispcnt.contains(DISPCNTFlags::IS_3D) {
             engine3d.copy_line(vcount, &mut self.bg_lines[0])
@@ -391,6 +434,16 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Renders all visible OBJs (sprites) for the current scanline.
+    ///
+    /// Parses the 128 OAM entries (8 bytes each; the 4th halfword holds the
+    /// interleaved affine parameters) and rasterizes regular, affine,
+    /// double-size, bitmap, and OBJ-window sprites.
+    ///
+    /// GBATEK references:
+    /// - OAM attributes: <https://problemkaputt.de/gbatek.htm#lcdobjoamattributes>
+    /// - DS OBJ extensions (bitmap OBJs, priority): <https://problemkaputt.de/gbatek.htm#dsvideoobjs>
+    /// - Affine parameters: <https://problemkaputt.de/gbatek.htm#lcdobjoamrotationscalingparameters>
     fn render_objs_line(&mut self, vram: &VRAM, vcount: u16) {
         let mut oam_parsed = [[0u16; 3]; 0x80];
         let mut affine_params = [[0u16; 4]; 0x20];
@@ -586,6 +639,13 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Renders one line of an NDS "extended" affine BG.
+    ///
+    /// The variant is chosen by BGCNT: 8bpp rot/scale with palette, 8bpp
+    /// direct-color bitmap, or 16-bit map entries.
+    ///
+    /// GBATEK "BG Mode Control – extended rot/scale BG types":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
     fn render_extended_line(&mut self, vram: &VRAM, bg_i: usize) {
         // TODO: Use Screen Base
         let bgcnt = self.bgcnts[bg_i];
@@ -613,6 +673,14 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Renders one line of a rotation/scaling (affine) BG.
+    ///
+    /// Walks the line using the PA/PB/PC/PD deltas from the latched
+    /// reference point (BGX/BGY internal registers), applying the wrap flag
+    /// and mosaic.
+    ///
+    /// GBATEK "LCD I/O BG Rotation/Scaling":
+    /// <https://problemkaputt.de/gbatek.htm#lcdiobgrotationscaling>
     fn render_affine_line<F>(&mut self, vram: &VRAM, bg_i: usize, render_fn: F)
     where
         F: Fn(
@@ -680,6 +748,16 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Renders one line of a regular tiled ("text") BG.
+    ///
+    /// Handles HOFS/VOFS scrolling, the 4 screen-size layouts (32×32 …
+    /// 64×64 tile maps split into 2 KiB screen blocks), 4/8 bpp tiles, and
+    /// mosaic.
+    ///
+    /// GBATEK references:
+    /// - Scrolling: <https://problemkaputt.de/gbatek.htm#lcdiobgscrolling>
+    /// - Map format: <https://problemkaputt.de/gbatek.htm#lcdvrambgscreendataformatbgmap>
+    /// - Tile data: <https://problemkaputt.de/gbatek.htm#lcdvramcharacterdata>
     fn render_text_line(&mut self, vram: &VRAM, vcount: u16, bg_i: usize) {
         let x_offset = self.hofs[bg_i].offset() as usize;
         let y_offset = self.vofs[bg_i].offset() as usize;
@@ -996,6 +1074,13 @@ impl<E: EngineType> Engine2D<E> {
         if bit_depth == 8 { (0, tile) } else { (palette_num, ((tile >> (4 * (tile_x % 2))) & 0xF)) }
     }
 
+    /// Copies BGX/BGY reference points into the internal latch registers.
+    ///
+    /// Hardware reloads the internal affine reference points at the end of
+    /// V-Blank (and whenever the register is written mid-frame).
+    ///
+    /// GBATEK "LCD I/O BG Rotation/Scaling – internal reference point
+    /// registers": <https://problemkaputt.de/gbatek.htm#lcdiobgrotationscaling>
     pub fn latch_affine(&mut self) {
         self.bgxs_latch = self.bgxs;
         self.bgys_latch = self.bgys;
@@ -1054,6 +1139,14 @@ impl OBJPixel {
 }
 
 impl<E: EngineType> Engine2D<E> {
+    /// Reads one byte from a 2D-engine I/O register.
+    ///
+    /// `addr` is the offset within the 4000000h (Engine A) or 4001000h
+    /// (Engine B) register block.
+    ///
+    /// Register map: GBATEK "DS I/O Maps":
+    /// <https://problemkaputt.de/gbatek.htm#dsiomaps> and
+    /// <https://problemkaputt.de/gbatek.htm#gbaiomap>
     pub fn read_register(&self, addr: u32) -> u8 {
         assert_eq!((addr >> 12) & !0x1, 0x04000);
         match addr & 0xFFF {
@@ -1147,6 +1240,14 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Writes one byte to a 2D-engine I/O register.
+    ///
+    /// Writing BG2X..BG3Y also re-latches the affine reference point, as on
+    /// hardware.
+    ///
+    /// Register map: GBATEK "DS I/O Maps":
+    /// <https://problemkaputt.de/gbatek.htm#dsiomaps> and
+    /// <https://problemkaputt.de/gbatek.htm#gbaiomap>
     pub fn write_register(&mut self, scheduler: &mut Scheduler, addr: u32, value: u8) {
         assert_eq!((addr >> 12) & !0x1, 0x04000);
         match addr & 0xFFF {
@@ -1261,6 +1362,11 @@ impl<E: EngineType> Engine2D<E> {
         }
     }
 
+    /// Reads a byte from standard palette RAM (BG palette at 000h-1FFh, OBJ
+    /// palette at 200h-3FFh, per engine).
+    ///
+    /// GBATEK "LCD Color Palettes":
+    /// <https://problemkaputt.de/gbatek.htm#lcdcolorpalettes>
     pub fn read_palette_ram(&self, addr: u32) -> u8 {
         let addr = addr as usize & (2 * GPU::PALETTE_SIZE - 1);
         let palettes =

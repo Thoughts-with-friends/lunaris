@@ -22,6 +22,14 @@
 //! ## Backup types (GBATEK: "NDS Cartridge Backup")
 //! Detected automatically from the ROM header game code via `game_db`.
 //! Supported: EEPROM (small/large), Flash, no-backup.
+//!
+//! GBATEK references:
+//! - Protocol / ROMCTRL / AUXSPICNT: <https://problemkaputt.de/gbatek.htm#dscartridgeprotocol>
+//! - I/O ports: <https://problemkaputt.de/gbatek.htm#dscartridgeioports>
+//! - Header: <https://problemkaputt.de/gbatek.htm#dscartridgeheader>
+//! - Secure area: <https://problemkaputt.de/gbatek.htm#dscartridgesecurearea>
+//! - KEY1 encryption: <https://problemkaputt.de/gbatek.htm#dsencryptionbygamecodeidcodekey1>
+//! - Backup chips: <https://problemkaputt.de/gbatek.htm#dscartridgebackup>
 
 mod backup;
 mod header;
@@ -102,6 +110,13 @@ impl Cartridge {
         }
     }
 
+    /// Re-encrypts the secure area (ROM 4000h..7FFFh) with KEY1 for ROM
+    /// dumps stored decrypted: writes back the `"encryObj"` marker, applies
+    /// level-3 Blowfish over the first 2 KiB, then level-2 over the first
+    /// 8 bytes.
+    ///
+    /// GBATEK "DS Cartridge Secure Area":
+    /// <https://problemkaputt.de/gbatek.htm#dscartridgesecurearea>
     pub fn encrypt_secure_area(&mut self) {
         let start = self.header.arm9_rom_offset as usize;
         if !Self::SECURE_AREA_RANGE.contains(&start) {
@@ -137,6 +152,13 @@ impl Cartridge {
         self.key1_encryption.in_use = false;
     }
 
+    /// Executes the 8-byte cartridge command latched in ROMCMD when ROMCTRL
+    /// bit 31 is set, and schedules the word-transfer events for the
+    /// requested block size (0 / 4 / 200h..4000h bytes).
+    ///
+    /// GBATEK "DS Cartridge Protocol – command list" (B7h data read, B8h
+    /// chip ID, KEY1 command set):
+    /// <https://problemkaputt.de/gbatek.htm#dscartridgeprotocol>
     pub fn run_command(&mut self, scheduler: &mut Scheduler, is_arm9: bool) {
         //self.romctrl.key1_gap1_len = 0x10;
         //self.romctrl.key1_gap2_len = 0x10;

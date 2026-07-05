@@ -3,6 +3,11 @@
 //! Memory is accessed through two separate page-table fast-paths
 //! (`arm7_page_table` / `arm9_page_table`) that map 4 KiB pages to raw
 //! pointers so the hot read/write path avoids repeated address decoding.
+//!
+//! GBATEK references:
+//! - Memory maps (ARM9/ARM7): <https://problemkaputt.de/gbatek.htm#dsmemorymaps>
+//! - I/O maps: <https://problemkaputt.de/gbatek.htm#dsiomaps>
+//! - Technical data (clock rates, RAM sizes): <https://problemkaputt.de/gbatek.htm#dstechnicaldata>
 
 mod cartridge;
 mod dma;
@@ -353,7 +358,14 @@ impl HW {
     /// Populates main memory with the ROM header and boot-info words needed for
     /// direct-boot (skipping the firmware splash screen).
     ///
-    /// Mirrors the setup performed by the NDS BIOS during a normal cold boot.
+    /// Mirrors the setup performed by the NDS BIOS during a normal cold boot:
+    /// the cartridge header is copied to 27FFE00h, and the chip ID / secure
+    /// area CRC words are placed at 27FF800h/27FFC00h.
+    ///
+    /// GBATEK "DS Cartridge Header – header is loaded to 27FFE00h" and RAM
+    /// boot values: <https://problemkaputt.de/gbatek.htm#dscartridgeheader>
+    /// (see also "DS Memory Maps – Main Memory boot/debug area":
+    /// <https://problemkaputt.de/gbatek.htm#dsmemorymaps>)
     pub fn init_mem(mut self) -> Self {
         let addr = 0x027F_FE00 & (HW::MAIN_MEM_SIZE - 1);
         self.main_mem[addr..addr + 0x170].copy_from_slice(&self.cartridge.rom()[..0x170]);

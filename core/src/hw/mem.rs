@@ -1,5 +1,11 @@
 //! NDS memory subsystem – read/write dispatch and page-table management.
 //!
+//! GBATEK references:
+//! - Memory maps: <https://problemkaputt.de/gbatek.htm#dsmemorymaps>
+//! - I/O maps: <https://problemkaputt.de/gbatek.htm#dsiomaps>
+//! - WRAM banking (WRAMCNT): <https://problemkaputt.de/gbatek.htm#dsmemorycontrolwram>
+//! - Memory timings: <https://problemkaputt.de/gbatek.htm#dsmemorytimings>
+//!
 //! ## ARM9 memory map (GBATEK: "NDS Memory Map – ARM9")
 //! | Address range      | Region                    | Size  |
 //! |--------------------|---------------------------|-------|

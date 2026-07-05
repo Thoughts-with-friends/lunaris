@@ -1,3 +1,13 @@
+//! VRAM banks A-I and their dynamic mapping (VRAMCNT).
+//!
+//! The nine banks (A-D: 128 KiB, E: 64 KiB, F/G/I: 16 KiB, H: 32 KiB) can be
+//! mapped as LCDC "plain" VRAM, engine A/B BG/OBJ memory, extended
+//! palettes, 3D textures / texture palettes, or ARM7 work RAM, selected by
+//! each bank's MST+OFS fields in VRAMCNT.
+//!
+//! GBATEK "DS Memory Control - VRAM" (VRAMCNT_A..I, VRAMSTAT, all mapping
+//! tables): <https://problemkaputt.de/gbatek.htm#dsmemorycontrolvram>
+
 use num_traits as num;
 
 use super::{
@@ -113,10 +123,20 @@ impl VRAM {
         }
     }
 
+    /// Reads VRAMCNT_A..I (4000240h..4000249h, NDS9, write-only on hardware
+    /// but readable here for debugging).
+    ///
+    /// GBATEK: <https://problemkaputt.de/gbatek.htm#dsmemorycontrolvram>
     pub fn read_vram_cnt(&self, index: usize) -> u8 {
         self.cnts[index].read()
     }
 
+    /// Writes VRAMCNT for bank `index`: unmaps the bank from its previous
+    /// function and remaps it according to the new MST/OFS combination.
+    ///
+    /// The `(bank, mst)` match arms below mirror the per-bank mapping
+    /// tables in GBATEK "DS Memory Control - VRAM":
+    /// <https://problemkaputt.de/gbatek.htm#dsmemorycontrolvram>
     pub fn write_vram_cnt(&mut self, index: usize, value: u8) {
         let bank = Bank::from_index(index);
         let new_cnt = VRAMCNT::new(index, value);

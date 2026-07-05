@@ -6,6 +6,13 @@
 //! Both cores share the same execution loop; instruction decoding is done via
 //! pre-built lookup tables ([`ArmLut`] / [`ThumbLut`]) stored in `OnceLock`
 //! statics so they are generated only once per process.
+//!
+//! GBATEK references:
+//! - CPU overview / versions: <https://problemkaputt.de/gbatek.htm#armcpuoverview>
+//! - Register set & modes: <https://problemkaputt.de/gbatek.htm#armcpuregisterset>
+//! - Exceptions (IRQ vector, mode switch): <https://problemkaputt.de/gbatek.htm#armcpuexceptions>
+//! - Instruction cycle times: <https://problemkaputt.de/gbatek.htm#armcpuinstructioncycletimes>
+//! - Clock rates (ARM9 66 MHz / ARM7 33 MHz): <https://problemkaputt.de/gbatek.htm#dstechnicaldata>
 
 #[macro_use]
 mod instructions;
@@ -160,7 +167,11 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     }
 
     /// Handles a pending IRQ: unhalt the CPU, switch to IRQ mode, push LR,
-    /// disable further IRQs (I-bit), and jump to the IRQ vector.
+    /// disable further IRQs (I-bit), and jump to the IRQ vector (base+18h;
+    /// the ARM9 vector base is relocatable via CP15 to FFFF0000h).
+    ///
+    /// GBATEK "ARM CPU Exceptions":
+    /// <https://problemkaputt.de/gbatek.htm#armcpuexceptions>
     pub fn handle_irq(&mut self, hw: &mut HW) {
         let (interrupts_requested, interrupt_base) = if IS_ARM9 {
             (hw.arm9_interrupts_requested(), hw.cp15.interrupt_base())
@@ -196,6 +207,9 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     }
 
     /// Performs a barrel-shifter operation and optionally updates CPSR flags.
+    ///
+    /// GBATEK "ARM Opcodes: Data Processing – barrel shifter":
+    /// <https://problemkaputt.de/gbatek.htm#armopcodesdataprocessingalu>
     ///
     /// `shift_type`: 0=LSL, 1=LSR, 2=ASR, 3=ROR/RRX.
     /// `immediate`: when `true` the shift amount came from the instruction

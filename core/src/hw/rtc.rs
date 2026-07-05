@@ -1,7 +1,23 @@
+//! Real-Time Clock (Seiko S-35180), bit-banged by the ARM7 via the RTC
+//! register at 4000138h (DATA / SCK / CS lines and their direction bits).
+//!
+//! Commands are 8 bits (fixed code `0110` + register select + read/write
+//! flag), followed by parameter bytes clocked serially.  Date/time values
+//! are BCD; this implementation sources them from the host clock via
+//! `chrono`.
+//!
+//! GBATEK "DS Real-Time Clock (RTC)" (protocol, command/register list,
+//! status registers, alarms):
+//! <https://problemkaputt.de/gbatek.htm#dsrealtimeclockrtc>
+
 use super::{mem::IORegister, scheduler::Scheduler};
 
 use chrono::{Datelike, Timelike, offset::Local};
 
+/// Serial-protocol state machine for the S-35180 RTC chip.
+///
+/// GBATEK "DS Real-Time Clock (RTC)":
+/// <https://problemkaputt.de/gbatek.htm#dsrealtimeclockrtc>
 #[derive(emu_utils::Savestate)]
 pub struct RTC {
     // Register

@@ -1,3 +1,10 @@
+//! GPU-wide I/O registers shared by both 2D engines.
+//!
+//! GBATEK references:
+//! - POWCNT1: <https://problemkaputt.de/gbatek.htm#dspowercontrol>
+//! - DISPSTAT / VCOUNT: <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
+//! - DISPCAPCNT: <https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode>
+
 use std::ops::{Deref, DerefMut};
 
 use bitflags::*;
@@ -5,6 +12,14 @@ use bitflags::*;
 use crate::hw::{HW, Scheduler, mem::IORegister};
 
 bitflags! {
+    /// 4000304h - NDS9 - POWCNT1 - Graphics Power Control Register.
+    ///
+    /// Bit 0 enables both LCDs, bits 1-3 gate Engine A / 3D rendering / 3D
+    /// geometry, bit 9 gates Engine B, and bit 15 selects which engine is
+    /// shown on the top screen (display swap).
+    ///
+    /// GBATEK "DS Power Control":
+    /// <https://problemkaputt.de/gbatek.htm#dspowercontrol>
     pub struct POWCNT1: u32 {
         const ENABLE_LCDS = 1 << 0;
         const ENABLE_ENGINE_A = 1 << 1;
@@ -35,7 +50,15 @@ impl IORegister for POWCNT1 {
 }
 
 bitflags! {
-        pub struct DISPSTATFlags: u16 {
+    /// 4000004h - DISPSTAT - General LCD Status (per CPU: NDS9 and NDS7).
+    ///
+    /// Bits 0-2 are hardware-set status flags (V-Blank / H-Blank / VCOUNT
+    /// match); bits 3-5 enable the corresponding IRQs.
+    ///
+    /// GBATEK "LCD I/O Interrupts and Status" (DS layout identical to GBA,
+    /// except the 9-bit VCOUNT setting):
+    /// <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
+    pub struct DISPSTATFlags: u16 {
         const VBLANK = 1 << 0;
         const HBLANK = 1 << 1;
         const VCOUNTER = 1 << 2;
@@ -97,6 +120,15 @@ impl IORegister for DISPSTAT {
     }
 }
 
+/// 4000064h - NDS9 - DISPCAPCNT - Display Capture Control (Engine A only).
+///
+/// Captures the rendered 2D/3D output (source A) and/or VRAM / main-memory
+/// FIFO data (source B) into a VRAM block, optionally blending both with
+/// EVA/EVB factors.  `enable` (bit 31) auto-clears when the capture frame
+/// completes.
+///
+/// GBATEK "DS Video Capture and Main Memory Display Mode":
+/// <https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode>
 #[derive(emu_utils::Savestate)]
 pub struct DISPCAPCNT {
     pub eva: u8,

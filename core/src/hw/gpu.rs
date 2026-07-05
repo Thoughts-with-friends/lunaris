@@ -1,5 +1,11 @@
 //! NDS GPU – dual 2D engines plus one 3D engine.
 //!
+//! GBATEK references:
+//! - Video overview: <https://problemkaputt.de/gbatek.htm#dsvideo>
+//! - Display dimensions / timings: <https://problemkaputt.de/gbatek.htm#dsvideostuff>
+//! - BG modes / DISPCNT: <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
+//! - 3D overview: <https://problemkaputt.de/gbatek.htm#ds3doverview>
+//!
 //! ## Display timing (GBATEK: "NDS Display Timings")
 //! - Resolution per screen: **256 × 192** pixels.
 //! - Total scanlines: **263** (lines 0-191 visible, 192-262 V-Blank).
@@ -61,17 +67,25 @@ impl GPU {
     pub const OAM_SIZE: usize = 0x400; // 128 OBJ attributes × 8 bytes
     pub const OAM_MASK: usize = GPU::OAM_SIZE - 1;
 
-    /// Master-clock cycles per display dot (33.513 MHz / 5.585 MHz).
-    /// GBATEK: "NDS Display Timings – 6 cycles per dot".
+    /// Master-clock cycles per display dot (33.513982 MHz / 6 = 5.585664 MHz
+    /// dot clock).
+    ///
+    /// GBATEK "DS Video Stuff – DS Display Dimensions / Timings":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideostuff>
     const CYCLES_PER_DOT: usize = 6;
     /// H-Blank begins 8 dots after the last visible pixel (dot 264).
-    /// GBATEK: "NDS Display Timings – HBlank starts at dot 256+8".
+    ///
+    /// GBATEK "H-Timing: 256 dots visible, 99 dots blanking":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideostuff>
     const HBLANK_DOT: usize = 256 + 8;
     /// Total dots per scanline: 256 visible + 99 H-Blank.
-    /// GBATEK: "NDS Display Timings – 355 dots per line".
+    ///
+    /// GBATEK: <https://problemkaputt.de/gbatek.htm#dsvideostuff>
     const DOTS_PER_LINE: usize = 355;
     /// Total scanlines: 192 visible + 71 V-Blank.
-    /// GBATEK: "NDS Display Timings – 263 scanlines total".
+    ///
+    /// GBATEK "V-Timing: 192 lines visible, 71 lines blanking":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideostuff>
     const NUM_LINES: usize = 263;
 
     pub fn new(scheduler: &mut Scheduler) -> GPU {
@@ -97,8 +111,12 @@ impl GPU {
     ///
     /// Clears the H-Blank flag in both DISPSTAT registers and advances VCOUNT.
     /// At scanline 262 (last V-Blank line) the affine BG reference points are
-    /// re-latched, implementing the hardware reload described in GBATEK:
-    /// "NDS BG Affine – Reference Point Reload at VBlank end".
+    /// re-latched, implementing the reference-point reload at V-Blank
+    /// described in GBATEK "LCD I/O BG Rotation/Scaling":
+    /// <https://problemkaputt.de/gbatek.htm#lcdiobgrotationscaling>
+    ///
+    /// DISPSTAT/VCOUNT semantics (same as GBA):
+    /// <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
     // Dot: 0 - TODO: Check for drift
     pub fn start_next_line(&mut self) {
         for dispstat in self.dispstats.iter_mut() {
@@ -120,7 +138,10 @@ impl GPU {
     /// Renders Engine A then Engine B when their respective POWCNT1 enable
     /// bits are set.  Display capture (DISPCAPCNT) is also processed here if
     /// active and the scanline is within the configured capture height.
-    /// GBATEK: "NDS DISPCAPCNT – Display Capture (Engine A only)".
+    ///
+    /// GBATEK "DS Video Capture and Main Memory Display Mode" (DISPCAPCNT,
+    /// Engine A only):
+    /// <https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode>
     // Dot: HBLANK_DOT - TODO: Check for drift
     pub fn render_line(&mut self) {
         // TODO: Use POWCNT to selectively render engines
@@ -135,6 +156,13 @@ impl GPU {
         }
     }
 
+    /// Captures one scanline into VRAM according to DISPCAPCNT.
+    ///
+    /// Source A is Engine A output (or the raw 3D layer), source B is a VRAM
+    /// block or the main-memory FIFO; sources can be blended with EVA/EVB.
+    ///
+    /// GBATEK "4000064h - NDS9 - DISPCAPCNT - 32bit":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode>
     pub fn capture(&mut self) {
         let start_addr = self.vcount as usize * GPU::WIDTH;
         let width = self.dispcapcnt.capture_size.width();
@@ -226,6 +254,15 @@ impl GPU {
 }
 
 impl HW {
+    /// Scheduler handler for [`Event::StartNextLine`] (dot 0 of a scanline).
+    ///
+    /// Advances VCOUNT and manages the VBLANK flag: set on entering line 192,
+    /// cleared on line 0.  Fires the V-Blank IRQ and the VCOUNT-match IRQ
+    /// when the corresponding DISPSTAT enable bits are set.
+    ///
+    /// GBATEK "DISPSTAT / VCOUNT" (same layout as GBA):
+    /// <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
+    /// V-Blank timing: <https://problemkaputt.de/gbatek.htm#dsvideostuff>
     pub fn start_next_line(&mut self, _event: Event) {
         self.scheduler.schedule(
             Event::HBlank,
@@ -265,6 +302,16 @@ impl HW {
         });
     }
 
+    /// Scheduler handler for [`Event::HBlank`] (dot 264 of a scanline).
+    ///
+    /// Sets the HBLANK flag, renders the visible scanline, starts
+    /// H-Blank-triggered DMA (visible lines only), and raises the H-Blank
+    /// IRQ if enabled.
+    ///
+    /// GBATEK H-Blank flag/IRQ:
+    /// <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
+    /// H-Blank DMA start timing:
+    /// <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
     pub fn on_hblank(&mut self, _event: Event) {
         self.scheduler.schedule(
             Event::StartNextLine,
@@ -285,6 +332,15 @@ impl HW {
         });
     }
 
+    /// Runs once per frame at the start of V-Blank (line 192).
+    ///
+    /// Starts V-Blank-triggered DMA, then lets the 3D engine rasterize the
+    /// frame and execute buffered geometry commands.  Real hardware renders
+    /// the 3D scene during V-Blank into line buffers for the next frame.
+    ///
+    /// GBATEK "DS 3D Overview" (rendering starts after VBlank):
+    /// <https://problemkaputt.de/gbatek.htm#ds3doverview>
+    /// V-Blank DMA: <https://problemkaputt.de/gbatek.htm#dsdmatransfers>
     pub fn on_vblank(&mut self, _event: Event) {
         self.run_dmas_both(dma::Occasion::VBlank);
         // TODO: Render using multiple threads

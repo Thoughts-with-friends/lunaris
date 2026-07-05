@@ -1,6 +1,16 @@
+//! ARM9 hardware maths accelerators: divider (DIVCNT, 4000280h) and square
+//! root unit (SQRTCNT, 40002B0h).
+//!
+//! GBATEK "DS Maths" (register layout, division modes, div-by-zero and
+//! overflow results): <https://problemkaputt.de/gbatek.htm#dsmaths>
+
 use super::{HW, mem::IORegister, scheduler::Scheduler};
 use num_integer::Roots;
 
+/// Hardware divider: NUMER/DENOM in, QUOT/REM out, mode in DIVCNT.
+///
+/// GBATEK "4000280h - DIVCNT, 4000290h..40002ANh - parameter/result":
+/// <https://problemkaputt.de/gbatek.htm#dsmaths>
 #[derive(emu_utils::Savestate)]
 pub struct Div {
     pub cnt: DIVCNT,
@@ -21,6 +31,14 @@ impl Div {
         }
     }
 
+    /// Recomputes QUOT/REM after any parameter write.
+    ///
+    /// Implements the documented edge cases: overflow (`i64::MIN / -1`),
+    /// division by zero (quotient = ±1 with sign inversion, remainder =
+    /// numerator), and the 32/32 mode's upper-word inversion.
+    ///
+    /// GBATEK "DS Maths – Division 0div and overflow results":
+    /// <https://problemkaputt.de/gbatek.htm#dsmaths>
     fn calc(&mut self) {
         // TODO: Take correct num of cycles
         self.cnt.div_by_0 = self.denom.value == 0;
@@ -78,6 +96,10 @@ impl Div {
     }
 }
 
+/// Hardware square-root unit: 32/64-bit PARAM in, 32-bit RESULT out.
+///
+/// GBATEK "40002B0h - SQRTCNT, 40002B4h - SQRT_RESULT, 40002B8h - SQRT_PARAM":
+/// <https://problemkaputt.de/gbatek.htm#dsmaths>
 #[derive(emu_utils::Savestate)]
 pub struct Sqrt {
     pub cnt: SQRTCNT,

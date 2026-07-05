@@ -1,8 +1,21 @@
+//! ARM946E-S CP15 system-control coprocessor: control register, ITCM/DTCM
+//! mapping, protection-unit regions, and the WAIT_FOR_IRQ halt.
+//!
+//! GBATEK references:
+//! - CP15 overview: <https://problemkaputt.de/gbatek.htm#armcp15overview>
+//! - Control register: <https://problemkaputt.de/gbatek.htm#armcp15controlregister>
+//! - Cache & TCM control: <https://problemkaputt.de/gbatek.htm#dsmemorycontrolcacheandtcm>
+//! - Protection unit: <https://problemkaputt.de/gbatek.htm#armcp15protectionunitpu>
+
 use _core::ops::Range;
 use bitflags::*;
 
 use super::HW;
 
+/// CP15 register state (accessed via MRC/MCR on coprocessor 15).
+///
+/// GBATEK "ARM CP15 System Control Coprocessor":
+/// <https://problemkaputt.de/gbatek.htm#armcp15systemcontrolcoprocessor>
 #[derive(emu_utils::Savestate)]
 pub struct CP15 {
     control: Control,

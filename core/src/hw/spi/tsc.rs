@@ -1,3 +1,17 @@
+//! Touch Screen Controller (Texas Instruments TSC2046 on original NDS).
+//!
+//! The TSC is an SPI device: the ARM7 sends an 8-bit control byte selecting
+//! an ADC channel (1 = Y position, 5 = X position, 6 = microphone), then
+//! clocks out the 12-bit conversion result across the next two transfers.
+//!
+//! GBATEK "DS Touch Screen Controller (TSC)":
+//! <https://problemkaputt.de/gbatek.htm#dstouchscreencontrollertsc>
+
+/// TSC2046 state: latched 12-bit touch coordinates plus the shift-register
+/// position of the in-flight conversion.
+///
+/// GBATEK "TSC control byte / data output format":
+/// <https://problemkaputt.de/gbatek.htm#dstouchscreencontrollertsc>
 #[derive(emu_utils::Savestate)]
 pub struct TSC {
     x: u16,

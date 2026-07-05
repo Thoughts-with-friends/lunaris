@@ -1,3 +1,12 @@
+//! Cartridge save-data backup chips (EEPROM / Flash), accessed serially
+//! through AUXSPI (4001A0h/4001A2h).
+//!
+//! The chip type cannot be auto-detected from the cartridge, so it is looked
+//! up by game code in a built-in database (`game_db`).
+//!
+//! GBATEK "DS Cartridge Backup" (chip types, command sets):
+//! <https://problemkaputt.de/gbatek.htm#dscartridgebackup>
+
 mod eeprom;
 mod flash;
 mod game_db;

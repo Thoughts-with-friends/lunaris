@@ -16,7 +16,11 @@
 //! ## Count-up (cascade) mode
 //! TMCNT_H bit 2: when set, the timer increments on each overflow of the
 //! *previous* timer instead of the clock.  Not available for Timer 0.
-//! GBATEK ref: "NDS Timers" § "TMCNT_H Bit2 – Count-Up Timing"
+//!
+//! GBATEK references:
+//! - DS Timers (F = 33.513982 MHz): <https://problemkaputt.de/gbatek.htm#dstimers>
+//! - Base GBA timer behaviour (registers, prescaler, count-up):
+//!   <https://problemkaputt.de/gbatek.htm#gbatimers>
 
 use super::{
     HW,
@@ -33,7 +37,10 @@ pub struct Timers {
 impl Timers {
     const NUM_TIMERS: usize = 4;
     /// Clock divisors matching TMCNT_H bits [1:0] → 0=1, 1=64, 2=256, 3=1024.
-    /// GBATEK: "NDS Timers – Prescaler Selection".
+    ///
+    /// GBATEK "TMxCNT_H Bit 0-1 Prescaler Selection":
+    /// <https://problemkaputt.de/gbatek.htm#gbatimers> (DS notes:
+    /// <https://problemkaputt.de/gbatek.htm#dstimers>)
     const PRESCALERS: [usize; Self::NUM_TIMERS] = [1, 64, 256, 1024];
 
     pub fn new(is_nds9: bool) -> Timers {
@@ -82,7 +89,8 @@ impl std::ops::IndexMut<usize> for Timers {
 /// - **Count-up (cascade)**: counter incremented explicitly by the previous
 ///   timer's overflow handler.  No scheduler event is used.
 ///
-/// GBATEK: "NDS Timers – Regular vs Count-Up Timing".
+/// GBATEK "Count-Up Timing" (TMCNT_H bit 2):
+/// <https://problemkaputt.de/gbatek.htm#gbatimers>
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub struct Timer {
@@ -168,7 +176,9 @@ impl Timer {
     /// The prescaler is aligned to the global cycle counter so that the
     /// first increment happens at the correct absolute cycle even when the
     /// timer is started mid-prescaler-period.
-    /// GBATEK: "Timer start adds 1 cycle delay before first clock".
+    ///
+    /// GBATEK "when simultaneously changing the start bit from 0 to 1 …
+    /// one clock cycle delay": <https://problemkaputt.de/gbatek.htm#gbatimers>
     pub fn create_event(&mut self, scheduler: &mut Scheduler, delay: usize) {
         self.start_cycle = scheduler.cycle + delay;
         // Syncs prescaler to global cycle
@@ -253,6 +263,14 @@ impl Timer {
 }
 
 impl HW {
+    /// Scheduler handler for [`Event::TimerOverflow`].
+    ///
+    /// Raises the timer IRQ if enabled, clocks the next timer when it is in
+    /// count-up (cascade) mode, and re-schedules the overflow event for
+    /// regular timers.
+    ///
+    /// GBATEK "Timer overflow / IRQ / cascade":
+    /// <https://problemkaputt.de/gbatek.htm#gbatimers>
     pub fn on_timer_overflow(&mut self, event: Event) {
         let (is_nds9, num) = match event {
             Event::TimerOverflow(is_nds9, num) => (is_nds9, num),
