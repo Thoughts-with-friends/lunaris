@@ -930,9 +930,19 @@ impl ArmCpu {
 
         value << shift
     }
-    #[expect(clippy::needless_pass_by_ref_mut)]
-    pub fn lsl_32(&mut self, _value: u32, _flags: bool) -> u32 {
-        unimplemented!("")
+    /// Logical shift left by 32 or more bits.
+    ///
+    /// Unreachable in practice: `lsl()` already inlines this case for
+    /// `shift > 31`, and CorgiDS never defines its own `lsl_32` either (it is
+    /// declared in `cpu.hpp` but has no body and no callers). Implemented
+    /// here to mirror the sibling `lsr_32`/`asr_32` helpers instead of
+    /// panicking if anything comes to call it.
+    pub const fn lsl_32(&mut self, value: u32, alter_flags: bool) -> u32 {
+        if alter_flags {
+            self.set_zero_neg_flags(0);
+            self.cpsr.carry = (value & 1) != 0;
+        }
+        0
     }
 
     pub const fn lsr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {

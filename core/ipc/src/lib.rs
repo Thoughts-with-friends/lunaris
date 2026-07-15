@@ -101,7 +101,13 @@ impl IpcFifo {
         }
     }
 
-    /// Read control register
+    /// Read control register.
+    ///
+    /// Bits 3 and 11 are write-only/unused on real hardware (see GBATEK
+    /// "IPCFIFOCNT") and CorgiDS `IPCFIFO::read_CNT()` never reads back
+    /// `request_empty_irq`/`request_nempty_irq` here; those are internal
+    /// pending-IRQ flags consumed by the I/O read/write handlers, not
+    /// register bits.
     pub fn read_cnt(&self) -> u16 {
         let mut value = 0_u16;
         if self.send_queue.is_empty() {
@@ -113,9 +119,6 @@ impl IpcFifo {
         if self.send_empty_irq {
             value |= 1 << 2;
         }
-        if self.request_empty_irq {
-            value |= 1 << 3;
-        }
         if !self.receive_queue.is_empty() {
             value |= 1 << 8;
         }
@@ -124,9 +127,6 @@ impl IpcFifo {
         } // Full
         if self.receive_nempty_irq {
             value |= 1 << 10;
-        }
-        if self.request_nempty_irq {
-            value |= 1 << 11;
         }
         if self.error {
             value |= 1 << 14;
@@ -137,24 +137,47 @@ impl IpcFifo {
         value
     }
 
-    /// Write control register
-    pub const fn write_cnt(&mut self, value: u16) {
+    /// Write control register.
+    ///
+    /// Ported from CorgiDS `IPCFIFO::write_CNT()`: enabling an IRQ while its
+    /// trigger condition already holds (send queue already empty / receive
+    /// queue already non-empty) immediately arms the pending-IRQ flag rather
+    /// than waiting for the next queue transition. Bit 14 is
+    /// write-1-to-acknowledge (clears `error`; writing 0 leaves it
+    /// untouched), and bit 3 clears the send queue instead of toggling any
+    /// stored flag.
+    pub fn write_cnt(&mut self, value: u16) {
+        if !self.send_empty_irq && (value & (1 << 2)) != 0 && self.send_queue.is_empty() {
+            self.request_empty_irq = true;
+        }
+        if !self.receive_nempty_irq && (value & (1 << 10)) != 0 && !self.receive_queue.is_empty() {
+            self.request_nempty_irq = true;
+        }
+
         self.send_empty_irq = (value & (1 << 2)) != 0;
-        self.request_empty_irq = (value & (1 << 3)) != 0;
         self.receive_nempty_irq = (value & (1 << 10)) != 0;
-        self.request_nempty_irq = (value & (1 << 11)) != 0;
-        self.error = (value & (1 << 14)) != 0; // Can be cleared by writing 0
+        if (value & (1 << 14)) != 0 {
+            self.error = false;
+        }
         self.enabled = (value & (1 << 15)) != 0;
+
+        if (value & (1 << 3)) != 0 {
+            self.send_queue.clear();
+        }
     }
 
-    /// Read from receive queue
+    /// Read from receive queue.
+    ///
+    /// `send_queue` is a FIFO (matching C++ `std::queue::pop()`, which
+    /// removes the front element). Popping from the back here would discard
+    /// a different word than the one just peeked and returned via `front()`,
+    /// silently corrupting ARM7/ARM9 IPC message ordering.
     pub fn read_queue(&mut self) -> u32 {
         if !self.enabled {
             return self.recent_word;
         }
 
-        if let Some(&word) = self.send_queue.front() {
-            self.send_queue.pop_back();
+        if let Some(word) = self.send_queue.pop_front() {
             if self.send_queue.is_empty() && self.send_empty_irq {
                 self.request_empty_irq = true;
             }

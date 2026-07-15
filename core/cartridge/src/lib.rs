@@ -531,8 +531,14 @@ impl NDSCart {
     }
 
     /// Returns AUXSPICNT register value.
-    pub fn get_auxspicnt(&self) -> u16 {
-        todo!()
+    pub const fn get_auxspicnt(&self) -> u16 {
+        let mut reg = self.auxspicnt.bandwidth as u16;
+        reg |= (self.auxspicnt.hold_chipselect as u16) << 6;
+        reg |= (self.auxspicnt.is_busy as u16) << 7;
+        reg |= (self.auxspicnt.serial_transfer as u16) << 13;
+        reg |= (self.auxspicnt.irq_after_transfer as u16) << 14;
+        reg |= (self.auxspicnt.enabled as u16) << 15;
+        reg
     }
 
     /// Reads AUXSPIDATA register value.

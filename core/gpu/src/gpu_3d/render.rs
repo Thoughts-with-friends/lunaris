@@ -596,8 +596,30 @@ impl Gpu3D {
         }
     }
 
+    /// Runs the `VEC_TEST` GX command (0x72).
+    ///
+    /// Transforms a packed 3x10-bit signed direction vector by the current
+    /// vector (directional) matrix and stores the result for later readback
+    /// via `read_vec_test`. See GBATEK "DS 3D Tests" and CorgiDS
+    /// `GPU_3D::VEC_TEST()`.
     pub fn vec_test(&mut self) {
-        todo!()
+        let params0 = self.cmd_params[0];
+
+        // Each component is a 10-bit signed fixed-point value; sign-extend by
+        // shifting into the top bits of an i16 and back.
+        let bark: [i32; 3] = [0, 9, 18].map(|shift| {
+            let raw = (((params0 >> shift) & 0x3FF) << 6) as u16 as i16;
+            (raw >> 6) as i32
+        });
+
+        for col in 0..3 {
+            let mut result = (bark[0] * self.vector_mtx.m[0][col]
+                + bark[1] * self.vector_mtx.m[1][col]
+                + bark[2] * self.vector_mtx.m[2][col])
+                >> 9;
+            result |= (result & 0x1000) * 0xF;
+            self.vec_test_result[col] = result as i16;
+        }
     }
 
     // Moved to struct Emulator method (Because use emulator method)

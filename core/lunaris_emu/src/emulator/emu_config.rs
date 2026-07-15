@@ -72,54 +72,59 @@ pub struct KeyInputReg {
 }
 
 impl KeyInputReg {
-    /// Get the current key input register value (bit-packed format)
+    /// Get the current key input register value (bit-packed format).
+    ///
+    /// KEYINPUT (4000130h) is active-low per GBATEK "DS Keypad": a cleared
+    /// bit means the button is pressed, a set bit means released. All bits
+    /// start at 1 (nothing pressed) and are cleared for each held button,
+    /// matching CorgiDS `KEYINPUT_REG::get()`.
     pub fn get_value(&self) -> u16 {
-        let mut value = 0_u16;
+        let mut value = 0x03FF_u16;
         if self.button_a {
-            value |= 0x0001;
+            value &= !0x0001;
         }
         if self.button_b {
-            value |= 0x0002;
+            value &= !0x0002;
         }
         if self.select {
-            value |= 0x0004;
+            value &= !0x0004;
         }
         if self.start {
-            value |= 0x0008;
+            value &= !0x0008;
         }
         if self.right {
-            value |= 0x0010;
+            value &= !0x0010;
         }
         if self.left {
-            value |= 0x0020;
+            value &= !0x0020;
         }
         if self.up {
-            value |= 0x0040;
+            value &= !0x0040;
         }
         if self.down {
-            value |= 0x0080;
+            value &= !0x0080;
         }
         if self.button_r {
-            value |= 0x0100;
+            value &= !0x0100;
         }
         if self.button_l {
-            value |= 0x0200;
+            value &= !0x0200;
         }
         value
     }
 
-    /// Set value from bit-packed register format
+    /// Set value from bit-packed register format (active-low, see `get_value`)
     pub fn set_value(&mut self, value: u16) {
-        self.button_a = (value & 0x0001) != 0;
-        self.button_b = (value & 0x0002) != 0;
-        self.select = (value & 0x0004) != 0;
-        self.start = (value & 0x0008) != 0;
-        self.right = (value & 0x0010) != 0;
-        self.left = (value & 0x0020) != 0;
-        self.up = (value & 0x0040) != 0;
-        self.down = (value & 0x0080) != 0;
-        self.button_r = (value & 0x0100) != 0;
-        self.button_l = (value & 0x0200) != 0;
+        self.button_a = (value & 0x0001) == 0;
+        self.button_b = (value & 0x0002) == 0;
+        self.select = (value & 0x0004) == 0;
+        self.start = (value & 0x0008) == 0;
+        self.right = (value & 0x0010) == 0;
+        self.left = (value & 0x0020) == 0;
+        self.up = (value & 0x0040) == 0;
+        self.down = (value & 0x0080) == 0;
+        self.button_r = (value & 0x0100) == 0;
+        self.button_l = (value & 0x0200) == 0;
     }
 }
 
@@ -133,30 +138,35 @@ pub struct ExtKeyInReg {
 }
 
 impl ExtKeyInReg {
-    /// Get the extended key input register value
+    /// Get the extended key input register value.
+    ///
+    /// EXTKEYIN (4000136h, ARM7-only) per GBATEK "DS Keypad": bit0=X,
+    /// bit1=Y, bit6=pen state (active-low: 0 = touching), bit7=hinge state
+    /// (active-high: 1 = closed). Unused bits read as 1. Matches CorgiDS
+    /// `EXTKEYIN_REG::get()`.
     pub fn get_value(&self) -> u16 {
-        let mut value = 0_u16;
+        let mut value = 0x007F_u16;
         if self.button_x {
-            value |= 0x0001;
+            value &= !0x0001;
         }
         if self.button_y {
-            value |= 0x0002;
+            value &= !0x0002;
         }
         if self.pen_down {
-            value |= 0x0004;
+            value &= !0x0040;
         }
         if self.hinge_closed {
-            value |= 0x0008;
+            value |= 0x0080;
         }
         value
     }
 
-    /// Set value from bit-packed register format
+    /// Set value from bit-packed register format (see `get_value` for polarity)
     pub fn set_value(&mut self, value: u16) {
-        self.button_x = (value & 0x0001) != 0;
-        self.button_y = (value & 0x0002) != 0;
-        self.pen_down = (value & 0x0004) != 0;
-        self.hinge_closed = (value & 0x0008) != 0;
+        self.button_x = (value & 0x0001) == 0;
+        self.button_y = (value & 0x0002) == 0;
+        self.pen_down = (value & 0x0040) == 0;
+        self.hinge_closed = (value & 0x0080) != 0;
     }
 }
 

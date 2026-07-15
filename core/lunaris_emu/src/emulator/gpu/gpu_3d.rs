@@ -33,24 +33,20 @@ impl Emulator {
     }
 
     pub fn read_command(&mut self) -> Option<GxCommand> {
-        let cmd = self.gpu.engine_3d.gxpipe.front().cloned();
+        // GXPIPE/GXFIFO are FIFOs (matching C++ `std::queue`), so the command
+        // that has been waiting longest must be dequeued from the front.
+        // Reading via `front().cloned()` without removing it left the same
+        // command in place forever, spinning `gpu3d_run` in an infinite loop
+        // on the first GX command sent by a 3D game.
+        let cmd = self.gpu.engine_3d.gxpipe.pop_front();
 
         // Refill the pipe if it is at least half-empty
         let gxpipe_len = self.gpu.engine_3d.gxpipe.len();
         if gxpipe_len < 3 {
-            if !self.gpu.engine_3d.gxfifo.is_empty()
-                && let Some(front) = self.gpu.engine_3d.gxfifo.front()
-            {
-                let front = front.clone();
-                self.gpu.engine_3d.gxpipe.push_back(front);
-                self.gpu.engine_3d.gxfifo.pop_back();
-            }
-            if !self.gpu.engine_3d.gxfifo.is_empty()
-                && let Some(front) = self.gpu.engine_3d.gxfifo.front()
-            {
-                let front = front.clone();
-                self.gpu.engine_3d.gxpipe.push_back(front);
-                self.gpu.engine_3d.gxfifo.pop_back();
+            for _ in 0..2 {
+                if let Some(front) = self.gpu.engine_3d.gxfifo.pop_front() {
+                    self.gpu.engine_3d.gxpipe.push_back(front);
+                }
             }
 
             self.check_fifo_dma();

@@ -10,6 +10,16 @@ use lunaris_ds_mem_const::{PIXELS_PER_LINE, SCANLINES};
 use std::{path::PathBuf, time::Instant};
 
 // ===== util =====
+
+/// Swaps the R and B channels of 0xAARRGGBB pixels in place, converting them
+/// to the 0xAABBGGRR byte layout that `ColorImage::from_rgba_unmultiplied`
+/// reads as little-endian RGBA.
+fn swap_red_blue(buffer: &mut [u32]) {
+    for px in buffer {
+        *px = (*px & 0xFF00_FF00) | ((*px & 0x00FF_0000) >> 16) | ((*px & 0x0000_00FF) << 16);
+    }
+}
+
 fn list_nds_files(dir: &std::path::Path) -> Vec<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         entries
@@ -223,6 +233,12 @@ impl App {
         emu.run();
         emu.get_upper_frame(&mut upper_buffer);
         emu.get_lower_frame(&mut lower_buffer);
+
+        // The core emits pixels as 0xAARRGGBB (CorgiDS/Qt ARGB32 convention),
+        // but `from_rgba_unmultiplied` expects little-endian RGBA byte order.
+        // Swap the R and B channels here so colors aren't flipped on screen.
+        swap_red_blue(&mut upper_buffer);
+        swap_red_blue(&mut lower_buffer);
 
         let upper_img = egui::ColorImage::from_rgba_unmultiplied(
             [PIXELS_PER_LINE, SCANLINES],

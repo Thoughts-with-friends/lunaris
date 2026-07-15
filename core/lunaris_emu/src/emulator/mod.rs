@@ -493,8 +493,14 @@ impl Emulator {
     }
 
     /// Get current system timestamp.
+    ///
+    /// Must track `system_timestamp`, not the unused `total_timestamp` field
+    /// (a dead C++ struct member kept only for layout parity). Returning a
+    /// frozen value here makes halted CPUs rewind their local timestamp
+    /// instead of catching up to the scheduler, which hangs the run loop
+    /// forever on the first HALT/DMA wait.
     pub fn get_timestamp(&self) -> u64 {
-        self.total_timestamp
+        self.system_timestamp
     }
 
     /* ===== get frame(public) ===== */

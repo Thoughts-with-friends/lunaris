@@ -212,22 +212,30 @@ impl Gpu {
     // moved struct Emulator;
     // pub fn handle_event(&self, event: &SchedulerEvent);
 
-    /// Get upper screen framebuffer data
+    /// Get upper screen framebuffer data.
+    ///
+    /// Engine A (`engine_upper`) drives the physical top screen by default;
+    /// `swap_display` (POWCNT1 bit) swaps the two engines' screen assignment.
+    /// The arms here were previously inverted, which routed Engine B's
+    /// (never rendered when only Engine A was active) buffer to the top
+    /// screen and made it appear permanently black. See CorgiDS
+    /// `GPU::get_upper_frame()`.
     #[inline]
     pub fn get_upper_frame(&self, buffer: &mut [u32]) {
         let engine = match self.power_control_reg.swap_display {
-            true => &self.engine_upper,
-            false => &self.engine_lower,
+            true => &self.engine_lower,
+            false => &self.engine_upper,
         };
         engine.get_framebuffer(buffer);
     }
 
-    /// Get lower screen framebuffer data
+    /// Get lower screen framebuffer data. See `get_upper_frame` for the
+    /// engine/screen mapping this mirrors.
     #[inline]
     pub fn get_lower_frame(&self, buffer: &mut [u32]) {
         let engine = match self.power_control_reg.swap_display {
-            true => &self.engine_lower,
-            false => &self.engine_upper,
+            true => &self.engine_upper,
+            false => &self.engine_lower,
         };
         engine.get_framebuffer(buffer);
     }

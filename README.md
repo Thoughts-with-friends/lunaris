@@ -54,6 +54,8 @@ A Nintendo DS emulator - Rust-based
 
 ## How to Build
 
+### for Tauri
+
 - Install nvm: Example - v0.39.7 on Linux.
 
 ```shell
@@ -67,6 +69,16 @@ npm -v  # e.g. 11.10.0
 ```shell
 npm i
 npm run build
+```
+
+### egui
+
+```bash
+# build
+cargo build -p lunaris_ds_egui --release
+
+# build and run
+cargo run -p lunaris_ds_egui --release
 ```
 
 ## Todo List

@@ -17,6 +17,16 @@ impl Emulator {
         let event_id = self.dma_event.id;
 
         loop {
+            // Advance the unit counter before checking for completion, matching
+            // the C++ `active_DMA->internal_len++` at the top of the loop. This
+            // increment was lost in a prior refactor, which made the `internal_len
+            // > length` check below never true and left the transfer looping
+            // forever while wrapping source/dest addresses across all of memory.
+            {
+                let active_dma = &mut self.dma.dmas[event_id as usize];
+                active_dma.internal_len += 1;
+            }
+
             let (is_arm9, internal_len, length, irq_after_transfer, interrupt7, interrupt9) = {
                 let active_dma = &self.dma.dmas[event_id as usize];
                 let is_arm9 = active_dma.is_arm9;

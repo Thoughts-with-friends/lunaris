@@ -10,16 +10,27 @@ impl Gpu {
         self.render_scanline(is_engine_a, bg_priority);
     }
 
-    /// Draws one scanline.
+    /// Draws the current scanline for every powered-on 2D engine.
+    ///
+    /// Matches CorgiDS `GPU::draw_scanline()`, which calls
+    /// `eng_A.draw_scanline()` and `eng_B.draw_scanline()` unconditionally
+    /// (each gated only by its own POWCNT1 enable bit). The previous
+    /// `if engine_upper { .. } else if engine_lower { .. }` chain here
+    /// rendered at most one engine per scanline: whichever engine were
+    /// enabled first always won, so the other engine's framebuffer was never
+    /// written and stayed at its cleared/default color for the whole run.
     pub fn draw_scanline(&mut self) {
-        let is_engine_a = if self.power_control_reg.engine_upper {
-            true
-        } else if self.power_control_reg.engine_lower {
-            false
-        } else {
-            return;
-        };
+        if self.power_control_reg.engine_upper {
+            self.draw_scanline_for_engine(true);
+        }
+        if self.power_control_reg.engine_lower {
+            self.draw_scanline_for_engine(false);
+        }
+    }
 
+    /// Renders one scanline for a single 2D engine (Engine A if
+    /// `is_engine_a`, otherwise Engine B).
+    fn draw_scanline_for_engine(&mut self, is_engine_a: bool) {
         let line_start = self.get_vcount() as usize * PIXELS_PER_LINE;
 
         // Clear scanline
@@ -148,11 +159,14 @@ impl Gpu {
                         false => &mut self.engine_lower,
                     };
 
-                    // safe access (ABGR)
+                    // safe access
                     if (line_start + i) < PIXELS_PER_LINE * SCANLINES {
-                        // engine.front_framebuffer[line_start + i] = 0xFFF3F3F3;  // white
-                        // engine.front_framebuffer[line_start + i] = 0xFF00FFF3; // yellow
-                        engine.front_framebuffer[line_start + i] = 0xF3FF00FF; // magenta
+                        // Display mode 0 ("Display Off") outputs a fixed
+                        // near-white color per GBATEK "DS Video / DISPCNT",
+                        // matching CorgiDS `front_framebuffer[i + line] =
+                        // 0xFFF3F3F3;`. This had been left pointing at a
+                        // leftover debug magenta value instead.
+                        engine.front_framebuffer[line_start + i] = 0xFFF3_F3F3;
                     }
                 }
             }
