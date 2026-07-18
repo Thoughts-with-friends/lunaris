@@ -191,9 +191,16 @@ impl LunarisApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open ROM").clicked() {
-                        if let Some(p) =
-                            rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
-                        {
+                        // NOTE: If we don't run it async, `rfd` won't be displayed during the event.
+                        let rom_dir = self.config.last_rom_path.as_ref().and_then(|p| p.parent());
+                        let dialog = rfd::AsyncFileDialog::new().add_filter("NDS ROM", &["nds"]);
+
+                        if let Some(p) = pollster::block_on(match rom_dir {
+                            Some(dir) => dialog.set_directory(dir).pick_file(),
+                            None => dialog.pick_file(),
+                        }) {
+                            let p = p.path().to_path_buf();
+
                             self.nds = create_nds(&p, &self.config);
                             self.config.last_rom_path = Some(p);
                             self.config.save();
