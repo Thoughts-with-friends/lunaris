@@ -23,6 +23,10 @@ pub extern crate log;
 
 use num_traits as num;
 pub use simplelog;
+// Re-exported so downstream crates can name the error types returned by
+// `NDS::save_state`/`NDS::load_state` without taking their own dependency
+// on this git crate (and risking a version/rev mismatch).
+pub use emu_utils;
 
 mod arm;
 mod hw;

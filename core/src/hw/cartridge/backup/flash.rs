@@ -52,6 +52,10 @@ impl Flash {
                 self.write_enable = true;
                 Mode::ReadInstr
             }
+            Instr::WRDI => {
+                self.write_enable = false;
+                Mode::ReadInstr
+            }
             _ => Mode::HandleInstr(instr),
         }
     }
@@ -81,6 +85,7 @@ impl Flash {
             }
 
             Instr::WREN => unreachable!(),
+            Instr::WRDI => unreachable!(),
 
             Instr::PW(0, addr) => {
                 self.value = self.mem[addr];
@@ -119,22 +124,45 @@ impl Backup for Flash {
             self.mode = Mode::ReadInstr
         }
     }
+
+    /// Captures the in-flight SPI instruction state (not the memory
+    /// contents, which live in the `.sav` mmap / firmware file and are not
+    /// part of the savestate).
+    fn protocol_snapshot(&self) -> super::BackupProtocolState {
+        super::BackupProtocolState::Flash {
+            mode: self.mode,
+            write_enable: self.write_enable,
+            value: self.value,
+        }
+    }
+
+    fn restore_protocol_state(&mut self, state: super::BackupProtocolState) {
+        if let super::BackupProtocolState::Flash { mode, write_enable, value } = state {
+            self.mode = mode;
+            self.write_enable = write_enable;
+            self.value = value;
+        }
+    }
 }
 
+/// Visible to [`super::BackupProtocolState`] so a savestate can capture and
+/// restore an in-progress SPI transaction across save/load. See
+/// `docs/design/savestate-and-video-design.md` §2.3.
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
-enum Mode {
+pub(crate) enum Mode {
     ReadInstr,
     HandleInstr(Instr),
 }
 
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
-enum Instr {
+pub(crate) enum Instr {
     IR,
     READ(usize, usize),
     RDSR,             // Read Status Register
     WREN,             // Write Enable
+    WRDI,             // Write Disable
     PW(usize, usize), // Page Write
 }
 
@@ -146,6 +174,7 @@ impl Instr {
             0x03 => Instr::READ(3, 0),
             0x05 => Instr::RDSR,
             0x06 => Instr::WREN,
+            0x04 => Instr::WRDI,
             0x0A => Instr::PW(3, 0),
             _ => unimplemented!("Flash Instr: 0x{:X}", value),
         }

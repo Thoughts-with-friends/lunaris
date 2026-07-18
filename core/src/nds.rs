@@ -7,7 +7,7 @@ use std::{
 use crate::arm::ARM;
 use crate::hw::HW;
 
-pub use crate::hw::{Engine, GraphicsType, Key};
+pub use crate::hw::{Engine, GraphicsType, Key, RomFingerprint};
 
 pub const WIDTH: usize = crate::hw::GPU::WIDTH;
 pub const HEIGHT: usize = crate::hw::GPU::HEIGHT;
@@ -43,6 +43,13 @@ impl NDS {
         let mut output = Vec::new();
         emu_utils::PersistentWriteSavestate::new(&mut output).store(self)?;
         Ok(output)
+    }
+
+    /// Returns a compact fingerprint of the currently loaded ROM, used to
+    /// verify a savestate file was captured against the same ROM before
+    /// applying it. See `docs/design/savestate-and-video-design.md` §1.3.
+    pub fn rom_fingerprint(&self) -> RomFingerprint {
+        self.hw.rom_fingerprint()
     }
 }
 
@@ -233,6 +240,18 @@ impl NDS {
 mod tests {
     use super::*;
     use std::fs::OpenOptions;
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+    };
+
+    fn hash_screens(nds: &NDS) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for screen in nds.get_screens() {
+            screen.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
 
     fn make_nds() -> NDS {
         let bios7 = free_bios::arm7::BIOS_ARM7_BIN.to_vec();
@@ -351,6 +370,85 @@ mod tests {
         assert_eq!(
             state2, state3,
             "State should be deterministic after loading a state saved past the u32 cycle boundary."
+        );
+    }
+
+    /// Regression test for both P1 (savestate size) and P2 (post-load
+    /// freeze) from `docs/design/savestate-and-video-design.md`, using a
+    /// real ~128 MB commercial ROM so its cartridge backup chip (Flash)
+    /// receives genuine SPI traffic during boot -- something the tiny
+    /// synthetic ROM used by the other tests in this module cannot exercise,
+    /// since it has no backup chip.
+    ///
+    /// - P1: asserts the raw `save_state()` payload is a small fraction of
+    ///   the ROM size, proving `Cartridge::rom`/`HW::bios7`/`HW::bios9` are
+    ///   no longer serialized.
+    /// - P2: saves mid-boot (while the game is actively polling its save
+    ///   chip), keeps running past the save point so live state diverges,
+    ///   loads the earlier state back, and asserts the displayed screens
+    ///   keep changing across subsequent frames. Before the
+    ///   `BackupProtocolState` fix, the backup chip's SPI transaction state
+    ///   was silently reset on load while the CPU/GXFIFO/scheduler state
+    ///   was rewound, leaving the ARM7 waiting forever on a save-chip
+    ///   response it would never receive -- the screens would go static
+    ///   even though `emulate_frame` keeps returning (FPS keeps counting).
+    #[ignore = "because we need a real commercial ROM (../target/test_rom.nds)"]
+    #[test]
+    fn test_load_state_real_rom_size_and_no_freeze() {
+        let bios7 = free_bios::arm7::BIOS_ARM7_BIN.to_vec();
+        let bios9 = free_bios::arm9::BIOS_ARM9_BIN.to_vec();
+
+        let fw_path = std::env::temp_dir().join("lunaris_test_fw_real.bin");
+        if !fw_path.exists() {
+            fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+        }
+        let firmware_file = OpenOptions::new().read(true).write(true).open(&fw_path).unwrap();
+
+        let save_path = std::env::temp_dir().join("lunaris_test_real.sav");
+        let _ = fs::remove_file(&save_path);
+        let save_file =
+            OpenOptions::new().read(true).write(true).create(true).open(&save_path).unwrap();
+
+        let rom = fs::read("../target/test_rom.nds").unwrap();
+        let rom_len = rom.len();
+        let mut nds = NDS::new(bios7, bios9, firmware_file, rom, save_file);
+
+        // Run well into the boot sequence (health & safety screen, save-chip
+        // polling, etc.) before saving.
+        for _ in 0..300 {
+            nds.emulate_frame();
+        }
+
+        let state = nds.save_state().unwrap();
+        assert!(
+            state.len() < rom_len / 10,
+            "raw savestate ({} bytes) should be far smaller than the ROM ({} bytes); \
+             Cartridge::rom is no longer expected to be serialized",
+            state.len(),
+            rom_len
+        );
+
+        // Diverge live state from the save point.
+        for _ in 0..120 {
+            nds.emulate_frame();
+        }
+
+        nds.load_state(&state).unwrap();
+
+        let mut last_hash = hash_screens(&nds);
+        let mut screens_changed = false;
+        for _ in 0..180 {
+            nds.emulate_frame();
+            let hash = hash_screens(&nds);
+            if hash != last_hash {
+                screens_changed = true;
+            }
+            last_hash = hash;
+        }
+        assert!(
+            screens_changed,
+            "displayed screens never changed in 180 frames after Load State; \
+             gameplay appears frozen (see docs/design/savestate-and-video-design.md §2)"
         );
     }
 }

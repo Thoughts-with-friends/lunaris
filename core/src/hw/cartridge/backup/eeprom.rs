@@ -95,16 +95,39 @@ impl<T: EEPROMType> Backup for EEPROM<T> {
             self.mode = Mode::ReadCommand
         }
     }
+
+    /// Captures the in-flight SPI command state (not the memory contents,
+    /// which live in the `.sav` mmap and are not part of the savestate).
+    fn protocol_snapshot(&self) -> super::BackupProtocolState {
+        super::BackupProtocolState::Eeprom {
+            mode: self.mode,
+            write_enable: self.write_enable,
+            value: self.value,
+        }
+    }
+
+    fn restore_protocol_state(&mut self, state: super::BackupProtocolState) {
+        if let super::BackupProtocolState::Eeprom { mode, write_enable, value } = state {
+            self.mode = mode;
+            self.write_enable = write_enable;
+            self.value = value;
+        }
+    }
 }
 
+/// Visible to [`super::BackupProtocolState`] so a savestate can capture and
+/// restore an in-progress SPI transaction across save/load. See
+/// `docs/design/savestate-and-video-design.md` §2.3.
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
-enum Mode {
+pub(crate) enum Mode {
     ReadCommand,
     HandleCommand(Command),
 }
 
+#[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
-enum Command {
+pub(crate) enum Command {
     WR(usize, usize), // Write
     RD(usize, usize), // Read
     RDSR,             // Read Status Register

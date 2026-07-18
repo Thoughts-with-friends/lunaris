@@ -49,18 +49,24 @@ use super::{
 use header::Header;
 use key1_encryption::Key1Encryption;
 
-pub(super) use backup::{Backup, Flash}; // For Firmware
+pub(super) use backup::{Backup, BackupProtocolState, Flash}; // For Firmware
 
 /// NDS cartridge slot state.
 #[derive(emu_utils::Savestate)]
+#[load(in_place_only)]
 pub struct Cartridge {
     /// Chip ID returned by the 0xB7 "Get ROM chip ID" command.
     /// TODO: derive from ROM size and manufacturer code.
     chip_id: u32,
     header: Header,
-    /// `Vec<u8>::load_in_place` does not consume the stored length prefix, so
-    /// route through `Loadable` instead. See `docs/design/savestate-and-video-design.md`.
-    #[load(with = "save.load()?", with_in_place = "*rom = save.load()?")]
+    /// Not serialized: ROMs are immutable and can be tens to hundreds of MB,
+    /// which used to make every savestate file balloon to the ROM's full
+    /// size for no benefit. The ROM is re-supplied by the host at
+    /// [`Cartridge::new`] time instead; savestate files carry only a small
+    /// fingerprint (see `NDS::rom_fingerprint`) so a mismatched ROM can be
+    /// rejected before a load is applied. See
+    /// `docs/design/savestate-and-video-design.md` §1.
+    #[savestate(skip)]
     rom: Vec<u8>,
     key1_encryption: Key1Encryption,
     // Registers
@@ -75,12 +81,20 @@ pub struct Cartridge {
     /// Remaining bytes to transfer in the current block (always a multiple of 4).
     rom_bytes_left: usize,
     /// Prefetched words queued for CPU reads via ROMDATA (4100010h).
-    #[load(with = "save.load()?", with_in_place = "*game_card_words = save.load()?")]
+    #[load(with_in_place = "*game_card_words = save.load()?")]
     game_card_words: VecDeque<u32>,
     // Backup
-    /// Save-data backend (EEPROM / Flash / none). Not serialized; re-opened from file.
+    /// Save-data backend (EEPROM / Flash / none). Not serialized directly;
+    /// re-opened from file at [`Cartridge::new`] time. Its in-flight SPI
+    /// protocol state is captured/restored via `backup_protocol` below.
     #[savestate(skip)]
     backup: Box<dyn Backup>,
+    /// In-flight SPI transaction state of `backup`, captured fresh on every
+    /// store and applied to the live `backup` object on every load. See
+    /// [`BackupProtocolState`] and `docs/design/savestate-and-video-design.md` §2.3.
+    #[store(with = "save.store(&mut backup.protocol_snapshot())?")]
+    #[load(with_in_place = "backup.restore_protocol_state(save.load()?)")]
+    backup_protocol: BackupProtocolState,
 }
 
 impl Cartridge {
@@ -107,6 +121,7 @@ impl Cartridge {
             rom_bytes_left: 0,
             game_card_words: VecDeque::new(),
             backup,
+            backup_protocol: BackupProtocolState::None,
         }
     }
 

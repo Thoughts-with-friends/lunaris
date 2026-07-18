@@ -6,6 +6,7 @@ mod config;
 mod debug;
 mod display;
 mod input;
+mod savestate;
 
 use std::{
     borrow::Borrow as _,
@@ -117,6 +118,37 @@ fn create_nds(rom: &Path, config: &config::Config) -> NDS {
 }
 
 // =========================================================
+// Save states
+// =========================================================
+
+fn state_slot_path(config: &config::Config, slot: usize) -> PathBuf {
+    config.save_state_dir.join(format!("state_{slot}.bin"))
+}
+
+fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
+    let path = state_slot_path(config, slot);
+    if let Err(e) = savestate::save_to_file(nds, &path) {
+        nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
+    }
+}
+
+/// Loads slot `slot` into `nds`. Returns `true` on success, so callers can
+/// unpause emulation only when the load actually applied.
+fn load_state_from_slot(nds: &mut NDS, config: &config::Config, slot: usize) -> bool {
+    let path = state_slot_path(config, slot);
+    match savestate::load_from_file(nds, &path) {
+        Ok(()) => {
+            nds_core::log::info!(target: "nds_core::savedata", "loaded state. {}", path.display());
+            true
+        }
+        Err(e) => {
+            nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
+            false
+        }
+    }
+}
+
+// =========================================================
 // ImGui
 // =========================================================
 
@@ -206,30 +238,10 @@ fn frame(
 
     for action in state_actions {
         match action {
-            StateAction::Save(slot) => match ctx.nds.save_state() {
-                Ok(bytes) => {
-                    let path = ctx.config.save_state_dir.join(format!("state_{slot}.bin"));
-                    let _ = std::fs::create_dir_all(&ctx.config.save_state_dir);
-                    std::fs::write(&path, bytes).unwrap_or_else(|e| {
-                        nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
-                    });
-                }
-                Err(e) => {
-                    nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
-                }
-            },
+            StateAction::Save(slot) => save_state_to_slot(&mut ctx.nds, &ctx.config, slot),
             StateAction::Load(slot) => {
-                let path = ctx.config.save_state_dir.join(format!("state_{slot}.bin"));
-                match std::fs::read(&path) {
-                    Ok(bytes) => match ctx.nds.load_state(&bytes) {
-                        Ok(()) => ctx.paused = false,
-                        Err(e) => {
-                            nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
-                        }
-                    },
-                    Err(e) => {
-                        nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
-                    }
+                if load_state_from_slot(&mut ctx.nds, &ctx.config, slot) {
+                    ctx.paused = false;
                 }
             }
         }
@@ -271,18 +283,7 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
                 for i in 1..=5 {
                     if MenuItem::new(imgui::ImString::new(format!("State {i}")).borrow()).build(ui)
                     {
-                        match ctx.nds.save_state() {
-                            Ok(state_bytes) => {
-                                let path = ctx.config.save_state_dir.join(format!("state_{i}.bin"));
-                                let _ = std::fs::create_dir_all(&ctx.config.save_state_dir);
-                                std::fs::write(&path, state_bytes).unwrap_or_else(|e| {
-                                    nds_core::log::error!(target: "nds_core::savedata", "Failed to save state: {e}");
-                                });
-                            }
-                            Err(e) => {
-                                nds_core::log::error!(target: "nds_core::savedata", "Failed to save state: {e}");
-                            }
-                        }
+                        save_state_to_slot(&mut ctx.nds, &ctx.config, i);
                     }
                 }
             });
@@ -291,26 +292,8 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
                 for i in 1..=5 {
                     if MenuItem::new(imgui::ImString::new(format!("State {i}")).borrow()).build(ui)
                     {
-                        let path = ctx.config.save_state_dir.join(format!("state_{i}.bin"));
-                        let state_bytes = match std::fs::read(&path) {
-                            Ok(state_bytes) => state_bytes,
-                            Err(e) => {
-                                nds_core::log::error!(
-                                    target: "nds_core::savedata",
-                                    "Failed to load state: {e}"
-                                );
-                                return;
-                            }
-                        };
-
-                        match ctx.nds.load_state(&state_bytes) {
-                            Ok(()) => {
-                                ctx.paused = false;
-                                nds_core::log::info!(target: "nds_core::savedata", "loaded state. {}", path.display());
-                            }
-                            Err(e) => {
-                                nds_core::log::error!(target: "nds_core::savedata", "Failed to load state: {e}");
-                            }
+                        if load_state_from_slot(&mut ctx.nds, &ctx.config, i) {
+                            ctx.paused = false;
                         }
                     }
                 }

@@ -27,6 +27,48 @@ use no_backup::NoBackup;
 pub trait Backup {
     fn read(&self) -> u8;
     fn write(&mut self, hold: bool, value: u8);
+
+    /// Captures the chip's in-flight SPI protocol state (current
+    /// command/instruction, address bytes received so far, write-enable
+    /// latch, last-read value) for a savestate.
+    ///
+    /// This deliberately excludes the chip's persistent memory contents,
+    /// which live in the `.sav` file's mmap and stay open across a
+    /// savestate load, so they never need to round-trip through the
+    /// savestate itself.
+    fn protocol_snapshot(&self) -> BackupProtocolState;
+
+    /// Restores a protocol state captured by [`Backup::protocol_snapshot`].
+    ///
+    /// A variant mismatch (e.g. a savestate captured under a different
+    /// backup chip type) is ignored rather than applied, leaving the chip's
+    /// current live state untouched.
+    fn restore_protocol_state(&mut self, state: BackupProtocolState);
+}
+
+/// Snapshot of a backup chip's SPI protocol state machine.
+///
+/// Without this, a savestate captured while a game is mid-transaction with
+/// its save chip (a very common window, since games poll their save chip
+/// frequently) would resume with the chip reset to idle. The ARM7 would
+/// then wait forever for a response to a transaction the chip never
+/// started, hanging the game after a Load State even though the CPU/GPU
+/// keep running. See `docs/design/savestate-and-video-design.md` §2.3 (C1).
+#[derive(emu_utils::Savestate)]
+#[derive(Clone, Copy, Debug)]
+pub enum BackupProtocolState {
+    /// [`NoBackup`], or state not yet captured.
+    None,
+    Eeprom {
+        mode: eeprom::Mode,
+        write_enable: bool,
+        value: u8,
+    },
+    Flash {
+        mode: flash::Mode,
+        write_enable: bool,
+        value: u8,
+    },
 }
 
 impl dyn Backup {

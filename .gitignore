@@ -15,3 +15,4 @@ logs/
 .claude/
 .serena/
 docs/design/
+gui/tauri/

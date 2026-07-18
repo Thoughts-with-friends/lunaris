@@ -57,27 +57,28 @@ use timers::Timers;
 /// `arm7_page_table` and `arm9_page_table` are raw-pointer caches over the
 /// above buffers.  They are rebuilt on init and after every savestate load.
 #[derive(emu_utils::Savestate)]
-#[load(post = "self.post_load_hw(save)?")]
+#[load(post = "self.post_load_hw(save)?", in_place_only)]
 pub struct HW {
     // Memory
     pub cp15: CP15,
-    /// `Vec<u8>::load_in_place` does not consume the stored length prefix, so
-    /// route through `Loadable` instead. See `docs/design/savestate-and-video-design.md`.
-    #[load(with = "save.load()?", with_in_place = "*bios7 = save.load()?")]
+    /// Not serialized: BIOS images are immutable and re-supplied by the host
+    /// at construction time, so shipping ~20 KB of BIOS in every savestate
+    /// is pure waste. See `docs/design/savestate-and-video-design.md` §1.3.
+    #[savestate(skip)]
     bios7: Vec<u8>,
-    #[load(with = "save.load()?", with_in_place = "*bios9 = save.load()?")]
+    #[savestate(skip)]
     bios9: Vec<u8>,
     cartridge: Cartridge,
-    #[load(with = "save.load()?", with_in_place = "*itcm = save.load()?")]
+    #[load(with_in_place = "*itcm = save.load()?")]
     itcm: Vec<u8>,
-    #[load(with = "save.load()?", with_in_place = "*dtcm = save.load()?")]
+    #[load(with_in_place = "*dtcm = save.load()?")]
     dtcm: Vec<u8>,
     // #[savestate(skip)] // Skip Dust too
-    #[load(with = "save.load()?", with_in_place = "*main_mem = save.load()?")]
+    #[load(with_in_place = "*main_mem = save.load()?")]
     main_mem: Vec<u8>,
-    #[load(with = "save.load()?", with_in_place = "*iwram = save.load()?")]
+    #[load(with_in_place = "*iwram = save.load()?")]
     iwram: Vec<u8>,
-    #[load(with = "save.load()?", with_in_place = "*shared_wram = save.load()?")]
+    #[load(with_in_place = "*shared_wram = save.load()?")]
     shared_wram: Vec<u8>,
     /// Raw-pointer page table for ARM7 memory (4 KiB pages). Not serialized.
     #[savestate(skip)]
@@ -122,6 +123,12 @@ impl HW {
         // If the GXFIFO was full at save time, exec_commands at the next VBlank
         // will drain it; clearing the flag here prevents permanent CPU starvation.
         self.gpu.engine3d.bus_stalled = false;
+        // Re-evaluate the GXFIFO IRQ condition. `check_interrupts` is normally
+        // driven by register writes and command execution, so if the ARM9 was
+        // `IntrWait`-ing on GEOMETRY_COMMAND_FIFO at save time, the edge that
+        // would wake it up is otherwise lost across a save/load cycle.
+        // See `docs/design/savestate-and-video-design.md` §2.3 (C3).
+        self.gpu.engine3d.check_interrupts(&mut self.interrupts[1].request);
         Ok(())
     }
 
@@ -239,6 +246,22 @@ impl HW {
 
     pub fn rendered_frame(&mut self) -> bool {
         self.gpu.rendered_frame()
+    }
+
+    /// Returns a compact fingerprint of the currently loaded ROM.
+    ///
+    /// Used to verify that a savestate file was captured against the ROM
+    /// currently loaded before applying it, since [`Cartridge::rom`] itself
+    /// is no longer part of the savestate (see
+    /// `docs/design/savestate-and-video-design.md` §1.3).
+    pub fn rom_fingerprint(&self) -> RomFingerprint {
+        let header = self.cartridge.header();
+        RomFingerprint {
+            game_code: header.game_code,
+            header_checksum: header.header_checksum,
+            secure_area_checksum: header.secure_area_checksum,
+            rom_len: self.cartridge.rom().len() as u64,
+        }
     }
 
     pub fn press_key(&mut self, key: Key) {
@@ -406,6 +429,43 @@ impl HW {
         {
             let mem_addr = addr & mem_mask;
             page_table[page_table_i] = mem[mem_addr..mem_addr + page_size].as_mut_ptr();
+        }
+    }
+}
+
+/// Compact fingerprint of a loaded ROM: game code plus the two checksum
+/// fields already present in the cartridge header, plus ROM length.
+///
+/// Used to verify a savestate file matches the ROM currently loaded, without
+/// re-hashing the (potentially 100+ MB) ROM on every save/load. See
+/// `docs/design/savestate-and-video-design.md` §1.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RomFingerprint {
+    pub game_code: u32,
+    pub header_checksum: u16,
+    pub secure_area_checksum: u16,
+    pub rom_len: u64,
+}
+
+impl RomFingerprint {
+    /// Fixed on-disk encoding length in bytes (see [`RomFingerprint::to_bytes`]).
+    pub const ENCODED_LEN: usize = 16;
+
+    pub fn to_bytes(self) -> [u8; Self::ENCODED_LEN] {
+        let mut out = [0u8; Self::ENCODED_LEN];
+        out[0..4].copy_from_slice(&self.game_code.to_le_bytes());
+        out[4..6].copy_from_slice(&self.header_checksum.to_le_bytes());
+        out[6..8].copy_from_slice(&self.secure_area_checksum.to_le_bytes());
+        out[8..16].copy_from_slice(&self.rom_len.to_le_bytes());
+        out
+    }
+
+    pub fn from_bytes(bytes: &[u8; Self::ENCODED_LEN]) -> Self {
+        RomFingerprint {
+            game_code: u32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+            header_checksum: u16::from_le_bytes(bytes[4..6].try_into().unwrap()),
+            secure_area_checksum: u16::from_le_bytes(bytes[6..8].try_into().unwrap()),
+            rom_len: u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
         }
     }
 }

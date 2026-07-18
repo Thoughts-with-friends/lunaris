@@ -15,14 +15,23 @@ use memmap::{MmapMut, MmapOptions};
 use std::fs::File;
 
 use super::{GPU, HW, Scheduler, mem::IORegister};
-use crate::hw::cartridge::{Backup, Flash};
+use crate::hw::cartridge::{Backup, BackupProtocolState, Flash};
 use tsc::TSC;
 
 #[derive(emu_utils::Savestate)]
+#[load(in_place_only)]
 pub struct SPI {
     cnt: CNT,
+    /// Not serialized directly; re-opened from the firmware file at
+    /// [`SPI::new`] time. Its in-flight SPI protocol state is
+    /// captured/restored via `firmware_protocol` below, mirroring
+    /// `Cartridge::backup_protocol`. See
+    /// `docs/design/savestate-and-video-design.md` §2.3.
     #[savestate(skip)]
     firmware: Flash,
+    #[store(with = "save.store(&mut firmware.protocol_snapshot())?")]
+    #[load(with_in_place = "firmware.restore_protocol_state(save.load()?)")]
+    firmware_protocol: BackupProtocolState,
     tsc: TSC,
 }
 
@@ -31,6 +40,7 @@ impl SPI {
         SPI {
             cnt: CNT::new(),
             firmware: Flash::new_firmware(SPI::init_firmware(firmware_file)),
+            firmware_protocol: BackupProtocolState::None,
             tsc: TSC::new(),
         }
     }

@@ -7,6 +7,12 @@ impl Backup for NoBackup {
         0
     }
     fn write(&mut self, _hold: bool, _value: u8) {}
+
+    fn protocol_snapshot(&self) -> super::BackupProtocolState {
+        super::BackupProtocolState::None
+    }
+
+    fn restore_protocol_state(&mut self, _state: super::BackupProtocolState) {}
 }
 
 impl NoBackup {
