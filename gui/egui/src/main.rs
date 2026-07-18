@@ -478,6 +478,7 @@ impl eframe::App for LunarisApp {
 }
 
 fn main() -> eframe::Result<()> {
+    #[cfg(not(feature = "release"))]
     nds_core::simplelog::TermLogger::init(
         nds_core::simplelog::LevelFilter::Off,
         nds_core::simplelog::Config::default(),

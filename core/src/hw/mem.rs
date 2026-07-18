@@ -102,11 +102,13 @@ impl HW {
         }
     }
 
-    pub(super) fn read_mem<T: MemoryValue>(mem: &[u8], addr: u32) -> T {
+    pub fn read_mem<T: MemoryValue>(mem: &[u8], addr: u32) -> T {
+        // pub(super) fn read_mem<T: MemoryValue>(mem: &[u8], addr: u32) -> T {
         unsafe { *(&mem[addr as usize] as *const u8 as *const T) }
     }
 
-    pub(super) fn write_mem<T: MemoryValue>(mem: &mut [u8], addr: u32, value: T) {
+    pub fn write_mem<T: MemoryValue>(mem: &mut [u8], addr: u32, value: T) {
+        // pub(super) fn write_mem<T: MemoryValue>(mem: &mut [u8], addr: u32, value: T) {
         unsafe {
             *(&mut mem[addr as usize] as *mut u8 as *mut T) = value;
         }

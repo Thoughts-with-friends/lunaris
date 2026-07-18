@@ -75,7 +75,7 @@ pub struct HW {
     dtcm: Vec<u8>,
     // #[savestate(skip)] // Skip Dust too
     #[load(with_in_place = "*main_mem = save.load()?")]
-    main_mem: Vec<u8>,
+    pub main_mem: Vec<u8>,
     #[load(with_in_place = "*iwram = save.load()?")]
     iwram: Vec<u8>,
     #[load(with_in_place = "*shared_wram = save.load()?")]
