@@ -1,0 +1,31 @@
+# egui/eframe front end. See docs/design/egui-migration-design.md.
+[package]
+name = "lunaris-egui"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "lunaris-egui"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "x11", "wayland"] }
+egui = "0.33"
+egui_plot = "0.34.1"
+gilrs = "0.11"
+lunaris-gui-common = { path = "../common" }
+nds-core = { path = "../../core" }
+rfd = "0.14"
+serde = { workspace = true }
+serde_json = "1.0.149"
+
+[features]
+release = []

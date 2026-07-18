@@ -1,1 +1,3 @@
 [alias]
+# `cargo xtask <build|run> [--gui egui|imgui]` — see xtask/src/main.rs.
+xtask = "run -p xtask --quiet --"

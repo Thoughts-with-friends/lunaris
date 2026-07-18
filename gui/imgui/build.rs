@@ -19,7 +19,7 @@ fn main() {
             .set("CompanyName", env!("CARGO_PKG_AUTHORS"))
             .set("LegalCopyright", env!("CARGO_PKG_AUTHORS"))
             .set_language(0x0409) // English	0x0009 / English (US)	0x0409
-            .set_icon("../docs/icons/icon.ico");
+            .set_icon("../../docs/icons/icon.ico");
 
         if let Err(e) = res.compile() {
             println!("{e}");

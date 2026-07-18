@@ -406,8 +406,13 @@ mod tests {
 
         let save_path = std::env::temp_dir().join("lunaris_test_real.sav");
         let _ = fs::remove_file(&save_path);
-        let save_file =
-            OpenOptions::new().read(true).write(true).create(true).open(&save_path).unwrap();
+        let save_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&save_path)
+            .unwrap();
 
         let rom = fs::read("../target/test_rom.nds").unwrap();
         let rom_len = rom.len();

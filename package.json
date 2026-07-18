@@ -6,26 +6,15 @@
   "homepage": "https://github.com/Thoughts-with-friends/lunaris",
   "license": "GPL-3.0",
   "scripts": {
-    "build": "rimraf ./gui/tauri/dist && tauri build --no-bundle -- --profile release",
-    "build:front": "npm --workspace gui/tauri run build:front",
+    "fmt": "cargo fmt --all",
+    "lint": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
+    "build:imgui": "cargo build --release --features release --package lunaris",
+    "build:egui": "cargo build --release --features release --package lunaris-egui",
+    "imgui": "cargo run --release --features release --package lunaris",
+    "egui": "cargo run --release --features release --package lunaris-egui",
     "build:icons": "tauri icon ./gui/tauri/src-tauri/icons/icon.svg",
-    "dev": "tauri dev",
-    "dev:front": "npm --workspace gui/tauri run dev:front",
-    "fmt:back": "cargo fmt --all",
-    "fmt:front": "prettier --cache --write \"**/*.{yaml,yml}\" --ignore-path ./.gitignore",
-    "fmt": "npm run fmt:front && npm run fmt:back",
-    "lint": "cargo clippy --workspace",
-    "lint:fix-front": "npm --workspace gui/tauri run lint:fix",
-    "lint:fix": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
-    "tauri": "tauri",
     "test:back": "cargo nextest run --workspace",
     "test:front": "npm --workspace gui/tauri run test"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "2.9.6",
-    "@types/node": "25.0.3",
-    "prettier": "3.7.4",
-    "rimraf": "^6"
   },
   "workspaces": [
     "gui/tauri"

@@ -1,0 +1,11 @@
+# Build/run dispatcher for the two interchangeable GUI front ends
+# (`gui/egui`, `gui/imgui`). Invoked via the `cargo xtask` alias in
+# `.cargo/config.toml`. Not published, not part of `default-members`.
+[package]
+name = "xtask"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true

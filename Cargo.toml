@@ -11,12 +11,15 @@ rust-version = "1.91"
 version = "0.1.0"
 
 [workspace]
-default-members = ["gui"]
+default-members = ["gui/egui"]
 members = [
   "bitfield",
   "core",
   "free_bios",
-  "gui",
+  "gui/common",
+  "gui/egui",
+  "gui/imgui",
+  "xtask",
 ]
 resolver = "3"
 

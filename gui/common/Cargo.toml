@@ -1,0 +1,17 @@
+[package]
+name = "lunaris-gui-common"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+description = "Backend-neutral GUI helpers shared between the imgui and egui front ends"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nds-core = { path = "../../core" }
+serde = { workspace = true }
+zstd = "0.13"
