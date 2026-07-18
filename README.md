@@ -52,42 +52,47 @@
 
 A Nintendo DS emulator - Rust-based
 
-## How to Build
+## Quick Start
+
+- Imgui
 
 ```shell
-cargo build --release
+cargo run --release --features release --package lunaris
+```
+
+- Egui
+
+```shell
+cargo build --release  # default or
+cargo run --release --features release --package lunaris-egui
 ```
 
 ## Todo List
 
 - [x] **Phase 0 (100%)**: FreeBIOS Development
-- [x] **Phase 1 (100%)**: Foundation Setup (Memory, Constants)
-- [x] **Phase 2 (100%)**: CPU Core Implementation
-- [x] **Phase 3 (100%)**: Memory / I/O Management
-- [x] **Phase 4 (100%)**: GPU Infrastructure
-- [x] **Phase 5 (100%)**: BIOS / ROM Loading
-- [x] **Phase 6 (100%)**: UI / Threading
-- [x] **Phase 7 (100%)**: Audio System
-- [x] **Phase 8 (100%)**: Interrupt System
-- [x] **Phase 9 (100%)**: Instruction Set Completion (ARM9)
-- [x] **Phase 10 (100%)**: ARM7 Implementation
-- [x] **Phase 11 (100%)**: 3D Graphics
-- [x] **Phase 12 (100%)**: Save Data System
-- [x] **Phase 13 (100%)**: WiFi / Networking
-- [ ] **Phase 14 ( 20%)**: Optimization / Debugging
-- [ ] **Phase 15 ( 0%)**: VPN Network support
-- [ ] **Phase 16 ( 0%)**: JIT Compile
+- [ ] **Phase 1 (0%)**: Optimization / Debugging
+  - [x] **Phase 1-1 (100%)**: Support Controller Input
+  - [ ] **Phase 1-2 (0%)**: Save Data System (.sav)
+  - [ ] **Phase 1-3 (0%)**: 2D Graphics
+  - [ ] **Phase 1-4 (0%)**: 3D Graphics
+  - [ ] **Phase 1-5 (0%)**: Loading Any ROM
+- [ ] **Phase 2 (0%)**: WiFi / Networking
+- [ ] **Phase 3 (0%)**: VPN Network support
+- [ ] **Phase 4 (0%)**: JIT Compile
+
 
 ## CI Tests
 
-- [Lunaris CI](https://github.com/Thoughts-with-friends/lunaris/actions)
+Our CI tests are run using [GitHub Actions](https://github.com/Thoughts-with-friends/lunaris/actions).
 
 ## References
 
-- [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
+This project is a modified/extended version based on NDS-Emulator.
+
+- [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528): Base on the original NDS Emulator
 - [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
+- [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
 - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
-- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator, sorta
+- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator high performance, low memory usage
 - [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
-- [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528)
 - [TinyFB.nds](https://imrannazar.com/The-Smallest-NDS-File): The smallest Nintendo DS file
