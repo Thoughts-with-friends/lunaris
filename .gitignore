@@ -15,4 +15,5 @@ logs/
 .claude/
 .serena/
 docs/design/
+cheats/
 gui/tauri/

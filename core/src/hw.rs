@@ -9,6 +9,7 @@
 //! - I/O maps: <https://problemkaputt.de/gbatek.htm#dsiomaps>
 //! - Technical data (clock rates, RAM sizes): <https://problemkaputt.de/gbatek.htm#dstechnicaldata>
 
+mod ar;
 mod cartridge;
 mod dma;
 mod gpu;
@@ -26,7 +27,7 @@ mod timers;
 use std::convert::TryInto;
 use std::fs::File;
 
-use crate::unlikely;
+use crate::{CheatMap, unlikely};
 use cartridge::Cartridge;
 pub use gpu::{EngineA, EngineB, GPU};
 use interrupt_controller::{InterruptController, InterruptRequest};
@@ -59,6 +60,12 @@ use timers::Timers;
 #[derive(emu_utils::Savestate)]
 #[load(post = "self.post_load_hw(save)?", in_place_only)]
 pub struct HW {
+    #[savestate(skip)]
+    pub enable_cheats: bool,
+    // Cheats <addr, value>
+    #[savestate(skip)] // external cheat file
+    pub cheat_map: CheatMap,
+
     // Memory
     pub cp15: CP15,
     /// Not serialized: BIOS images are immutable and re-supplied by the host
@@ -175,6 +182,8 @@ impl HW {
         let mut scheduler = Scheduler::new();
         let cartridge = Cartridge::new(rom, save_file, &bios7);
         let mut hw = HW {
+            enable_cheats: false,
+            cheat_map: CheatMap::new(),
             // Memory
             cp15: CP15::new(),
             bios7,

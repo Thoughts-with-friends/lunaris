@@ -2755,6 +2755,7 @@ dependencies = [
  "cpal",
  "emu-utils",
  "free_bios",
+ "indexmap 2.14.0",
  "likely_stable",
  "log",
  "memmap",

@@ -35,3 +35,14 @@ pub mod nds;
 pub use nds::NDS;
 
 mod macros;
+
+pub type CheatMap = Vec<ArCode>;
+
+/// A single Action Replay style cheat code.
+///
+/// `code` holds the raw instruction stream, interpreted two `u32` words
+/// (opcode+address, parameter) at a time, exactly as the original AR VM does.
+pub struct ArCode {
+    pub code: Vec<u32>,
+    pub enabled: bool,
+}

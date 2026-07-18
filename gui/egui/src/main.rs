@@ -2,10 +2,13 @@
 #![cfg_attr(feature = "release", windows_subsystem = "windows")]
 #![expect(clippy::collapsible_if)]
 
+mod cheat_editor;
 mod config;
 mod debug;
+mod fonts;
 mod input;
 mod screens;
+mod window;
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +16,7 @@ use eframe::egui;
 use lunaris_gui_common::framebuffer::{
     PlacementRect, ScreenLayout, layout_screens, point_to_touch_coords,
 };
+use nds_core::CheatMap;
 use nds_core::nds::NDS;
 
 use debug::{
@@ -20,6 +24,8 @@ use debug::{
     VRAMWindowState,
 };
 use screens::ScreenTextures;
+
+use crate::cheat_editor::CheatEditorState;
 
 /// Groups every debug inspector window, mirroring the imgui front end's
 /// `DebugState` struct in `gui/src/main.rs`.
@@ -85,14 +91,51 @@ fn resolve_rom_path(config: &config::Config) -> Option<PathBuf> {
     rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
 }
 
-fn create_nds(rom: &Path, config: &config::Config) -> NDS {
-    NDS::load_rom(
+fn read_cheat_map(config: &config::Config) -> (CheatMap, String) {
+    if let Some(rom_name) = config.last_rom_path.as_ref().and_then(|p| p.file_name()) {
+        let cheat_dir = config.cheat_dir.as_path();
+        let mut cheat_file = cheat_dir.join(rom_name);
+        cheat_file.set_extension("txt");
+
+        match std::fs::read_to_string(&cheat_file) {
+            Ok(map_str) => {
+                let map =
+                    lunaris_gui_common::cheat_map::cheat_map_from_str(&map_str).unwrap_or_default();
+                (map, map_str)
+            }
+            Err(err) => {
+                nds_core::log::error!("{err}");
+                let _ = std::fs::create_dir_all(cheat_dir);
+                let _ = std::fs::write(cheat_file, "");
+                (CheatMap::new(), String::new())
+            }
+        }
+    } else {
+        (CheatMap::new(), String::new())
+    }
+}
+
+fn create_nds(
+    rom: &Path,
+    config: &config::Config,
+    cheat_editor_state: &mut CheatEditorState,
+) -> NDS {
+    let (cheat_map, cheat_txt) = read_cheat_map(config);
+    cheat_editor_state.text_buffer = cheat_txt;
+
+    let mut nds = NDS::load_rom(
         config.bios7_path.as_deref(),
         config.bios9_path.as_deref(),
         config.firmware_path.as_deref(),
         rom,
         config.audio_volume,
-    )
+    );
+
+    // Cheat Settings
+    nds.set_cheat_map(cheat_map);
+    nds.set_enable_cheats(config.enable_cheats);
+
+    nds
 }
 
 fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
@@ -125,6 +168,7 @@ struct LunarisApp {
     screens: ScreenTextures,
     gilrs: gilrs::Gilrs,
     stylus_down: bool,
+    cheat_editor_state: CheatEditorState,
     show_video_window: bool,
     show_audio_window: bool,
     debug: DebugState,
@@ -138,7 +182,12 @@ struct LunarisApp {
 }
 
 impl LunarisApp {
-    fn new(ctx: &egui::Context, nds: NDS, config: config::Config) -> Self {
+    fn new(
+        ctx: &egui::Context,
+        nds: NDS,
+        config: config::Config,
+        cheat_editor_state: CheatEditorState,
+    ) -> Self {
         LunarisApp {
             nds,
             config,
@@ -146,6 +195,7 @@ impl LunarisApp {
             screens: ScreenTextures::new(ctx),
             gilrs: gilrs::Gilrs::new().expect("failed to initialize gamepad backend"),
             stylus_down: false,
+            cheat_editor_state,
             show_video_window: false,
             show_audio_window: false,
             debug: DebugState::new(),
@@ -153,6 +203,10 @@ impl LunarisApp {
             last_title_update: std::time::Instant::now(),
             last_fps: 0.0,
         }
+    }
+
+    fn update_window_info(&mut self, ctx: &egui::Context) {
+        window::update_window_geometry(ctx, egui::ViewportId::ROOT, &mut self.config.window);
     }
 
     fn handle_state_hotkeys(&mut self, ctx: &egui::Context) {
@@ -180,7 +234,11 @@ impl LunarisApp {
         if path.extension().and_then(|e| e.to_str()) != Some("nds") {
             return;
         }
-        self.nds = create_nds(path, &self.config);
+
+        // loading a NDS file
+        self.nds = create_nds(path, &self.config, &mut self.cheat_editor_state);
+
+        // Save config
         self.config.last_rom_path = Some(path.clone());
         self.config.save();
         self.paused = false;
@@ -201,7 +259,7 @@ impl LunarisApp {
                         }) {
                             let p = p.path().to_path_buf();
 
-                            self.nds = create_nds(&p, &self.config);
+                            self.nds = create_nds(&p, &self.config, &mut self.cheat_editor_state);
                             self.config.last_rom_path = Some(p);
                             self.config.save();
                             self.paused = false;
@@ -245,7 +303,8 @@ impl LunarisApp {
                     }
                     if ui.button("Reset").clicked() {
                         if let Some(path) = self.config.last_rom_path.clone() {
-                            self.nds = create_nds(&path, &self.config);
+                            self.nds =
+                                create_nds(&path, &self.config, &mut self.cheat_editor_state);
                             self.paused = false;
                         }
                         ui.close();
@@ -259,6 +318,17 @@ impl LunarisApp {
                     }
                     if ui.button("Video").clicked() {
                         self.show_video_window = true;
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button("Tools", |ui| {
+                    if ui.checkbox(&mut self.config.enable_cheats, "Enable Cheats").clicked() {
+                        self.nds.set_enable_cheats(self.config.enable_cheats);
+                    }
+
+                    if ui.button("Cheat Codes").clicked() {
+                        self.cheat_editor_state.is_open = !self.cheat_editor_state.is_open;
                         ui.close();
                     }
                 });
@@ -458,6 +528,7 @@ impl LunarisApp {
 impl eframe::App for LunarisApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint();
+        self.update_window_info(ctx);
 
         if !self.paused {
             self.nds.emulate_frame();
@@ -477,6 +548,10 @@ impl eframe::App for LunarisApp {
         self.audio_window(ctx);
         self.video_window(ctx);
         self.update_title(ctx);
+
+        if let Some(cheat_map) = self.cheat_editor_state.show_cheats(ctx, &self.config) {
+            self.nds.set_cheat_map(cheat_map);
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -498,12 +573,13 @@ fn main() -> eframe::Result<()> {
     let rom = resolve_rom_path(&config).expect("ROM required");
     config.last_rom_path = Some(rom.clone());
 
-    let nds = create_nds(&rom, &config);
+    let mut cheat_editor_state = CheatEditorState::default();
+    let nds = create_nds(&rom, &config, &mut cheat_editor_state);
 
     let viewport = egui::ViewportBuilder::default()
         .with_title("Lunaris")
         .with_inner_size([config.window.width, config.window.height])
-        .with_position([config.window.pos_x as f32, config.window.pos_y as f32])
+        .with_position([config.window.pos_x, config.window.pos_y])
         // winit's OS-level drag-and-drop registration calls `OleInitialize`,
         // which panics with `RPC_E_CHANGED_MODE` if COM was already
         // initialized in multithreaded mode elsewhere in the process (seen
@@ -521,7 +597,8 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(LunarisApp::new(&cc.egui_ctx, nds, config)))
+            fonts::setup_custom_fonts::<&str>(&cc.egui_ctx, None);
+            Ok(Box::new(LunarisApp::new(&cc.egui_ctx, nds, config, cheat_editor_state)))
         }),
     )
 }

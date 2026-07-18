@@ -1,4 +1,4 @@
-use crate::likely;
+use crate::{CheatMap, likely};
 use std::{
     fs::{self, File, OpenOptions},
     path::Path,
@@ -111,6 +111,160 @@ impl NDS {
                 self.arm7.set_cycle(self.hw.cycle());
             }
         }
+
+        if self.hw.enable_cheats {
+            self.hw.apply_cheats();
+            // self.apply_cheats();
+        }
+    }
+
+    // fn apply_cheats(&mut self) {
+    //     // DRAM: 02000000–023FFFFF
+    //     const MAIN_MEM_SIZE: u32 = 0x003F_FFFF; // 4 MB
+
+    //     let mut skip_remaining = false;
+
+    //     for (addr, value) in &self.hw.cheat_map {
+    //         if skip_remaining {
+    //             continue;
+    //         }
+
+    //         let offset = addr & MAIN_MEM_SIZE;
+
+    //         let opcode = (value >> 16) as u16;
+    //         let operand = *value as u16;
+
+    //         // TODO: where do adress write u8 and u16 data
+    //         if opcode == 0x0000 {
+    //             // Expected skip command
+    //             //
+    //             // NOTE: We MUST read exactly 16 bits (u16) here.
+    //             // The condition anchor (2 bytes) sits immediately adjacent to the 32-bit
+    //             // modification targets at (offset + 2). Reading 32 bits from this address
+    //             // would overlap into the payload area, causing false negatives and breaking the cheat.
+    //             if offset < self.hw.main_mem.len() as u32 {
+    //                 let current = HW::read_mem::<u8>(&self.hw.main_mem, offset);
+    //                 if current != (operand as u8) {
+    //                     skip_remaining = true;
+    //                 }
+
+    //                 // Normal 8-bit write
+    //                 HW::write_mem::<u8>(&mut self.hw.main_mem, offset, *value as u8);
+    //             } else if offset + 1 < self.hw.main_mem.len() as u32 {
+    //                 let current = HW::read_mem::<u16>(&self.hw.main_mem, offset);
+    //                 if current != operand {
+    //                     skip_remaining = true;
+    //                 }
+
+    //                 // Normal 16-bit write
+    //                 HW::write_mem::<u16>(&mut self.hw.main_mem, offset, *value as u16);
+    //             } else {
+    //                 skip_remaining = true;
+    //             }
+
+    //             continue;
+    //         }
+
+    //         // Normal 32-bit write
+    //         if offset + 3 < self.hw.main_mem.len() as u32 {
+    //             HW::write_mem::<u32>(&mut self.hw.main_mem, offset, *value);
+    //         }
+    //         // TODO: warn log
+    //     }
+    // }
+
+    // // SPDX-FileCopyrightText: (C) 2016-2026 melonDS team
+    // // SPDX-License-Identifier: GPL-3.0
+    // // https://github.com/melonDS-emu/melonDS/blob/10a173b5536fc75cd93f8a3868349dad963542ef/src/AREngine.cpp#L42
+    // fn apply_cheats_melon(&mut self) {
+    //     // DRAM: 02000000–023FFFFF
+    //     const MAIN_MEM_SIZE: u32 = 0x003F_FFFF; // 4 MB
+
+    //     let mut cond: u32 = 1;
+    //     let mut cond_stack: u32 = 0;
+
+    //     // cheat_mapがIndexHashMap（挿入順序が保証されたIterator）であることを活用
+    //     for (addr, &value) in &self.hw.cheat_map {
+    //         let op = (addr >> 24) as u8;
+    //         let offset = addr & MAIN_MEM_SIZE;
+
+    //         // 条件が偽（cond == !(0xD0..=0xD2).contains(&op)のコマンドはすべてスキップ
+    //         if cond == 0 && !(0xD0..=0xD2).contains(&op) {
+    //             continue;
+    //         }
+
+    //         // melonDSのAREngineをベースにしたオペコード判定
+    //         match op & 0xF0 {
+    //             0x00 => {
+    //                 // 32-bit write
+    //                 if offset + 3 < self.hw.main_mem.len() as u32 {
+    //                     HW::write_mem::<u32>(&mut self.hw.main_mem, offset, value);
+    //                 }
+    //             }
+    //             0x10 => {
+    //                 // 16-bit write
+    //                 if offset + 1 < self.hw.main_mem.len() as u32 {
+    //                     HW::write_mem::<u16>(
+    //                         &mut self.hw.main_mem,
+    //                         offset,
+    //                         (value & 0xFFFF) as u16,
+    //                     );
+    //                 }
+    //             }
+    //             0x20 => {
+    //                 // 8-bit write
+    //                 if offset < self.hw.main_mem.len() as u32 {
+    //                     HW::write_mem::<u8>(&mut self.hw.main_mem, offset, (value & 0xFF) as u8);
+    //                 }
+    //             }
+    //             0x90 => {
+    //                 // IF b.l == ((~b.h) & u16[a]) -> キー入力判定判定用
+    //                 cond_stack = (cond_stack << 1) | cond;
+
+    //                 if offset + 1 < self.hw.main_mem.len() as u32 {
+    //                     let val = HW::read_mem::<u16>(&self.hw.main_mem, offset);
+    //                     let mask = !(value >> 16) as u16;
+    //                     let chk = mask & val;
+
+    //                     cond = if ((value & 0xFFFF) as u16) == chk { 1 } else { 0 };
+    //                 } else {
+    //                     cond = 0;
+    //                 }
+    //             }
+    //             _ => {
+    //                 // 特殊オペコードの処理
+    //                 match op {
+    //                     0xD2 => {
+    //                         // NEXT+FLUSH (条件レジスタ等の完全リセット)
+    //                         cond_stack = 0;
+    //                         cond = 1;
+    //                     }
+    //                     _ => {
+    //                         // TODO: warn log
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+
+    /// gui api
+    #[inline]
+    pub fn get_cheat_map(&self) -> &CheatMap {
+        &self.hw.cheat_map
+    }
+
+    /// gui api
+    #[inline]
+    pub fn set_cheat_map(&mut self, cheat_map: CheatMap) {
+        // 0223_DD34 6008_0180
+        // 0223_DD38 309C_1C28
+        self.hw.cheat_map = cheat_map;
+    }
+
+    #[inline]
+    pub fn set_enable_cheats(&mut self, enable: bool) {
+        self.hw.enable_cheats = enable;
     }
 
     #[inline]

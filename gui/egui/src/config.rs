@@ -12,16 +12,27 @@ use lunaris_gui_common::framebuffer::ScreenLayout;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WindowConfig {
-    pub pos_x: i32,
-    pub pos_y: i32,
+    /// X coordinate of the window's top-left corner (outer rect).
+    pub pos_x: f32,
+
+    /// Y coordinate of the window's top-left corner (outer rect).
+    pub pos_y: f32,
+
+    /// Inner width of the window (excludes OS decorations).
     pub width: f32,
+
+    /// Inner height of the window (excludes title bar and OS decorations).
     pub height: f32,
+
+    /// Whether the window was maximized when the application last closed.
+    pub maximized: bool,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { pos_x: 100, pos_y: 100, width: 512.0, height: 768.0 }
+        Self { pos_x: 100.0, pos_y: 100.0, width: 512.0, height: 768.0, maximized: false }
     }
 }
 
@@ -76,6 +87,8 @@ pub struct Config {
     pub firmware_path: Option<PathBuf>,
     pub last_rom_path: Option<PathBuf>,
     pub save_state_dir: PathBuf,
+    pub enable_cheats: bool,
+    pub cheat_dir: PathBuf,
     pub window: WindowConfig,
     pub audio_volume: f32,
     pub video: VideoConfig,
@@ -89,6 +102,8 @@ impl Default for Config {
             firmware_path: None,
             last_rom_path: None,
             save_state_dir: PathBuf::from("./states"),
+            enable_cheats: false,
+            cheat_dir: PathBuf::from("./cheats"),
             window: WindowConfig::default(),
             audio_volume: 100.0,
             video: VideoConfig::default(),

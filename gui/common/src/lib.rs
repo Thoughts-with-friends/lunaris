@@ -3,5 +3,6 @@
 //!
 //! See `docs/design/egui-migration-design.md` §3.2.
 
+pub mod cheat_map;
 pub mod framebuffer;
 pub mod savestate;
