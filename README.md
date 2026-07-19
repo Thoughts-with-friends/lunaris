@@ -80,6 +80,9 @@ cargo run --release --features release --package lunaris-egui
 - [ ] **Phase 3 (0%)**: VPN Network support
 - [ ] **Phase 4 (0%)**: JIT Compile
 
+<p align="center">
+  <img src="./docs/img/ui_sora.png" alt="Lunaris GUI" width="600"/>
+</p>
 
 ## CI Tests
 
