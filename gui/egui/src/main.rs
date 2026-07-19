@@ -675,8 +675,10 @@ fn main() -> eframe::Result<()> {
     let mut cheat_editor_state = CheatEditorState::default();
     let nds = create_nds(&rom, &config, &mut cheat_editor_state);
 
+    let (icon_rgba, [icon_width, icon_height]) = icon();
     let viewport = egui::ViewportBuilder::default()
         .with_title("Lunaris(egui)")
+        .with_icon(egui::IconData { rgba: icon_rgba, width: icon_width, height: icon_height })
         .with_inner_size([config.window.width, config.window.height])
         .with_position([config.window.pos_x, config.window.pos_y])
         // winit's OS-level drag-and-drop registration calls `OleInitialize`,
@@ -700,4 +702,26 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(LunarisApp::new(&cc.egui_ctx, nds, config, cheat_editor_state)))
         }),
     )
+}
+
+/// Get icon
+///
+/// (rgba_data, [width, height])
+///
+/// # Panics
+/// Not icon load
+#[inline]
+fn icon() -> (Vec<u8>, [u32; 2]) {
+    ico_to_rgba(include_bytes!("../../../docs/icons/icon.ico"))
+}
+
+#[expect(clippy::unwrap_used)]
+fn ico_to_rgba(bytes: &[u8]) -> (Vec<u8>, [u32; 2]) {
+    let cursor = std::io::Cursor::new(bytes);
+    let ico = ico::IconDir::read(cursor).unwrap();
+    let entry = ico.entries().first().unwrap();
+    let image = entry.decode().unwrap();
+    let width = image.width();
+    let height = image.height();
+    (image.rgba_data().to_vec(), [width, height])
 }

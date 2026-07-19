@@ -8,11 +8,10 @@
   "scripts": {
     "fmt": "cargo fmt --all",
     "lint": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
-    "build:imgui": "cargo build --release --features release --package lunaris",
-    "build:egui": "cargo build --release --features release --package lunaris-egui",
-    "imgui": "cargo run --release --features release --package lunaris",
-    "egui": "cargo run --release --features release --package lunaris-egui",
-    "build:icons": "tauri icon ./gui/tauri/src-tauri/icons/icon.svg",
+    "build:imgui": "cargo build --release --features release --package lunaris_imgui",
+    "build:egui": "cargo build --release --features release --package lunaris",
+    "imgui": "cargo run --release --features release --package lunaris_imgui",
+    "egui": "cargo run --release --features release --package lunaris",
     "test:back": "cargo nextest run --workspace",
     "test:front": "npm --workspace gui/tauri run test"
   },

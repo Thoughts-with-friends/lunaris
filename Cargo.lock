@@ -1964,6 +1964,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ico"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e795dff5605e0f04bff85ca41b51a96b83e80b281e96231bcaaf1ac35103371"
+dependencies = [
+ "byteorder",
+ "png 0.17.16",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,7 +2113,7 @@ dependencies = [
  "image-webp",
  "moxcms",
  "num-traits",
- "png",
+ "png 0.18.1",
  "qoi",
  "ravif",
  "rayon",
@@ -2511,28 +2521,13 @@ dependencies = [
 
 [[package]]
 name = "lunaris"
-version = "2.0.0"
-dependencies = [
- "gl",
- "glfw",
- "imgui",
- "imgui-opengl-renderer",
- "nds-core",
- "rfd",
- "serde",
- "serde_json",
- "winres",
- "zstd",
-]
-
-[[package]]
-name = "lunaris-egui"
 version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
  "egui_plot",
  "gilrs",
+ "ico",
  "lunaris-gui-common",
  "nds-core",
  "pollster",
@@ -2549,6 +2544,22 @@ dependencies = [
  "nds-core",
  "serde",
  "xbrz-rs",
+ "zstd",
+]
+
+[[package]]
+name = "lunaris_imgui"
+version = "2.0.0"
+dependencies = [
+ "gl",
+ "glfw",
+ "imgui",
+ "imgui-opengl-renderer",
+ "nds-core",
+ "rfd",
+ "serde",
+ "serde_json",
+ "winres",
  "zstd",
 ]
 
@@ -3456,6 +3467,19 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "png"

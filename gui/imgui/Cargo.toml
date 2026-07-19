@@ -1,6 +1,6 @@
 # forked: https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528
 [package]
-name = "lunaris"
+name = "lunaris_imgui"
 version = "2.0.0"
 authors = ["Akash Munagala <akash.munagala@gmail.com>"]
 categories.workspace = true

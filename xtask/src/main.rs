@@ -21,12 +21,12 @@ enum Gui {
 
 impl Gui {
     /// Workspace package implementing this GUI. See `Cargo.toml`
-    /// `[workspace] members` (`gui/egui` = `lunaris-egui`, `gui/imgui` =
+    /// `[workspace] members` (`gui/egui` = `lunaris`, `gui/imgui` =
     /// `lunaris`, the original front end's package name, left unrenamed).
     const fn package(self) -> &'static str {
         match self {
-            Gui::Egui => "lunaris-egui",
-            Gui::Imgui => "lunaris",
+            Gui::Egui => "lunaris",
+            Gui::Imgui => "lunaris_imgui",
         }
     }
 }

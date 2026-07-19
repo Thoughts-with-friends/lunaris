@@ -37,10 +37,8 @@ jobs:
           platform: ${{ matrix.platform }}
           build_profile: ${{ env.BUILD_PROFILE }}
 
-      # - name: Build GUI
-      #   run: npm run build
-      - name: build
-        run: cargo build -p lunaris-egui --release
+      - name: build egui
+        run: cargo build -p lunaris --release
 
       - name: Move exe -> ./build
         uses: ./.github/actions/setup-release
