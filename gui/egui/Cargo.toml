@@ -16,6 +16,9 @@ rust-version.workspace = true
 name = "lunaris-egui"
 path = "src/main.rs"
 
+[build-dependencies]
+winres = "0.1.12" # Meta information can be added to the exe.
+
 [dependencies]
 eframe = { version = "0.33", default-features = false, features = [
   "default_fonts",

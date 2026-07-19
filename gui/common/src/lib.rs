@@ -6,3 +6,4 @@
 pub mod cheat_map;
 pub mod framebuffer;
 pub mod savestate;
+pub mod upscale;

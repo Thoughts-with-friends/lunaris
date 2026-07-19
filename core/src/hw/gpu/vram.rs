@@ -315,9 +315,16 @@ impl VRAM {
                 &self.engine_b_obj[index & VRAM::ENGINE_B_OBJ_MASK],
                 addr,
             ),
-            VRAM::LCDC_OFFSET => VRAM::read_mapping(
+            // GBATEK's VRAM address decoding for ARM9 only distinguishes 5
+            // of the 8 values `addr & 0x00E0_0000` can take (the CPU-side
+            // VRAM window is a full 16 MiB, `0x0600_0000`-`0x06FF_FFFF`, far
+            // larger than the ~656 KiB of physical VRAM banks). Addresses at
+            // or above `LCDC_OFFSET` that aren't one of the other four
+            // regions all alias back into LCDC VRAM on real hardware, so
+            // every remaining value in the 3-bit selector routes here too.
+            VRAM::LCDC_OFFSET..=0x00E0_0000 => VRAM::read_mapping(
                 &self.banks,
-                &self.lcdc[(addr & 0xF_C000) / VRAM::MAPPING_LEN],
+                &self.lcdc[((addr & 0xF_C000) / VRAM::MAPPING_LEN) % self.lcdc.len()],
                 addr,
             ),
             _ => unreachable!(),
@@ -353,9 +360,10 @@ impl VRAM {
                 addr,
                 value,
             ),
-            VRAM::LCDC_OFFSET => VRAM::write_mapping(
+            // See the matching comment in `arm9_read`.
+            VRAM::LCDC_OFFSET..=0x00E0_0000 => VRAM::write_mapping(
                 &mut self.banks,
-                &self.lcdc[(addr & 0xF_C000) / VRAM::MAPPING_LEN],
+                &self.lcdc[((addr & 0xF_C000) / VRAM::MAPPING_LEN) % self.lcdc.len()],
                 addr,
                 value,
             ),

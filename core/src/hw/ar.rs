@@ -276,18 +276,17 @@ impl HW {
                 0xDC => {
                     offset += lo;
                 }
-                0xDF => {
+                0xDF
                     // Emulator-specific "force CPU target" pseudo-code:
                     // DFFFFFFF 99999999 -> target ARM9
                     // DFFFFFFF 77777777 -> target ARM7
-                    if hi == 0xDFFF_FFFF {
+                    if hi == 0xDFFF_FFFF => {
                         if lo == 0x9999_9999 {
                             proc = ArProc::Arm9;
                         } else if lo == 0x7777_7777 {
                             proc = ArProc::Arm7;
                         }
                     }
-                }
                 0x0E => {
                     // Patch Code: copy YYYYYYYY bytes from the inline data
                     // that follows this instruction to [XXXXXXXX+offset].

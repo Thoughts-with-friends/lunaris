@@ -2539,6 +2539,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "winres",
 ]
 
 [[package]]
@@ -2547,6 +2548,7 @@ version = "0.1.0"
 dependencies = [
  "nds-core",
  "serde",
+ "xbrz-rs",
  "zstd",
 ]
 
@@ -5776,6 +5778,17 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix 1.1.4",
+]
+
+[[package]]
+name = "xbrz-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52ecef5cd352fafb429bf4ef0f4f594395bf85bf87523de1b6bc2e3827e0f385"
+dependencies = [
+ "bytemuck",
+ "parking_lot 0.12.5",
+ "rayon",
 ]
 
 [[package]]

@@ -671,13 +671,33 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
 
     // ARM.14: Coprocessor Data Operations (CDP)
     // ARM.15: Coprocessor Data Transfers (LDC,STC)
-    fn coprocessor(&mut self, _hw: &mut HW, _instr: u32) {
-        unimplemented!("Coprocessor not implemented!");
+    //
+    // The NDS9's ARM946E-S (and the NDS7's ARM7TDMI) implement no
+    // coprocessor other than CP15 (system control), which only responds to
+    // MRC/MCR register transfers, not CDP/LDC/STC. Real hardware raises the
+    // Undefined Instruction exception for these, which the BIOS/firmware
+    // and games are written to expect - not a crash.
+    // GBATEK "ARM CPU Overview - Coprocessors": <https://problemkaputt.de/gbatek.htm#armcpuoverview>
+    fn coprocessor(&mut self, hw: &mut HW, instr: u32) {
+        self.undefined_instr_arm(hw, instr);
     }
 
     // ARM.17: Undefined Instruction
-    fn undefined_instr_arm(&mut self, _hw: &mut HW, _instr: u32) {
-        unimplemented!("ARM.17: Undefined Instruction not implemented!");
+    //
+    // Traps into the CPU's Undefined Instruction exception (vector 0x04,
+    // mode UND) instead of crashing the emulator - matches how real
+    // hardware handles any unencoded or unimplemented-coprocessor
+    // instruction. Mirrors `arm_software_interrupt` above, just with mode
+    // UND and vector 0x04 instead of mode SVC and vector 0x08.
+    // GBATEK "ARM CPU Exceptions": <https://problemkaputt.de/gbatek.htm#armcpuexceptions>
+    fn undefined_instr_arm(&mut self, hw: &mut HW, _instr: u32) {
+        self.instruction_prefetch::<u32>(hw, AccessType::N);
+        self.regs.change_mode(Mode::UND);
+        self.regs.set_lr(self.regs[15].wrapping_sub(4));
+        self.regs.set_i(true);
+        let interrupt_base = if IS_ARM9 { hw.cp15.interrupt_base() } else { 0 };
+        self.regs[15] = interrupt_base | 0x4;
+        self.fill_arm_instr_buffer(hw);
     }
 }
 

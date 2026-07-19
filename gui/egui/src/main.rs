@@ -172,6 +172,12 @@ struct LunarisApp {
     show_video_window: bool,
     show_audio_window: bool,
     debug: DebugState,
+    /// Set whenever the displayed screens need to be re-converted/re-uploaded:
+    /// a new frame was emulated, a ROM was (re)loaded, a savestate was
+    /// loaded, or a video setting changed. Cleared every time
+    /// [`Self::central_panel`] consumes it. See
+    /// `docs/design/resolution-upscaling-design.md` §6.
+    screens_dirty: bool,
     /// Frames actually emulated since the last title update. Deliberately
     /// counts emulated frames, not GUI repaints, so the displayed FPS drops
     /// to 0 if emulation stalls or is paused instead of masking a freeze.
@@ -199,6 +205,7 @@ impl LunarisApp {
             show_video_window: false,
             show_audio_window: false,
             debug: DebugState::new(),
+            screens_dirty: true,
             emulated_frames: 0,
             last_title_update: std::time::Instant::now(),
             last_fps: 0.0,
@@ -219,6 +226,7 @@ impl LunarisApp {
         if shift {
             if load_state_from_slot(&mut self.nds, &self.config, slot) {
                 self.paused = false;
+                self.screens_dirty = true;
             }
         } else {
             save_state_to_slot(&mut self.nds, &self.config, slot);
@@ -242,6 +250,7 @@ impl LunarisApp {
         self.config.last_rom_path = Some(path.clone());
         self.config.save();
         self.paused = false;
+        self.screens_dirty = true;
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context) {
@@ -263,6 +272,7 @@ impl LunarisApp {
                             self.config.last_rom_path = Some(p);
                             self.config.save();
                             self.paused = false;
+                            self.screens_dirty = true;
                         }
                         ui.close();
                     }
@@ -281,6 +291,7 @@ impl LunarisApp {
                             if ui.button(format!("State {slot}")).clicked() {
                                 if load_state_from_slot(&mut self.nds, &self.config, slot) {
                                     self.paused = false;
+                                    self.screens_dirty = true;
                                 }
                                 ui.close();
                             }
@@ -306,6 +317,7 @@ impl LunarisApp {
                             self.nds =
                                 create_nds(&path, &self.config, &mut self.cheat_editor_state);
                             self.paused = false;
+                            self.screens_dirty = true;
                         }
                         ui.close();
                     }
@@ -417,8 +429,67 @@ impl LunarisApp {
                 ui.checkbox(&mut self.config.video.integer_scaling, "Integer scaling").changed();
             changed |=
                 ui.checkbox(&mut self.config.video.show_fps_overlay, "Show FPS overlay").changed();
+
+            ui.separator();
+
+            egui::ComboBox::from_label("Upscaler")
+                .selected_text(match self.config.video.upscale_method {
+                    lunaris_gui_common::upscale::UpscaleMethod::None => "None",
+                    lunaris_gui_common::upscale::UpscaleMethod::Xbrz => "xBRZ",
+                })
+                .show_ui(ui, |ui| {
+                    changed |= ui
+                        .selectable_value(
+                            &mut self.config.video.upscale_method,
+                            lunaris_gui_common::upscale::UpscaleMethod::None,
+                            "None",
+                        )
+                        .changed();
+                    changed |= ui
+                        .selectable_value(
+                            &mut self.config.video.upscale_method,
+                            lunaris_gui_common::upscale::UpscaleMethod::Xbrz,
+                            "xBRZ",
+                        )
+                        .changed();
+                });
+
+            let upscaler_active = self.config.video.upscale_method
+                != lunaris_gui_common::upscale::UpscaleMethod::None;
+            ui.add_enabled_ui(upscaler_active, |ui| {
+                changed |= ui
+                    .add(
+                        egui::Slider::new(
+                            &mut self.config.video.upscale_factor,
+                            lunaris_gui_common::upscale::MIN_FACTOR
+                                ..=lunaris_gui_common::upscale::MAX_FACTOR,
+                        )
+                        .text("Scale factor"),
+                    )
+                    .changed();
+            });
+
+            if upscaler_active {
+                // The actually-computed factor is capped to what the
+                // on-screen size can show (see `screens::effective_factor`),
+                // which is usually well below the nominal slider value —
+                // show the real number so this isn't confusing.
+                let effective = self.screens.last_effective_factor() as usize;
+                let nominal = self.config.video.upscale_factor as usize;
+                ui.weak(format!(
+                    "Output: {}x{} per screen{}",
+                    lunaris_gui_common::framebuffer::SCREEN_WIDTH * effective,
+                    lunaris_gui_common::framebuffer::SCREEN_HEIGHT * effective,
+                    if effective < nominal {
+                        format!(" (effective {effective}x, display-limited)")
+                    } else {
+                        String::new()
+                    },
+                ));
+            }
         });
         if changed {
+            self.screens_dirty = true;
             self.config.save();
         }
         self.show_video_window_close_guard(open, |s| &mut s.show_video_window);
@@ -438,8 +509,10 @@ impl LunarisApp {
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(
             ctx,
             |ui| {
-                self.screens.update(&self.nds, self.config.video.filter.texture_options());
-
+                // Layout is computed before the texture update because the
+                // resulting on-screen rect size caps how large an upscale
+                // factor is actually worth computing/uploading — see
+                // `ScreenTextures::update` and `screens::effective_factor`.
                 let avail = ui.available_size();
                 let (top_rect, bottom_rect) = layout_screens(
                     avail.x,
@@ -447,6 +520,18 @@ impl LunarisApp {
                     self.config.video.screen_layout,
                     self.config.video.screen_gap,
                     self.config.video.integer_scaling,
+                );
+                let display_px = top_rect.width * ctx.pixels_per_point();
+
+                let dirty = std::mem::take(&mut self.screens_dirty);
+                self.screens.update(
+                    ctx,
+                    &self.nds,
+                    self.config.video.filter.texture_options(),
+                    self.config.video.upscale_method,
+                    self.config.video.upscale_factor,
+                    display_px,
+                    dirty,
                 );
 
                 let response = ui.allocate_rect(ui.max_rect(), egui::Sense::click_and_drag());
@@ -518,7 +603,7 @@ impl LunarisApp {
             self.emulated_frames = 0;
             self.last_title_update = std::time::Instant::now();
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                "Lunaris - {:.2} FPS",
+                "Lunaris(egui) - {:.2} FPS",
                 self.last_fps
             )));
         }
@@ -534,6 +619,7 @@ impl eframe::App for LunarisApp {
             self.nds.emulate_frame();
             self.emulated_frames += 1;
             self.debug.stats.frame_completed();
+            self.screens_dirty = true;
         }
 
         if !ctx.wants_keyboard_input() {
@@ -577,7 +663,7 @@ fn main() -> eframe::Result<()> {
     let nds = create_nds(&rom, &config, &mut cheat_editor_state);
 
     let viewport = egui::ViewportBuilder::default()
-        .with_title("Lunaris")
+        .with_title("Lunaris(egui)")
         .with_inner_size([config.window.width, config.window.height])
         .with_position([config.window.pos_x, config.window.pos_y])
         // winit's OS-level drag-and-drop registration calls `OleInitialize`,
@@ -593,7 +679,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions { viewport, ..Default::default() };
 
     eframe::run_native(
-        "Lunaris",
+        "Lunaris(egui)",
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());

@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 
 use lunaris_gui_common::framebuffer::ScreenLayout;
+use lunaris_gui_common::upscale::{self, UpscaleMethod};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +66,11 @@ pub struct VideoConfig {
     pub screen_gap: f32,
     pub integer_scaling: bool,
     pub show_fps_overlay: bool,
+    /// See `docs/design/resolution-upscaling-design.md` §4 and §7.
+    pub upscale_method: UpscaleMethod,
+    /// Integer scale factor in `upscale::MIN_FACTOR..=upscale::MAX_FACTOR`,
+    /// clamped on load in [`Config::load`] since this file is hand-editable.
+    pub upscale_factor: u8,
 }
 
 impl Default for VideoConfig {
@@ -75,6 +81,8 @@ impl Default for VideoConfig {
             screen_gap: 0.0,
             integer_scaling: false,
             show_fps_overlay: false,
+            upscale_method: UpscaleMethod::default(),
+            upscale_factor: 2,
         }
     }
 }
@@ -115,10 +123,12 @@ impl Config {
     const PATH: &'static str = "./config.json";
 
     pub fn load() -> Self {
-        match std::fs::read_to_string(Self::PATH) {
+        let mut config: Self = match std::fs::read_to_string(Self::PATH) {
             Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
             Err(_) => Self::default(),
-        }
+        };
+        config.video.upscale_factor = upscale::clamp_factor(config.video.upscale_factor);
+        config
     }
 
     pub fn save(&self) {

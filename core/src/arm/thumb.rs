@@ -611,8 +611,20 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         }
     }
 
-    fn undefined_instr_thumb(&mut self, _hw: &mut HW, _instr: u16) {
-        panic!("Undefined Thumb Instruction!")
+    // Traps into the CPU's Undefined Instruction exception (vector 0x04,
+    // mode UND) instead of crashing the emulator - see the matching
+    // comment on `undefined_instr_arm`/`coprocessor` in arm.rs. Mirrors
+    // `thumb_software_interrupt` below, just with mode UND and vector 0x04
+    // instead of mode SVC and vector 0x08.
+    fn undefined_instr_thumb(&mut self, hw: &mut HW, _instr: u16) {
+        self.instruction_prefetch::<u16>(hw, AccessType::N);
+        self.regs.change_mode(Mode::UND);
+        self.regs.set_lr(self.regs[15].wrapping_sub(2));
+        self.regs.set_t(false);
+        self.regs.set_i(true);
+        let interrupt_base = if IS_ARM9 { hw.cp15.interrupt_base() } else { 0 };
+        self.regs[15] = interrupt_base | 0x4;
+        self.fill_arm_instr_buffer(hw);
     }
 }
 
