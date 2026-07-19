@@ -311,7 +311,33 @@ impl LunarisApp {
                         }
                     });
 
+                    if ui.button("Import Save").clicked() {
+                        if let Some(p) =
+                            rfd::FileDialog::new().add_filter("Save file", &["sav"]).pick_file()
+                        {
+                            match std::fs::read(&p) {
+                                Ok(bytes) => self.nds.import_save(&bytes),
+                                Err(err) => {
+                                    eprintln!("Failed to read save file {}: {err}", p.display())
+                                }
+                            }
+                        }
+                        ui.close();
+                    }
+
+                    if ui.button("Export Save").clicked() {
+                        if let Some(p) =
+                            rfd::FileDialog::new().add_filter("Save file", &["sav"]).save_file()
+                        {
+                            if let Err(err) = std::fs::write(&p, self.nds.export_save()) {
+                                eprintln!("Failed to write save file {}: {err}", p.display());
+                            }
+                        }
+                        ui.close();
+                    }
+
                     if ui.button("Exit").clicked() {
+                        self.nds.flush_save();
                         std::process::exit(0);
                     }
                 });
@@ -654,6 +680,10 @@ impl eframe::App for LunarisApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Flushes any cartridge save-chip writes that never released
+        // chip-select before the window closed. See
+        // `docs/design/sav-backup-redesign.md` §4.1.
+        self.nds.flush_save();
         self.config.save();
     }
 }

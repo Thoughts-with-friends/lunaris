@@ -13,6 +13,14 @@ impl Backup for NoBackup {
     }
 
     fn restore_protocol_state(&mut self, _state: super::BackupProtocolState) {}
+
+    fn save_bytes(&self) -> Option<&[u8]> {
+        None
+    }
+
+    fn set_save_bytes(&mut self, _bytes: &[u8]) {}
+
+    fn flush(&mut self) {}
 }
 
 impl NoBackup {

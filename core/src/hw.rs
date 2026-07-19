@@ -25,7 +25,7 @@ mod spu;
 mod timers;
 
 use std::convert::TryInto;
-use std::fs::File;
+use std::path::PathBuf;
 
 use crate::{CheatMap, unlikely};
 use cartridge::Cartridge;
@@ -174,13 +174,13 @@ impl HW {
     pub fn new(
         bios7: Vec<u8>,
         bios9: Vec<u8>,
-        firmware_file: File,
+        firmware_path: PathBuf,
         rom: Vec<u8>,
-        save_file: File,
+        save_path: PathBuf,
         direct_boot: bool,
     ) -> Self {
         let mut scheduler = Scheduler::new();
-        let cartridge = Cartridge::new(rom, save_file, &bios7);
+        let cartridge = Cartridge::new(rom, save_path, &bios7);
         let mut hw = HW {
             enable_cheats: false,
             cheat_map: CheatMap::new(),
@@ -206,7 +206,7 @@ impl HW {
             timers: [Timers::new(false), Timers::new(true)],
             ipc: IPC::new(),
             rtc: RTC::new(),
-            spi: SPI::new(firmware_file),
+            spi: SPI::new(firmware_path),
             // Registesr
             wramcnt: WRAMCNT::new(3),
             powcnt2: POWCNT2::new(),
@@ -275,6 +275,25 @@ impl HW {
 
     pub fn press_key(&mut self, key: Key) {
         self.keypad.press_key(key);
+    }
+
+    /// Imports external cartridge save data, replacing the current backup
+    /// chip contents and flushing to the `.sav` file immediately. See
+    /// `docs/design/sav-backup-redesign.md` §4.4.
+    pub fn import_save(&mut self, bytes: &[u8]) {
+        self.cartridge.import_save(bytes);
+    }
+
+    /// Returns a copy of the current cartridge save data, flushing to disk
+    /// first so the returned bytes and the `.sav` file agree.
+    pub fn export_save(&mut self) -> Vec<u8> {
+        self.cartridge.export_save()
+    }
+
+    /// Flushes any pending cartridge save-chip writes to the `.sav` file.
+    /// Intended to be called on emulator shutdown.
+    pub fn flush_save(&mut self) {
+        self.cartridge.flush_save();
     }
 
     pub fn release_key(&mut self, key: Key) {

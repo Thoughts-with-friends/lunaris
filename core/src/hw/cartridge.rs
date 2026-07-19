@@ -37,8 +37,8 @@ mod key1_encryption;
 
 use std::collections::VecDeque;
 use std::convert::TryInto;
-use std::fs::File;
 use std::ops::Range;
+use std::path::PathBuf;
 
 use super::{
     HW, dma,
@@ -49,7 +49,7 @@ use super::{
 use header::Header;
 use key1_encryption::Key1Encryption;
 
-pub(super) use backup::{Backup, BackupProtocolState, Flash}; // For Firmware
+pub(super) use backup::{Backup, BackupProtocolState, Flash, SaveMem}; // For Firmware
 
 /// NDS cartridge slot state.
 #[derive(emu_utils::Savestate)]
@@ -95,6 +95,16 @@ pub struct Cartridge {
     #[store(with = "save.store(&mut backup.protocol_snapshot())?")]
     #[load(with_in_place = "backup.restore_protocol_state(save.load()?)")]
     backup_protocol: BackupProtocolState,
+    /// Persistent contents of `backup`'s save memory, captured fresh on
+    /// every store and applied (then flushed to the `.sav` file) on every
+    /// load. Embedding the bytes directly in the savestate — rather than
+    /// relying on a long-lived file mapping that outlives the load, as the
+    /// previous `mmap`-backed design did — keeps the on-disk `.sav` and the
+    /// restored in-memory world consistent. See
+    /// `docs/design/sav-backup-redesign.md` §4.5.
+    #[store(with = "save.store(&mut backup.save_bytes().unwrap_or(&[]).to_vec())?")]
+    #[load(with_in_place = "backup.set_save_bytes(&save.load::<Vec<u8>>()?)")]
+    backup_save_data: Vec<u8>,
 }
 
 impl Cartridge {
@@ -103,9 +113,9 @@ impl Cartridge {
     const SECURE_AREA_RANGE: Range<usize> = 0x4000..0x8000;
     const SECURE_AREA_SIZE: usize = 0x800;
 
-    pub fn new(rom: Vec<u8>, save_file: File, bios7: &[u8]) -> Self {
+    pub fn new(rom: Vec<u8>, save_path: PathBuf, bios7: &[u8]) -> Self {
         let header = Header::new(&rom);
-        let backup = <dyn Backup>::detect_type(&header, save_file);
+        let backup = <dyn Backup>::detect_type(&header, save_path);
 
         Cartridge {
             chip_id: 0x000_00FC2u32, // TODO: Actually Calculate
@@ -122,7 +132,32 @@ impl Cartridge {
             game_card_words: VecDeque::new(),
             backup,
             backup_protocol: BackupProtocolState::None,
+            backup_save_data: Vec::new(),
         }
+    }
+
+    /// Imports external save data (e.g. from another emulator or a
+    /// flashcart dump), replacing the backup chip's contents and flushing
+    /// immediately to the `.sav` file. Padded/truncated to the chip's size
+    /// the same way a foreign `.sav` file is on load. See
+    /// `docs/design/sav-backup-redesign.md` §4.4.
+    pub fn import_save(&mut self, bytes: &[u8]) {
+        self.backup.set_save_bytes(bytes);
+    }
+
+    /// Returns a copy of the backup chip's current save data, flushing to
+    /// disk first so the returned bytes and the `.sav` file agree.
+    pub fn export_save(&mut self) -> Vec<u8> {
+        self.backup.flush();
+        self.backup.save_bytes().unwrap_or(&[]).to_vec()
+    }
+
+    /// Flushes any pending backup-chip writes to the `.sav` file. Called on
+    /// emulator shutdown so a transaction that never released chip-select
+    /// (rare, but possible if the game is paused/killed mid-write) is not
+    /// lost.
+    pub fn flush_save(&mut self) {
+        self.backup.flush();
     }
 
     /// Re-encrypts the secure area (ROM 4000h..7FFFh) with KEY1 for ROM

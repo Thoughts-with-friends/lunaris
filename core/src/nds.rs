@@ -1,7 +1,7 @@
 use crate::{CheatMap, likely};
 use std::{
-    fs::{self, File, OpenOptions},
-    path::Path,
+    fs,
+    path::{Path, PathBuf},
 };
 
 use crate::arm::ARM;
@@ -64,18 +64,39 @@ impl NDS {
     pub fn new(
         bios7: Vec<u8>,
         bios9: Vec<u8>,
-        firmware_file: File,
+        firmware_path: PathBuf,
         rom: Vec<u8>,
-        save_file: File,
+        save_path: PathBuf,
     ) -> Self {
         let direct_boot = true;
-        let mut hw = HW::new(bios7, bios9, firmware_file, rom, save_file, direct_boot);
+        let mut hw = HW::new(bios7, bios9, firmware_path, rom, save_path, direct_boot);
         NDS { arm7: ARM::new(&mut hw, direct_boot), arm9: ARM::new(&mut hw, direct_boot), hw }
     }
 
     #[inline]
     pub fn set_audio_volume(&mut self, volume_percent: f32) {
         self.hw.set_audio_volume(volume_percent);
+    }
+
+    /// Imports external cartridge save data (e.g. from another emulator or
+    /// a flashcart dump), replacing the current save and flushing it to the
+    /// `.sav` file immediately. Best done at the game's title screen, since
+    /// the running game may hold a stale in-RAM copy of its save data. See
+    /// `docs/design/sav-backup-redesign.md` §4.4.
+    pub fn import_save(&mut self, bytes: &[u8]) {
+        self.hw.import_save(bytes);
+    }
+
+    /// Returns a copy of the current cartridge save data.
+    pub fn export_save(&mut self) -> Vec<u8> {
+        self.hw.export_save()
+    }
+
+    /// Flushes any pending cartridge save-chip writes to the `.sav` file.
+    /// Call before dropping [`NDS`] / on emulator shutdown to guarantee a
+    /// transaction that never released chip-select is not lost.
+    pub fn flush_save(&mut self) {
+        self.hw.flush_save();
     }
 
     /// Test-only: shifts every absolute cycle counter (ARM9/ARM7 CPU cycles,
@@ -114,139 +135,8 @@ impl NDS {
 
         if self.hw.enable_cheats {
             self.hw.apply_cheats();
-            // self.apply_cheats();
         }
     }
-
-    // fn apply_cheats(&mut self) {
-    //     // DRAM: 02000000–023FFFFF
-    //     const MAIN_MEM_SIZE: u32 = 0x003F_FFFF; // 4 MB
-
-    //     let mut skip_remaining = false;
-
-    //     for (addr, value) in &self.hw.cheat_map {
-    //         if skip_remaining {
-    //             continue;
-    //         }
-
-    //         let offset = addr & MAIN_MEM_SIZE;
-
-    //         let opcode = (value >> 16) as u16;
-    //         let operand = *value as u16;
-
-    //         // TODO: where do adress write u8 and u16 data
-    //         if opcode == 0x0000 {
-    //             // Expected skip command
-    //             //
-    //             // NOTE: We MUST read exactly 16 bits (u16) here.
-    //             // The condition anchor (2 bytes) sits immediately adjacent to the 32-bit
-    //             // modification targets at (offset + 2). Reading 32 bits from this address
-    //             // would overlap into the payload area, causing false negatives and breaking the cheat.
-    //             if offset < self.hw.main_mem.len() as u32 {
-    //                 let current = HW::read_mem::<u8>(&self.hw.main_mem, offset);
-    //                 if current != (operand as u8) {
-    //                     skip_remaining = true;
-    //                 }
-
-    //                 // Normal 8-bit write
-    //                 HW::write_mem::<u8>(&mut self.hw.main_mem, offset, *value as u8);
-    //             } else if offset + 1 < self.hw.main_mem.len() as u32 {
-    //                 let current = HW::read_mem::<u16>(&self.hw.main_mem, offset);
-    //                 if current != operand {
-    //                     skip_remaining = true;
-    //                 }
-
-    //                 // Normal 16-bit write
-    //                 HW::write_mem::<u16>(&mut self.hw.main_mem, offset, *value as u16);
-    //             } else {
-    //                 skip_remaining = true;
-    //             }
-
-    //             continue;
-    //         }
-
-    //         // Normal 32-bit write
-    //         if offset + 3 < self.hw.main_mem.len() as u32 {
-    //             HW::write_mem::<u32>(&mut self.hw.main_mem, offset, *value);
-    //         }
-    //         // TODO: warn log
-    //     }
-    // }
-
-    // // SPDX-FileCopyrightText: (C) 2016-2026 melonDS team
-    // // SPDX-License-Identifier: GPL-3.0
-    // // https://github.com/melonDS-emu/melonDS/blob/10a173b5536fc75cd93f8a3868349dad963542ef/src/AREngine.cpp#L42
-    // fn apply_cheats_melon(&mut self) {
-    //     // DRAM: 02000000–023FFFFF
-    //     const MAIN_MEM_SIZE: u32 = 0x003F_FFFF; // 4 MB
-
-    //     let mut cond: u32 = 1;
-    //     let mut cond_stack: u32 = 0;
-
-    //     // cheat_mapがIndexHashMap（挿入順序が保証されたIterator）であることを活用
-    //     for (addr, &value) in &self.hw.cheat_map {
-    //         let op = (addr >> 24) as u8;
-    //         let offset = addr & MAIN_MEM_SIZE;
-
-    //         // 条件が偽（cond == !(0xD0..=0xD2).contains(&op)のコマンドはすべてスキップ
-    //         if cond == 0 && !(0xD0..=0xD2).contains(&op) {
-    //             continue;
-    //         }
-
-    //         // melonDSのAREngineをベースにしたオペコード判定
-    //         match op & 0xF0 {
-    //             0x00 => {
-    //                 // 32-bit write
-    //                 if offset + 3 < self.hw.main_mem.len() as u32 {
-    //                     HW::write_mem::<u32>(&mut self.hw.main_mem, offset, value);
-    //                 }
-    //             }
-    //             0x10 => {
-    //                 // 16-bit write
-    //                 if offset + 1 < self.hw.main_mem.len() as u32 {
-    //                     HW::write_mem::<u16>(
-    //                         &mut self.hw.main_mem,
-    //                         offset,
-    //                         (value & 0xFFFF) as u16,
-    //                     );
-    //                 }
-    //             }
-    //             0x20 => {
-    //                 // 8-bit write
-    //                 if offset < self.hw.main_mem.len() as u32 {
-    //                     HW::write_mem::<u8>(&mut self.hw.main_mem, offset, (value & 0xFF) as u8);
-    //                 }
-    //             }
-    //             0x90 => {
-    //                 // IF b.l == ((~b.h) & u16[a]) -> キー入力判定判定用
-    //                 cond_stack = (cond_stack << 1) | cond;
-
-    //                 if offset + 1 < self.hw.main_mem.len() as u32 {
-    //                     let val = HW::read_mem::<u16>(&self.hw.main_mem, offset);
-    //                     let mask = !(value >> 16) as u16;
-    //                     let chk = mask & val;
-
-    //                     cond = if ((value & 0xFFFF) as u16) == chk { 1 } else { 0 };
-    //                 } else {
-    //                     cond = 0;
-    //                 }
-    //             }
-    //             _ => {
-    //                 // 特殊オペコードの処理
-    //                 match op {
-    //                     0xD2 => {
-    //                         // NEXT+FLUSH (条件レジスタ等の完全リセット)
-    //                         cond_stack = 0;
-    //                         cond = 1;
-    //                     }
-    //                     _ => {
-    //                         // TODO: warn log
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 
     /// gui api
     #[inline]
@@ -346,15 +236,10 @@ impl NDS {
         if !save_file_path.exists() {
             info!(
                 target: "nds_core::savedata",
-                "Save file not found, creating new one at {}",
+                "Save file not found, one will be created on first write at {}",
                 save_file_path.display()
             );
         }
-
-        // NOTE: Do not use `truncate`, the .sav file gets corrupted and won't load.
-        #[allow(clippy::suspicious_open_options)]
-        let save_file =
-            OpenOptions::new().read(true).write(true).create(true).open(&save_file_path).unwrap();
 
         let bios7 = bios7_path
             .and_then(|path| fs::read(path).ok())
@@ -364,26 +249,26 @@ impl NDS {
             .and_then(|path| fs::read(path).ok())
             .unwrap_or_else(|| free_bios::arm9::BIOS_ARM9_BIN.to_vec());
 
-        let firmware_file = if let Some(path) = firmware_path {
-            match OpenOptions::new().read(true).write(true).open(path) {
-                Ok(file) => file,
-                Err(_) => {
-                    fs::write(path, free_bios::firmware::FIRMWARE_DS).unwrap();
-
-                    OpenOptions::new().read(true).write(true).open(path).unwrap()
-                }
+        let resolved_firmware_path = if let Some(path) = firmware_path {
+            if !path.exists() {
+                fs::write(path, free_bios::firmware::FIRMWARE_DS).unwrap();
             }
+            path.to_path_buf()
         } else {
-            let firmware_path = std::env::temp_dir().join("freebios_firmware.bin");
-
-            if !firmware_path.exists() {
-                fs::write(&firmware_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+            let default_path = std::env::temp_dir().join("freebios_firmware.bin");
+            if !default_path.exists() {
+                fs::write(&default_path, free_bios::firmware::FIRMWARE_DS).unwrap();
             }
-
-            OpenOptions::new().read(true).write(true).open(&firmware_path).unwrap()
+            default_path
         };
 
-        let mut nds = NDS::new(bios7, bios9, firmware_file, fs::read(rom_path).unwrap(), save_file);
+        let mut nds = NDS::new(
+            bios7,
+            bios9,
+            resolved_firmware_path,
+            fs::read(rom_path).unwrap(),
+            save_file_path,
+        );
         nds.set_audio_volume(audio_volume);
         nds
     }
@@ -393,7 +278,6 @@ impl NDS {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use std::fs::OpenOptions;
     use std::{
         collections::hash_map::DefaultHasher,
         hash::{Hash, Hasher},
@@ -415,17 +299,13 @@ mod tests {
         if !fw_path.exists() {
             fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
         }
-        let firmware_file = OpenOptions::new().read(true).write(true).open(&fw_path).unwrap();
 
         let save_path = std::env::temp_dir().join("lunaris_test.sav");
-        #[allow(clippy::suspicious_open_options)]
-        let save_file =
-            OpenOptions::new().read(true).write(true).create(true).open(&save_path).unwrap();
 
         // Binary of the smallest valid NDS file: Only the hex-dump
         // https://imrannazar.com/The-Smallest-NDS-File#:~:text=Final%20binary%3A%20352%20bytes
         let tiny_rom = std::fs::read("../target/tiny_rom.nds").unwrap();
-        NDS::new(bios7, bios9, firmware_file, tiny_rom, save_file)
+        NDS::new(bios7, bios9, fw_path, tiny_rom, save_path)
     }
 
     #[ignore = "because we need external test files"]
@@ -556,21 +436,13 @@ mod tests {
         if !fw_path.exists() {
             fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
         }
-        let firmware_file = OpenOptions::new().read(true).write(true).open(&fw_path).unwrap();
 
         let save_path = std::env::temp_dir().join("lunaris_test_real.sav");
         let _ = fs::remove_file(&save_path);
-        let save_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&save_path)
-            .unwrap();
 
         let rom = fs::read("../target/test_rom.nds").unwrap();
         let rom_len = rom.len();
-        let mut nds = NDS::new(bios7, bios9, firmware_file, rom, save_file);
+        let mut nds = NDS::new(bios7, bios9, fw_path, rom, save_path);
 
         // Run well into the boot sequence (health & safety screen, save-chip
         // polling, etc.) before saving.
@@ -609,5 +481,77 @@ mod tests {
             "displayed screens never changed in 180 frames after Load State; \
              gameplay appears frozen (see docs/design/savestate-and-video-design.md §2)"
         );
+    }
+
+    /// Regression test for `docs/design/sav-backup-redesign.md` §3.1: the
+    /// previous `mmap`-backed backup implementation held the `.sav` file
+    /// memory-mapped for the entire emulator session, which on Windows
+    /// blocks any external rename/delete/truncate of that file with
+    /// `ERROR_USER_MAPPED_FILE` -- the reported "save is locked, can't be
+    /// imported/replaced" bug. Runs a real commercial ROM (Flash-backed
+    /// save chip) well past its save-chip boot polling, then proves the
+    /// `.sav` file can be renamed and replaced by another process while the
+    /// `NDS` instance is still alive, and that [`NDS::import_save`] /
+    /// [`NDS::export_save`] work mid-session.
+    #[ignore = "because we need a real commercial ROM (../target/test_rom.nds)"]
+    #[test]
+    fn test_sav_file_not_locked_during_session() {
+        let bios7 = free_bios::arm7::BIOS_ARM7_BIN.to_vec();
+        let bios9 = free_bios::arm9::BIOS_ARM9_BIN.to_vec();
+
+        let fw_path = std::env::temp_dir().join("lunaris_test_fw_lock.bin");
+        if !fw_path.exists() {
+            fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+        }
+
+        // Start from a real, pre-populated save file (as an actual user
+        // would have) rather than a fresh/empty one: with the new
+        // write-on-flush design a chip that is only ever *read* from during
+        // boot never creates a file at all, which would make this test
+        // pass for the wrong reason (no file exists, so nothing was locked).
+        let save_path = std::env::temp_dir().join("lunaris_test_lock.sav");
+        fs::copy("../target/test_rom.sav", &save_path).unwrap();
+
+        let rom = fs::read("../target/test_rom.nds").unwrap();
+        let mut nds = NDS::new(bios7, bios9, fw_path, rom, save_path.clone());
+
+        // Run well past the save-chip boot polling seen in
+        // `test_load_state_real_rom_size_and_no_freeze`, so multiple SPI
+        // chip-select release/flush cycles have happened.
+        for _ in 0..300 {
+            nds.emulate_frame();
+        }
+
+        // The mmap-backed implementation would fail every operation below
+        // with a sharing violation, since the file was mapped for the
+        // entire `NDS` lifetime. With no live file handle held between SPI
+        // transactions, all of these must succeed while `nds` is still
+        // alive and still emulating.
+        assert!(save_path.exists(), "expected a .sav file to exist after boot polling");
+
+        let renamed_path = std::env::temp_dir().join("lunaris_test_lock_renamed.sav");
+        let _ = fs::remove_file(&renamed_path);
+        fs::rename(&save_path, &renamed_path)
+            .expect(".sav file must not be locked: rename failed while NDS is still running");
+
+        fs::write(&save_path, vec![0x11u8; 0x8_0000])
+            .expect(".sav file must not be locked: replace-by-write failed while NDS is still running");
+
+        let imported = vec![0x77u8; 0x8_0000];
+        nds.import_save(&imported);
+        assert_eq!(
+            nds.export_save(),
+            imported,
+            "import_save/export_save should round-trip while the emulator is running"
+        );
+
+        // The emulator must keep functioning normally after all of the
+        // above -- the point of the fix is that these operations are safe
+        // mid-session, not just after shutdown.
+        for _ in 0..60 {
+            nds.emulate_frame();
+        }
+
+        let _ = fs::remove_file(&renamed_path);
     }
 }

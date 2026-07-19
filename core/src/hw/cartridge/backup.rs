@@ -6,16 +6,20 @@
 //!
 //! GBATEK "DS Cartridge Backup" (chip types, command sets):
 //! <https://problemkaputt.de/gbatek.htm#dscartridgebackup>
+//!
+//! See `docs/design/sav-backup-redesign.md` for the rationale behind
+//! [`SaveMem`] replacing the previous session-long `mmap` of the `.sav`
+//! file (which held the file locked against import/replace for as long as
+//! the emulator ran).
 
 mod eeprom;
 mod flash;
 mod game_db;
 mod no_backup;
 
-use memmap::{MmapMut, MmapOptions};
 use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
+    fs, io,
+    path::{Path, PathBuf},
 };
 
 use super::Header;
@@ -33,9 +37,10 @@ pub trait Backup {
     /// latch, last-read value) for a savestate.
     ///
     /// This deliberately excludes the chip's persistent memory contents,
-    /// which live in the `.sav` file's mmap and stay open across a
-    /// savestate load, so they never need to round-trip through the
-    /// savestate itself.
+    /// which are captured separately via [`Backup::save_bytes`] so they can
+    /// be embedded directly in the savestate (see
+    /// `docs/design/sav-backup-redesign.md` §4.5) rather than relying on a
+    /// long-lived file mapping.
     fn protocol_snapshot(&self) -> BackupProtocolState;
 
     /// Restores a protocol state captured by [`Backup::protocol_snapshot`].
@@ -44,6 +49,21 @@ pub trait Backup {
     /// backup chip type) is ignored rather than applied, leaving the chip's
     /// current live state untouched.
     fn restore_protocol_state(&mut self, state: BackupProtocolState);
+
+    /// Returns the chip's persistent memory contents (the `.sav` payload).
+    /// `None` for chips with no backing store (e.g. [`NoBackup`]).
+    fn save_bytes(&self) -> Option<&[u8]>;
+
+    /// Overwrites the chip's persistent memory contents (import, or restoring
+    /// a savestate) and flushes to disk immediately. Input is padded/truncated
+    /// to the chip's size the same way a foreign `.sav` file is on load.
+    fn set_save_bytes(&mut self, bytes: &[u8]);
+
+    /// Flushes any pending writes to the `.sav` file on disk. A no-op if
+    /// nothing changed since the last flush. Called automatically whenever
+    /// the SPI chip-select is released (see each chip's `write`
+    /// implementation) as well as on emulator shutdown.
+    fn flush(&mut self);
 }
 
 /// Snapshot of a backup chip's SPI protocol state machine.
@@ -71,6 +91,149 @@ pub enum BackupProtocolState {
     },
 }
 
+/// In-memory backing store for a backup chip's persistent contents.
+///
+/// Replaces a session-long `mmap` of the `.sav` file with a plain `Vec<u8>`
+/// that is written back to disk only when the hardware itself would commit
+/// (SPI chip-select release), on explicit import, or on shutdown. No file
+/// handle or memory mapping is held between those points, so the file is
+/// never locked against being read, replaced, or deleted by another
+/// process. See `docs/design/sav-backup-redesign.md` §3.1/§4.1.
+pub struct SaveMem {
+    path: PathBuf,
+    buf: Vec<u8>,
+    dirty: bool,
+}
+
+impl SaveMem {
+    /// Loads `path` into memory, preserving any existing contents.
+    ///
+    /// Save files created by other emulators or real flashcarts do not
+    /// always match this database's expected size exactly (different
+    /// detection heuristics, footers, truncated dumps, …). A size mismatch
+    /// keeps the existing bytes and only pads (with `default_val`) or
+    /// truncates to reach `size`, matching how other NDS emulators /
+    /// flashcart tools handle foreign save files.
+    ///
+    /// If `path` does not exist yet, the buffer starts `default_val`-filled
+    /// (real EEPROM/Flash chips are `0xFF`-filled when erased from the
+    /// factory; GBATEK "erased memory is FFh-filled":
+    /// <https://problemkaputt.de/gbatek.htm#gbacartbackupeeprom>) and the
+    /// file is **not** created on disk until the first [`SaveMem::flush`],
+    /// so games that never write a save don't leave behind an empty
+    /// `.sav`.
+    fn new(path: PathBuf, default_val: u8, size: usize) -> SaveMem {
+        let mut buf = fs::read(&path).unwrap_or_default();
+        let current_len = buf.len();
+        if current_len != size {
+            if current_len != 0 {
+                warn!(
+                    target: "nds_core::savedata",
+                    "Save file size (0x{current_len:X}) does not match the expected size \
+                     (0x{size:X}); resizing while preserving existing data."
+                );
+            }
+            buf.resize(size, default_val);
+        }
+        debug!(
+            target: "nds_core::savedata",
+            "SaveMem::new: path={}, default_val=0x{default_val:X}, size=0x{size:X}, \
+             current_len=0x{current_len:X}",
+            path.display()
+        );
+        SaveMem { path, buf, dirty: false }
+    }
+
+    /// Loads `path` verbatim (no size padding/truncation), for use by the
+    /// firmware serial flash chip whose size is whatever the firmware image
+    /// on disk already is, rather than a size looked up from a game
+    /// database. `path` must already exist.
+    pub(crate) fn open_existing(path: PathBuf) -> io::Result<SaveMem> {
+        let buf = fs::read(&path)?;
+        Ok(SaveMem { path, buf, dirty: false })
+    }
+
+    /// Direct mutable access to the backing buffer, for one-off patching
+    /// (e.g. the firmware chip stamping touch-calibration bytes into the
+    /// user-settings area at boot). Marks the buffer dirty unconditionally,
+    /// since the caller is assumed to be about to mutate it.
+    pub(crate) fn bytes_mut(&mut self) -> &mut [u8] {
+        self.dirty = true;
+        &mut self.buf
+    }
+
+    #[inline]
+    fn buf_len(&self) -> usize {
+        self.buf.len()
+    }
+
+    #[inline]
+    fn bytes(&self) -> &[u8] {
+        &self.buf
+    }
+
+    #[inline]
+    fn read(&self, addr: usize) -> u8 {
+        // Real chips wrap the address bus rather than exposing memory
+        // outside their advertised size; without this an over-long
+        // read/write burst indexes out of bounds and panics instead of
+        // wrapping to address 0.
+        self.buf[addr % self.buf.len().max(1)]
+    }
+
+    #[inline]
+    fn write(&mut self, addr: usize, value: u8) {
+        let len = self.buf.len();
+        if len == 0 {
+            return;
+        }
+        self.buf[addr % len] = value;
+        self.dirty = true;
+    }
+
+    fn set_bytes(&mut self, bytes: &[u8], default_val: u8) {
+        let size = self.buf.len();
+        self.buf.clear();
+        self.buf.extend_from_slice(bytes);
+        self.buf.resize(size, default_val);
+        self.dirty = true;
+        self.flush();
+    }
+
+    /// Writes the buffer to disk via a temp-file-then-rename sequence, so a
+    /// crash mid-write can never leave a torn `.sav` on disk (a state that
+    /// the previous `mmap`-backed implementation could produce, since every
+    /// SPI byte mutated the mapped page directly and the OS could flush a
+    /// dirty page at any time, mid-transaction).
+    pub(crate) fn flush(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        if let Err(err) = self.flush_to_disk() {
+            warn!(
+                target: "nds_core::savedata",
+                "Failed to flush save file {}: {err}",
+                self.path.display()
+            );
+            return;
+        }
+        self.dirty = false;
+    }
+
+    fn flush_to_disk(&self) -> io::Result<()> {
+        let tmp_path = Self::tmp_path(&self.path);
+        fs::write(&tmp_path, &self.buf)?;
+        fs::rename(&tmp_path, &self.path)?;
+        Ok(())
+    }
+
+    fn tmp_path(path: &Path) -> PathBuf {
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        PathBuf::from(tmp)
+    }
+}
+
 impl dyn Backup {
     /// Looks up the game's backup chip type/size in [`Self::GAME_DB`] and
     /// constructs the matching [`Backup`] implementation.
@@ -79,79 +242,82 @@ impl dyn Backup {
     /// `0xFFFFFFFF` as an "unknown" sentinel; both must be routed to
     /// [`NoBackup`] *before* indexing [`Self::SRAM_SIZES`] (which only has
     /// entries for 0..=9), otherwise they panic instead of falling back.
-    pub fn detect_type(header: &Header, save_file: File) -> Box<dyn Backup> {
-        if let Some(pos) = <dyn Backup>::GAME_DB
+    ///
+    /// `sram_type` 8..=9 are NAND-type saves (embedded in the ROM chip and
+    /// accessed via ROM commands, not SPI at all — see melonDS
+    /// `CartRetailNAND`). They are not yet implemented; routing them to the
+    /// SPI [`Flash`] chip would silently produce a save the game can never
+    /// read, so they are routed to [`NoBackup`] with a warning instead. See
+    /// `docs/design/sav-backup-redesign.md` §3.4/§4.6.
+    ///
+    /// If the game code is missing from [`Self::GAME_DB`] entirely, an
+    /// existing `.sav` file's size (if any) is used to guess the chip type
+    /// before falling back to a generic 512 KiB flash chip, instead of
+    /// silently giving the game no save capability at all. See
+    /// `docs/design/sav-backup-redesign.md` §4.6.
+    pub fn detect_type(header: &Header, save_path: PathBuf) -> Box<dyn Backup> {
+        let sram_type = <dyn Backup>::GAME_DB
             .iter()
-            .position(|game_info| game_info.game_code == header.game_code)
-        {
-            let game_info = &<dyn Backup>::GAME_DB[pos];
-            match game_info.sram_type {
-                1 => Box::new(EEPROM::<EEPROMSmall>::new(
-                    save_file,
-                    <dyn Backup>::SRAM_SIZES[game_info.sram_type],
-                )),
-                2..=3 => Box::new(EEPROM::<EEPROMNormal>::new(
-                    save_file,
-                    <dyn Backup>::SRAM_SIZES[game_info.sram_type],
-                )),
-                // 128K EEPROM uses a 24-bit (3-byte) address bus, unlike the
-                // 16-bit bus shared by the 8K/64K variants above.
-                // GBATEK: <https://problemkaputt.de/gbatek.htm#dscartridgebackup>
-                4 => Box::new(EEPROM::<EEPROMLarge>::new(
-                    save_file,
-                    <dyn Backup>::SRAM_SIZES[game_info.sram_type],
-                )),
-                5..=9 => Box::new(Flash::new_backup(
-                    save_file,
-                    <dyn Backup>::SRAM_SIZES[game_info.sram_type],
-                )),
-                sram_type => {
-                    warn!(
-                        target: "nds_core::savedata",
-                        "Game has no backup memory (sram_type=0x{sram_type:X})"
-                    );
-                    Box::new(NoBackup::new())
-                }
+            .find(|game_info| game_info.game_code == header.game_code)
+            .map(|game_info| game_info.sram_type)
+            .unwrap_or_else(|| {
+                let guessed = Self::guess_sram_type_from_existing_file(&save_path);
+                warn!(
+                    target: "nds_core::savedata",
+                    "Game not found in DB! Guessed sram_type=0x{guessed:X}"
+                );
+                guessed
+            });
+
+        match sram_type {
+            1 => Box::new(EEPROM::<EEPROMSmall>::new(
+                save_path,
+                <dyn Backup>::SRAM_SIZES[sram_type],
+            )),
+            2..=3 => Box::new(EEPROM::<EEPROMNormal>::new(
+                save_path,
+                <dyn Backup>::SRAM_SIZES[sram_type],
+            )),
+            // 128K EEPROM uses a 24-bit (3-byte) address bus, unlike the
+            // 16-bit bus shared by the 8K/64K variants above.
+            // GBATEK: <https://problemkaputt.de/gbatek.htm#dscartridgebackup>
+            4 => {
+                Box::new(EEPROM::<EEPROMLarge>::new(save_path, <dyn Backup>::SRAM_SIZES[sram_type]))
             }
-        } else {
-            warn!(target: "nds_core::savedata", "Game not found in DB!");
-            Box::new(NoBackup::new())
+            5..=7 => Box::new(Flash::new_backup(save_path, <dyn Backup>::SRAM_SIZES[sram_type])),
+            8..=9 => {
+                warn!(
+                    target: "nds_core::savedata",
+                    "Game uses a NAND-type save (sram_type=0x{sram_type:X}), which is not yet \
+                     supported; save data will not persist."
+                );
+                Box::new(NoBackup::new())
+            }
+            sram_type => {
+                warn!(
+                    target: "nds_core::savedata",
+                    "Game has no backup memory (sram_type=0x{sram_type:X})"
+                );
+                Box::new(NoBackup::new())
+            }
         }
     }
 
-    /// Maps `save_file` to exactly `size` bytes, preserving any existing
-    /// contents.
-    ///
-    /// Save files created by other emulators or real flashcarts do not
-    /// always match this database's expected size exactly (different
-    /// detection heuristics, footers, truncated dumps, …). Previously a
-    /// size mismatch caused the *entire* file to be overwritten with
-    /// `default_val`, silently discarding imported save data. Instead, the
-    /// existing bytes are kept and the file is only extended (padded with
-    /// `default_val`) or truncated to reach `size`, matching how other NDS
-    /// emulators / flashcart tools handle foreign save files.
-    fn mmap(mut save_file: File, default_val: u8, size: usize) -> MmapMut {
-        let current_len = save_file.metadata().unwrap().len() as usize;
-        debug!(
-            target: "nds_core::savedata",
-            "mmap: default_val={default_val}, size={size:#X}, current_len={current_len:#X}"
-        );
-
-        if current_len != size {
-            warn!(
-                target: "nds_core::savedata",
-                "Save file size (0x{current_len:X}) does not match the expected size \
-                 (0x{size:X}); resizing while preserving existing data."
-            );
-            let mut contents = Vec::with_capacity(current_len.min(size));
-            save_file.seek(SeekFrom::Start(0)).unwrap();
-            save_file.read_to_end(&mut contents).unwrap();
-            contents.resize(size, default_val);
-            save_file.set_len(size as u64).unwrap();
-            save_file.seek(SeekFrom::Start(0)).unwrap();
-            save_file.write_all(&contents).unwrap();
-        }
-        unsafe { MmapOptions::new().map_mut(&save_file).unwrap() }
+    /// Guesses a `sram_type` index (into [`Self::SRAM_SIZES`]) from the size
+    /// of an already-existing save file at `save_path`, for games missing
+    /// from [`Self::GAME_DB`]. Falls back to a generic 512 KiB flash chip
+    /// (`sram_type` 6) — the most common retail save type — if no save file
+    /// exists yet or its size doesn't match any known chip.
+    fn guess_sram_type_from_existing_file(save_path: &Path) -> usize {
+        const GENERIC_FLASH_SRAM_TYPE: usize = 6;
+        let Ok(len) = fs::metadata(save_path).map(|meta| meta.len() as usize) else {
+            return GENERIC_FLASH_SRAM_TYPE;
+        };
+        <dyn Backup>::SRAM_SIZES
+            .iter()
+            .position(|&size| size == len)
+            .filter(|&sram_type| sram_type != 0)
+            .unwrap_or(GENERIC_FLASH_SRAM_TYPE)
     }
 }
 
@@ -160,44 +326,84 @@ impl dyn Backup {
 mod tests {
     use super::*;
 
-    fn temp_file_with(contents: &[u8]) -> File {
-        let path = std::env::temp_dir().join(format!(
-            "lunaris_backup_test_{}_{}.bin",
-            std::process::id(),
-            contents.len()
-        ));
-        std::fs::write(&path, contents).unwrap();
-        std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap()
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("lunaris_backup_test_{}_{}", std::process::id(), name))
     }
 
     #[test]
-    fn mmap_extends_smaller_file_without_wiping_existing_data() {
+    fn savemem_extends_smaller_file_without_wiping_existing_data() {
         let existing = vec![0x42u8; 0x100];
-        let file = temp_file_with(&existing);
-        let mem = <dyn Backup>::mmap(file, 0xFF, 0x200);
+        let path = temp_path("extend.bin");
+        fs::write(&path, &existing).unwrap();
 
-        assert_eq!(&mem[..0x100], existing.as_slice());
-        assert!(mem[0x100..].iter().all(|&b| b == 0xFF));
+        let mem = SaveMem::new(path.clone(), 0xFF, 0x200);
+
+        assert_eq!(&mem.buf[..0x100], existing.as_slice());
+        assert!(mem.buf[0x100..].iter().all(|&b| b == 0xFF));
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
-    fn mmap_truncates_larger_file_preserving_prefix() {
+    fn savemem_truncates_larger_file_preserving_prefix() {
         let mut existing = vec![0xAAu8; 0x200];
         existing[..4].copy_from_slice(b"SAVE");
-        let file = temp_file_with(&existing);
-        let mem = <dyn Backup>::mmap(file, 0x00, 0x100);
+        let path = temp_path("truncate.bin");
+        fs::write(&path, &existing).unwrap();
 
-        assert_eq!(mem.len(), 0x100);
-        assert_eq!(&mem[..4], b"SAVE");
+        let mem = SaveMem::new(path.clone(), 0x00, 0x100);
+
+        assert_eq!(mem.buf.len(), 0x100);
+        assert_eq!(&mem.buf[..4], b"SAVE");
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
-    fn mmap_matching_size_is_untouched() {
+    fn savemem_matching_size_is_untouched() {
         let existing = vec![0x7Eu8; 0x80];
-        let file = temp_file_with(&existing);
-        let mem = <dyn Backup>::mmap(file, 0x00, 0x80);
+        let path = temp_path("matching.bin");
+        fs::write(&path, &existing).unwrap();
 
-        assert_eq!(&mem[..], existing.as_slice());
+        let mem = SaveMem::new(path.clone(), 0x00, 0x80);
+
+        assert_eq!(&mem.buf[..], existing.as_slice());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn savemem_does_not_create_file_before_first_flush() {
+        let path = temp_path("no_create.bin");
+        let _ = fs::remove_file(&path);
+
+        let _mem = SaveMem::new(path.clone(), 0xFF, 0x80);
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn savemem_flush_writes_exact_bytes_and_no_tmp_left_behind() {
+        let path = temp_path("flush.bin");
+        let _ = fs::remove_file(&path);
+        let mut mem = SaveMem::new(path.clone(), 0xFF, 0x10);
+
+        mem.write(0, 0xAB);
+        mem.flush();
+
+        assert_eq!(fs::read(&path).unwrap()[0], 0xAB);
+        assert!(!SaveMem::tmp_path(&path).exists());
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn savemem_read_wraps_out_of_bounds_address() {
+        let path = temp_path("wrap.bin");
+        let _ = fs::remove_file(&path);
+        let mut mem = SaveMem::new(path.clone(), 0x11, 0x4);
+        mem.write(0, 0x99);
+
+        // addr = size (one past the end) must wrap to address 0, not panic.
+        assert_eq!(mem.read(4), 0x99);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

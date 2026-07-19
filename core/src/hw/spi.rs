@@ -11,11 +11,10 @@
 
 mod tsc;
 
-use memmap::{MmapMut, MmapOptions};
-use std::fs::File;
+use std::path::PathBuf;
 
 use super::{GPU, HW, Scheduler, mem::IORegister};
-use crate::hw::cartridge::{Backup, BackupProtocolState, Flash};
+use crate::hw::cartridge::{Backup, BackupProtocolState, Flash, SaveMem};
 use tsc::TSC;
 
 #[derive(emu_utils::Savestate)]
@@ -36,10 +35,10 @@ pub struct SPI {
 }
 
 impl SPI {
-    pub fn new(firmware_file: File) -> Self {
+    pub fn new(firmware_path: PathBuf) -> Self {
         SPI {
             cnt: CNT::new(),
-            firmware: Flash::new_firmware(SPI::init_firmware(firmware_file)),
+            firmware: Flash::new_firmware(SPI::init_firmware(firmware_path)),
             firmware_protocol: BackupProtocolState::None,
             tsc: TSC::new(),
         }
@@ -87,15 +86,20 @@ impl SPI {
     pub fn release_screen(&mut self) {
         self.tsc.release_screen()
     }
-    /// Memory-maps the firmware image and patches the user-settings area
-    /// (offset 3FE00h) with touch-screen calibration matching the emulated
-    /// screen corners, then fixes up the settings CRC16.
+    /// Loads the firmware image into memory and patches the user-settings
+    /// area (offset 3FE00h) with touch-screen calibration matching the
+    /// emulated screen corners, then fixes up the settings CRC16. The patch
+    /// is flushed to disk immediately (see [`SaveMem::flush`]); no file
+    /// mapping is held afterwards, so the firmware file is never locked for
+    /// the emulator's lifetime the way the previous `mmap`-backed
+    /// implementation locked it. See
+    /// `docs/design/sav-backup-redesign.md` §4.1.
     ///
     /// GBATEK "DS Firmware User Settings" (calibration bytes 58h-63h,
     /// CRC at 72h): <https://problemkaputt.de/gbatek.htm#dsfirmwareusersettings>
-    pub fn init_firmware(firmware_file: File) -> MmapMut {
-        let mut mmap = unsafe { MmapOptions::new().map_mut(&firmware_file).unwrap() };
-        let firmware = unsafe { std::slice::from_raw_parts_mut(mmap.as_mut_ptr(), mmap.len()) };
+    pub fn init_firmware(firmware_path: PathBuf) -> SaveMem {
+        let mut mem = SaveMem::open_existing(firmware_path).unwrap();
+        let firmware = mem.bytes_mut();
         let user_settings_addr = 0x3FE00;
 
         // Set Touch Screen Calibration
@@ -131,7 +135,8 @@ impl SPI {
             crc as u16
         };
         HW::write_mem(firmware, user_settings_addr + 0x72, crc16);
-        mmap
+        mem.flush();
+        mem
     }
 }
 
