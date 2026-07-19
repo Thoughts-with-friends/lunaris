@@ -85,8 +85,7 @@ impl<T: EEPROMType> EEPROM<T> {
 
             Command::RDSR => {
                 // TODO: Figure out Write in Progress needs to be emulated
-                let low_nibble =
-                    (self.write_protect as u8) << 2 | (self.write_enable as u8) << 1;
+                let low_nibble = (self.write_protect as u8) << 2 | (self.write_enable as u8) << 1;
                 // TODO: Figure out what SWRD Status Register is
                 let high_nibble = if T::is_small() { 0xF } else { 0 };
                 self.value = high_nibble << 4 | low_nibble;

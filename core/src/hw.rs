@@ -29,6 +29,10 @@ use std::path::PathBuf;
 
 use crate::{CheatMap, unlikely};
 use cartridge::Cartridge;
+/// Re-exported for [`crate::nds::NDS::load_rom`]'s `.dsv` discovery, which
+/// runs before any [`HW`]/[`Cartridge`] instance exists. See
+/// `docs/design/ir-nand-foreign-sav-design.md` §2.3/§3.3.
+pub(crate) use cartridge::normalize_foreign_save;
 pub use gpu::{EngineA, EngineB, GPU};
 use interrupt_controller::{InterruptController, InterruptRequest};
 use ipc::IPC;

@@ -49,6 +49,7 @@ use super::{
 use header::Header;
 use key1_encryption::Key1Encryption;
 
+pub(crate) use backup::normalize_foreign_save;
 pub(super) use backup::{Backup, BackupProtocolState, Flash, SaveMem}; // For Firmware
 
 /// NDS cartridge slot state.
@@ -142,7 +143,8 @@ impl Cartridge {
     /// the same way a foreign `.sav` file is on load. See
     /// `docs/design/sav-backup-redesign.md` §4.4.
     pub fn import_save(&mut self, bytes: &[u8]) {
-        self.backup.set_save_bytes(bytes);
+        let normalized = normalize_foreign_save(bytes);
+        self.backup.set_save_bytes(&normalized);
     }
 
     /// Returns a copy of the backup chip's current save data, flushing to

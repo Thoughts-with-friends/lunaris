@@ -47,7 +47,6 @@ impl Flash {
 
     fn set_instr(&mut self, instr: Instr) -> Mode {
         match instr {
-            Instr::IR => Mode::ReadInstr, // TODO: Actually implement IR
             Instr::WREN => {
                 self.write_enable = true;
                 Mode::ReadInstr
@@ -72,8 +71,6 @@ impl Flash {
 
     fn handle_instr(&mut self, instr: Instr, value: u8) -> Mode {
         match instr {
-            Instr::IR => unreachable!(),
-
             Instr::READ(0, addr) => {
                 self.value = self.mem.read(addr);
                 Mode::HandleInstr(Instr::READ(0, addr + 1))
@@ -260,7 +257,6 @@ pub(crate) enum FastReadPhase {
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Instr {
-    IR,
     READ(usize, usize),
     /// Address bytes still expected before the dummy byte (0Bh Fast Read).
     FastReadAddr(usize, usize),
@@ -282,8 +278,11 @@ pub(crate) enum Instr {
 impl Instr {
     fn get(value: u8) -> Self {
         match value {
-            0x00 => Instr::IR,
-            0x08 => Instr::IR,
+            // 00h/08h are not ordinary flash opcodes on this hardware: on
+            // IR carts they select the flash chip vs. the IR MCU (see
+            // `backup/ir.rs`), and on plain Flash chips they simply aren't
+            // valid instructions. Falling through to `Unknown` here (warn
+            // + ignore) is correct for both cases.
             0x03 => Instr::READ(3, 0),
             0x0B => Instr::FastReadAddr(3, 0),
             0x05 => Instr::RDSR,

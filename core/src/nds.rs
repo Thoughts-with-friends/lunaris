@@ -233,12 +233,32 @@ impl NDS {
     ) -> Self {
         let save_file_path = rom_path.with_extension("sav");
 
+        // DeSmuME workflow support: if no `.sav` exists yet but a DeSmuME
+        // `.dsv` does, adopt it as the starting point for the `.sav` this
+        // session writes. The `.dsv` itself is only ever read here, never
+        // modified. See `docs/design/ir-nand-foreign-sav-design.md` §3.3.
         if !save_file_path.exists() {
-            info!(
-                target: "nds_core::savedata",
-                "Save file not found, one will be created on first write at {}",
-                save_file_path.display()
-            );
+            let dsv_path = rom_path.with_extension("dsv");
+            if let Ok(dsv_bytes) = fs::read(&dsv_path) {
+                info!(
+                    target: "nds_core::savedata",
+                    "No .sav found, but found a DeSmuME save at {}; adopting it",
+                    dsv_path.display()
+                );
+                let normalized = crate::hw::normalize_foreign_save(&dsv_bytes);
+                if let Err(err) = fs::write(&save_file_path, &normalized) {
+                    warn!(
+                        target: "nds_core::savedata",
+                        "Failed to write .sav from adopted .dsv: {err}"
+                    );
+                }
+            } else {
+                info!(
+                    target: "nds_core::savedata",
+                    "Save file not found, one will be created on first write at {}",
+                    save_file_path.display()
+                );
+            }
         }
 
         let bios7 = bios7_path
@@ -534,8 +554,9 @@ mod tests {
         fs::rename(&save_path, &renamed_path)
             .expect(".sav file must not be locked: rename failed while NDS is still running");
 
-        fs::write(&save_path, vec![0x11u8; 0x8_0000])
-            .expect(".sav file must not be locked: replace-by-write failed while NDS is still running");
+        fs::write(&save_path, vec![0x11u8; 0x8_0000]).expect(
+            ".sav file must not be locked: replace-by-write failed while NDS is still running",
+        );
 
         let imported = vec![0x77u8; 0x8_0000];
         nds.import_save(&imported);

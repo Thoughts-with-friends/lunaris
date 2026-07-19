@@ -312,8 +312,14 @@ impl LunarisApp {
                     });
 
                     if ui.button("Import Save").clicked() {
-                        if let Some(p) =
-                            rfd::FileDialog::new().add_filter("Save file", &["sav"]).pick_file()
+                        // "dsv" accepts DeSmuME saves (footer stripped by
+                        // NDS::import_save) and "bin" covers raw flashcart
+                        // dumps; both normalize to the same raw payload as
+                        // a melonDS-style "sav". See
+                        // `docs/design/ir-nand-foreign-sav-design.md` §3.3.
+                        if let Some(p) = rfd::FileDialog::new()
+                            .add_filter("Save file", &["sav", "dsv", "bin"])
+                            .pick_file()
                         {
                             match std::fs::read(&p) {
                                 Ok(bytes) => self.nds.import_save(&bytes),
