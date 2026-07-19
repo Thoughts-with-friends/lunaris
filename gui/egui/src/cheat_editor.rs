@@ -56,14 +56,12 @@ impl CheatEditorState {
         egui::Window::new("AR Cheat Code Editor")
             .open(&mut self.is_open)
             .default_width(380.0)
-            .min_width(300.0)
             .resizable(true)
-            .max_height(config.window.height)
+            .max_height(700.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    let available_height =  ui.available_height();
                     ui.add_sized(
-                        [ui.available_width(), available_height],
+                        [ui.available_width(), 300.0],
                         egui::TextEdit::multiline(&mut self.text_buffer)
                             .hint_text("Enter AR codes here...\nExample:\n9223DD32 0000319C\n0223DD34 60080180")
                             .font(egui::TextStyle::Monospace)
