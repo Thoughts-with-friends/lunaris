@@ -139,25 +139,38 @@ fn create_nds(
 }
 
 fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
-    let path = lunaris_gui_common::savestate::slot_path(&config.save_state_dir, slot);
-    if let Err(e) = lunaris_gui_common::savestate::save_to_file(nds, &path) {
-        nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
+    if let Some(rom_path) = config.last_rom_path.as_ref().and_then(|p| p.file_stem()) {
+        // ./states/<rom_name>/state_<n>.bin
+        let state_dir = &config.save_state_dir.join(rom_path);
+        let _ = std::fs::create_dir_all(state_dir);
+        let path = lunaris_gui_common::savestate::slot_path(state_dir, slot);
+
+        if let Err(e) = lunaris_gui_common::savestate::save_to_file(nds, &path) {
+            nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
+        }
     }
 }
 
 /// Loads slot `slot` into `nds`, returning `true` on success so the caller
 /// can unpause emulation only when the load actually applied.
 fn load_state_from_slot(nds: &mut NDS, config: &config::Config, slot: usize) -> bool {
-    let path = lunaris_gui_common::savestate::slot_path(&config.save_state_dir, slot);
-    match lunaris_gui_common::savestate::load_from_file(nds, &path) {
-        Ok(()) => {
-            nds_core::log::info!(target: "nds_core::savedata", "loaded state. {}", path.display());
-            true
+    if let Some(rom_path) = config.last_rom_path.as_ref().and_then(|p| p.file_stem()) {
+        let state_dir = &config.save_state_dir.join(rom_path);
+        let _ = std::fs::create_dir_all(state_dir);
+        let path = lunaris_gui_common::savestate::slot_path(state_dir, slot);
+
+        match lunaris_gui_common::savestate::load_from_file(nds, &path) {
+            Ok(()) => {
+                nds_core::log::info!(target: "nds_core::savedata", "loaded state. {}", path.display());
+                true
+            }
+            Err(e) => {
+                nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
+                false
+            }
         }
-        Err(e) => {
-            nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
-            false
-        }
+    } else {
+        false
     }
 }
 

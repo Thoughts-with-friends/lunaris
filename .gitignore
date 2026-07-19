@@ -16,4 +16,4 @@ logs/
 .serena/
 docs/design/
 cheats/
-gui/tauri/
+states/
