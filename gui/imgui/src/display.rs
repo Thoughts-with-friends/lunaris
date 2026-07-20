@@ -11,11 +11,10 @@ pub enum StateAction {
     Load(usize),
 }
 
-use crate::config::Config;
 use nds_core::nds::{self, NDS};
 
 pub struct Display {
-    config: Config,
+    config: lunaris_gui_common::config::Config,
     window: glfw::PWindow,
     events: glfw::GlfwReceiver<(f64, glfw::WindowEvent)>,
     screen_tex: u32,
@@ -34,7 +33,7 @@ impl Display {
     const HEIGHT: usize = 2 * nds::HEIGHT;
     // const SCALE: usize = 1;
 
-    pub fn new(imgui: &mut imgui::Context, config: Config) -> Display {
+    pub fn new(imgui: &mut imgui::Context, config: lunaris_gui_common::config::Config) -> Display {
         let mut glfw = glfw::init_no_callbacks().unwrap();
 
         let width = config.window.width as u32;
@@ -42,7 +41,7 @@ impl Display {
         let (mut window, events) = glfw
             .create_window(width, height, "Lunaris", glfw::WindowMode::Windowed)
             .expect("Failed to create GLFW window!");
-        window.set_pos(config.window.pos_x, config.window.pos_y);
+        window.set_pos(config.window.pos_x as i32, config.window.pos_y as i32);
         window.make_current();
         window.set_all_polling(true);
         gl::load_with(|name| {
@@ -352,12 +351,12 @@ impl Display {
 
                 glfw::WindowEvent::FileDrop(paths) => files_dropped = paths,
                 glfw::WindowEvent::Size(width, height) => {
-                    self.config.window.width = width;
-                    self.config.window.height = height;
+                    self.config.window.width = width as f32;
+                    self.config.window.height = height as f32;
                 }
                 glfw::WindowEvent::Pos(pos_x, pos_y) => {
-                    self.config.window.pos_x = pos_x;
-                    self.config.window.pos_y = pos_y;
+                    self.config.window.pos_x = pos_x as f32;
+                    self.config.window.pos_y = pos_y as f32;
                 }
                 _ => {}
             }

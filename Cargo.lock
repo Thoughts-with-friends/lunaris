@@ -2528,7 +2528,7 @@ dependencies = [
  "egui_plot",
  "gilrs",
  "ico",
- "lunaris-gui-common",
+ "lunaris_gui_common",
  "nds-core",
  "pollster",
  "rfd",
@@ -2538,11 +2538,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "lunaris-gui-common"
+name = "lunaris_gui_common"
 version = "0.1.0"
 dependencies = [
+ "free_bios",
  "nds-core",
  "serde",
+ "serde_json",
  "xbrz-rs",
  "zstd",
 ]
@@ -2555,6 +2557,7 @@ dependencies = [
  "glfw",
  "imgui",
  "imgui-opengl-renderer",
+ "lunaris_gui_common",
  "nds-core",
  "rfd",
  "serde",

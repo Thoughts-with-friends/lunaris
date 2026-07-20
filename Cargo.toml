@@ -30,6 +30,9 @@ debug = true
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
+nds-core = { path = "./core" }
+free_bios = { path = "./free_bios" }
+lunaris_gui_common = { path = "./gui/common" }
 
 
 [workspace.lints.clippy]

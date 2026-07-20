@@ -1,8 +1,5 @@
 use crate::{CheatMap, likely};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
 
 use crate::arm::ARM;
 use crate::hw::HW;
@@ -218,80 +215,6 @@ impl NDS {
     pub fn render_bank(&self, bank: usize, ignore_alpha: bool) -> (Vec<u16>, usize, usize) {
         self.hw.render_bank(ignore_alpha, bank)
     }
-
-    /// Convenience constructor: loads BIOS / firmware / ROM from the filesystem
-    /// and returns a ready-to-run [`NDS`].
-    ///
-    /// Falls back to the bundled free BIOS / firmware when paths are `None`.
-    /// The save file is created automatically next to the ROM if absent.
-    pub fn load_rom(
-        bios7_path: Option<&Path>,
-        bios9_path: Option<&Path>,
-        firmware_path: Option<&Path>,
-        rom_path: &Path,
-        audio_volume: f32,
-    ) -> Self {
-        let save_file_path = rom_path.with_extension("sav");
-
-        // DeSmuME workflow support: if no `.sav` exists yet but a DeSmuME
-        // `.dsv` does, adopt it as the starting point for the `.sav` this
-        // session writes. The `.dsv` itself is only ever read here, never
-        // modified. See `docs/design/ir-nand-foreign-sav-design.md` §3.3.
-        if !save_file_path.exists() {
-            let dsv_path = rom_path.with_extension("dsv");
-            if let Ok(dsv_bytes) = fs::read(&dsv_path) {
-                info!(
-                    target: "nds_core::savedata",
-                    "No .sav found, but found a DeSmuME save at {}; adopting it",
-                    dsv_path.display()
-                );
-                let normalized = crate::hw::normalize_foreign_save(&dsv_bytes);
-                if let Err(err) = fs::write(&save_file_path, &normalized) {
-                    warn!(
-                        target: "nds_core::savedata",
-                        "Failed to write .sav from adopted .dsv: {err}"
-                    );
-                }
-            } else {
-                info!(
-                    target: "nds_core::savedata",
-                    "Save file not found, one will be created on first write at {}",
-                    save_file_path.display()
-                );
-            }
-        }
-
-        let bios7 = bios7_path
-            .and_then(|path| fs::read(path).ok())
-            .unwrap_or_else(|| free_bios::arm7::BIOS_ARM7_BIN.to_vec());
-
-        let bios9 = bios9_path
-            .and_then(|path| fs::read(path).ok())
-            .unwrap_or_else(|| free_bios::arm9::BIOS_ARM9_BIN.to_vec());
-
-        let resolved_firmware_path = if let Some(path) = firmware_path {
-            if !path.exists() {
-                fs::write(path, free_bios::firmware::FIRMWARE_DS).unwrap();
-            }
-            path.to_path_buf()
-        } else {
-            let default_path = std::env::temp_dir().join("freebios_firmware.bin");
-            if !default_path.exists() {
-                fs::write(&default_path, free_bios::firmware::FIRMWARE_DS).unwrap();
-            }
-            default_path
-        };
-
-        let mut nds = NDS::new(
-            bios7,
-            bios9,
-            resolved_firmware_path,
-            fs::read(rom_path).unwrap(),
-            save_file_path,
-        );
-        nds.set_audio_volume(audio_volume);
-        nds
-    }
 }
 
 #[cfg(test)]
@@ -317,7 +240,7 @@ mod tests {
 
         let fw_path = std::env::temp_dir().join("lunaris_test_fw.bin");
         if !fw_path.exists() {
-            fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+            std::fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
         }
 
         let save_path = std::env::temp_dir().join("lunaris_test.sav");
@@ -454,13 +377,13 @@ mod tests {
 
         let fw_path = std::env::temp_dir().join("lunaris_test_fw_real.bin");
         if !fw_path.exists() {
-            fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+            std::fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
         }
 
         let save_path = std::env::temp_dir().join("lunaris_test_real.sav");
-        let _ = fs::remove_file(&save_path);
+        let _ = std::fs::remove_file(&save_path);
 
-        let rom = fs::read("../target/test_rom.nds").unwrap();
+        let rom = std::fs::read("../target/test_rom.nds").unwrap();
         let rom_len = rom.len();
         let mut nds = NDS::new(bios7, bios9, fw_path, rom, save_path);
 
@@ -521,7 +444,7 @@ mod tests {
 
         let fw_path = std::env::temp_dir().join("lunaris_test_fw_lock.bin");
         if !fw_path.exists() {
-            fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+            std::fs::write(&fw_path, free_bios::firmware::FIRMWARE_DS).unwrap();
         }
 
         // Start from a real, pre-populated save file (as an actual user
@@ -530,9 +453,9 @@ mod tests {
         // boot never creates a file at all, which would make this test
         // pass for the wrong reason (no file exists, so nothing was locked).
         let save_path = std::env::temp_dir().join("lunaris_test_lock.sav");
-        fs::copy("../target/test_rom.sav", &save_path).unwrap();
+        std::fs::copy("../target/test_rom.sav", &save_path).unwrap();
 
-        let rom = fs::read("../target/test_rom.nds").unwrap();
+        let rom = std::fs::read("../target/test_rom.nds").unwrap();
         let mut nds = NDS::new(bios7, bios9, fw_path, rom, save_path.clone());
 
         // Run well past the save-chip boot polling seen in
@@ -550,11 +473,11 @@ mod tests {
         assert!(save_path.exists(), "expected a .sav file to exist after boot polling");
 
         let renamed_path = std::env::temp_dir().join("lunaris_test_lock_renamed.sav");
-        let _ = fs::remove_file(&renamed_path);
-        fs::rename(&save_path, &renamed_path)
+        let _ = std::fs::remove_file(&renamed_path);
+        std::fs::rename(&save_path, &renamed_path)
             .expect(".sav file must not be locked: rename failed while NDS is still running");
 
-        fs::write(&save_path, vec![0x11u8; 0x8_0000]).expect(
+        std::fs::write(&save_path, vec![0x11u8; 0x8_0000]).expect(
             ".sav file must not be locked: replace-by-write failed while NDS is still running",
         );
 
@@ -573,6 +496,6 @@ mod tests {
             nds.emulate_frame();
         }
 
-        let _ = fs::remove_file(&renamed_path);
+        let _ = std::fs::remove_file(&renamed_path);
     }
 }

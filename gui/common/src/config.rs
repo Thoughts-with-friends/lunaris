@@ -8,8 +8,10 @@
 
 use std::path::PathBuf;
 
-use lunaris_gui_common::framebuffer::ScreenLayout;
-use lunaris_gui_common::upscale::{self, UpscaleMethod};
+use crate::framebuffer::ScreenLayout;
+use crate::input::enums::{InputBinding, JoystickId};
+use crate::input::input_default::default_input_bindings;
+use crate::upscale::{self, UpscaleMethod};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,15 +48,6 @@ pub enum ScreenFilter {
     #[default]
     Nearest,
     Linear,
-}
-
-impl ScreenFilter {
-    pub const fn texture_options(self) -> egui::TextureOptions {
-        match self {
-            ScreenFilter::Nearest => egui::TextureOptions::NEAREST,
-            ScreenFilter::Linear => egui::TextureOptions::LINEAR,
-        }
-    }
 }
 
 /// Video quality options. See `docs/design/egui-migration-design.md` §7.3.
@@ -94,12 +87,30 @@ pub struct Config {
     pub bios9_path: Option<PathBuf>,
     pub firmware_path: Option<PathBuf>,
     pub last_rom_path: Option<PathBuf>,
+    pub save_dir: PathBuf,
     pub save_state_dir: PathBuf,
     pub enable_cheats: bool,
     pub cheat_dir: PathBuf,
     pub window: WindowConfig,
     pub audio_volume: f32,
     pub video: VideoConfig,
+
+    /// Joystick ID for gamepad input.
+    pub joystick_id: JoystickId,
+    /// Input binding configuration.
+    ///
+    /// ```no_run
+    /// // Example chord:
+    /// // Ctrl + L -> Start
+    /// InputBinding {
+    ///     sources: vec![
+    ///         InputSource::Keyboard { key: LeftControl },
+    ///         InputSource::Keyboard { key: L },
+    ///     ],
+    ///     target: BindKey::Start,
+    /// },
+    /// ```
+    pub input_bindings: Vec<InputBinding>,
 }
 
 impl Default for Config {
@@ -109,12 +120,15 @@ impl Default for Config {
             bios9_path: None,
             firmware_path: None,
             last_rom_path: None,
+            save_dir: PathBuf::from("./saves"),
             save_state_dir: PathBuf::from("./states"),
             enable_cheats: false,
             cheat_dir: PathBuf::from("./cheats"),
             window: WindowConfig::default(),
             audio_volume: 100.0,
             video: VideoConfig::default(),
+            joystick_id: JoystickId::Joystick1,
+            input_bindings: default_input_bindings(),
         }
     }
 }

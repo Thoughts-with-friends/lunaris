@@ -3,7 +3,6 @@
 #![expect(clippy::collapsible_if)]
 
 mod cheat_editor;
-mod config;
 mod debug;
 mod fonts;
 mod input;
@@ -13,9 +12,11 @@ mod window;
 use std::path::{Path, PathBuf};
 
 use eframe::egui;
+use lunaris_gui_common::config::{Config, ScreenFilter};
 use lunaris_gui_common::framebuffer::{
     PlacementRect, ScreenLayout, layout_screens, point_to_touch_coords,
 };
+use lunaris_gui_common::loader::create_save_path;
 use nds_core::CheatMap;
 use nds_core::nds::NDS;
 
@@ -26,6 +27,13 @@ use debug::{
 use screens::ScreenTextures;
 
 use crate::cheat_editor::CheatEditorState;
+
+const fn texture_options(screen: ScreenFilter) -> egui::TextureOptions {
+    match screen {
+        ScreenFilter::Nearest => egui::TextureOptions::NEAREST,
+        ScreenFilter::Linear => egui::TextureOptions::LINEAR,
+    }
+}
 
 /// Groups every debug inspector window, mirroring the imgui front end's
 /// `DebugState` struct in `gui/src/main.rs`.
@@ -74,7 +82,7 @@ const STATE_HOTKEYS: [(egui::Key, usize); 5] = [
     (egui::Key::F9, 5),
 ];
 
-fn resolve_rom_path(config: &config::Config) -> Option<PathBuf> {
+fn resolve_rom_path(config: &Config) -> Option<PathBuf> {
     if let Some(arg) = std::env::args().nth(1) {
         let p = PathBuf::from(arg);
         if p.exists() {
@@ -91,7 +99,7 @@ fn resolve_rom_path(config: &config::Config) -> Option<PathBuf> {
     rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
 }
 
-fn read_cheat_map(config: &config::Config) -> (CheatMap, String) {
+fn read_cheat_map(config: &Config) -> (CheatMap, String) {
     if let Some(rom_name) = config.last_rom_path.as_ref().and_then(|p| p.file_name()) {
         let cheat_dir = config.cheat_dir.as_path();
         let mut cheat_file = cheat_dir.join(rom_name);
@@ -115,21 +123,11 @@ fn read_cheat_map(config: &config::Config) -> (CheatMap, String) {
     }
 }
 
-fn create_nds(
-    rom: &Path,
-    config: &config::Config,
-    cheat_editor_state: &mut CheatEditorState,
-) -> NDS {
+fn create_nds(config: &Config, cheat_editor_state: &mut CheatEditorState) -> NDS {
     let (cheat_map, cheat_txt) = read_cheat_map(config);
     cheat_editor_state.text_buffer = cheat_txt;
 
-    let mut nds = NDS::load_rom(
-        config.bios7_path.as_deref(),
-        config.bios9_path.as_deref(),
-        config.firmware_path.as_deref(),
-        rom,
-        config.audio_volume,
-    );
+    let mut nds = lunaris_gui_common::loader::load_rom(config);
 
     // Cheat Settings
     nds.set_cheat_map(cheat_map);
@@ -138,7 +136,7 @@ fn create_nds(
     nds
 }
 
-fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
+fn save_state_to_slot(nds: &mut NDS, config: &Config, slot: usize) {
     if let Some(rom_path) = config.last_rom_path.as_ref().and_then(|p| p.file_stem()) {
         // ./states/<rom_name>/state_<n>.bin
         let state_dir = &config.save_state_dir.join(rom_path);
@@ -153,7 +151,7 @@ fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
 
 /// Loads slot `slot` into `nds`, returning `true` on success so the caller
 /// can unpause emulation only when the load actually applied.
-fn load_state_from_slot(nds: &mut NDS, config: &config::Config, slot: usize) -> bool {
+fn load_state_from_slot(nds: &mut NDS, config: &Config, slot: usize) -> bool {
     if let Some(rom_path) = config.last_rom_path.as_ref().and_then(|p| p.file_stem()) {
         let state_dir = &config.save_state_dir.join(rom_path);
         let _ = std::fs::create_dir_all(state_dir);
@@ -176,10 +174,11 @@ fn load_state_from_slot(nds: &mut NDS, config: &config::Config, slot: usize) -> 
 
 struct LunarisApp {
     nds: NDS,
-    config: config::Config,
+    config: Config,
     paused: bool,
     screens: ScreenTextures,
     gilrs: gilrs::Gilrs,
+    input_state: crate::input::InputState,
     stylus_down: bool,
     cheat_editor_state: CheatEditorState,
     show_video_window: bool,
@@ -198,21 +197,25 @@ struct LunarisApp {
     emulated_frames: u32,
     last_title_update: std::time::Instant,
     last_fps: f64,
+    keyboard_keys: Vec<(lunaris_gui_common::input::enums::BindKey, egui::Key)>,
 }
 
 impl LunarisApp {
     fn new(
         ctx: &egui::Context,
         nds: NDS,
-        config: config::Config,
+        config: Config,
         cheat_editor_state: CheatEditorState,
     ) -> Self {
+        let keyboard_keys = input::keyboard_keys(&config.input_bindings);
+
         LunarisApp {
             nds,
             config,
             paused: false,
             screens: ScreenTextures::new(ctx),
             gilrs: gilrs::Gilrs::new().expect("failed to initialize gamepad backend"),
+            input_state: crate::input::InputState::default(),
             stylus_down: false,
             cheat_editor_state,
             show_video_window: false,
@@ -222,6 +225,7 @@ impl LunarisApp {
             emulated_frames: 0,
             last_title_update: std::time::Instant::now(),
             last_fps: 0.0,
+            keyboard_keys,
         }
     }
 
@@ -255,15 +259,37 @@ impl LunarisApp {
         if path.extension().and_then(|e| e.to_str()) != Some("nds") {
             return;
         }
+        self.config.last_rom_path = Some(path.clone());
 
-        // loading a NDS file
-        self.nds = create_nds(path, &self.config, &mut self.cheat_editor_state);
+        self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
 
         // Save config
-        self.config.last_rom_path = Some(path.clone());
         self.config.save();
         self.paused = false;
         self.screens_dirty = true;
+    }
+
+    fn open_rom(&mut self, save_path: Option<&Path>) {
+        // NOTE: If we don't run it async, `rfd` won't be displayed during the event.
+        let rom_dir = self.config.last_rom_path.as_ref().and_then(|p| p.parent());
+        let dialog = rfd::AsyncFileDialog::new().add_filter("NDS ROM", &["nds"]);
+
+        if let Some(p) = pollster::block_on(match rom_dir {
+            Some(dir) => dialog.set_directory(dir).pick_file(),
+            None => dialog.pick_file(),
+        }) {
+            let p = p.path().to_path_buf();
+
+            if let Some(save_path) = save_path {
+                let dst = create_save_path(&self.config).unwrap();
+                let _ = std::fs::copy(save_path, &dst);
+            }
+            self.config.last_rom_path = Some(p);
+            self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+            self.config.save();
+            self.paused = false;
+            self.screens_dirty = true;
+        }
     }
 
     fn menu_bar(&mut self, ctx: &egui::Context) {
@@ -271,22 +297,7 @@ impl LunarisApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open ROM").clicked() {
-                        // NOTE: If we don't run it async, `rfd` won't be displayed during the event.
-                        let rom_dir = self.config.last_rom_path.as_ref().and_then(|p| p.parent());
-                        let dialog = rfd::AsyncFileDialog::new().add_filter("NDS ROM", &["nds"]);
-
-                        if let Some(p) = pollster::block_on(match rom_dir {
-                            Some(dir) => dialog.set_directory(dir).pick_file(),
-                            None => dialog.pick_file(),
-                        }) {
-                            let p = p.path().to_path_buf();
-
-                            self.nds = create_nds(&p, &self.config, &mut self.cheat_editor_state);
-                            self.config.last_rom_path = Some(p);
-                            self.config.save();
-                            self.paused = false;
-                            self.screens_dirty = true;
-                        }
+                        self.open_rom(None);
                         ui.close();
                     }
 
@@ -311,31 +322,40 @@ impl LunarisApp {
                         }
                     });
 
-                    if ui.button("Import Save").clicked() {
+                    if ui
+                        .button("Import Save")
+                        .on_hover_text("Loading the save file and restarting the emulator.")
+                        .clicked()
+                    {
                         // "dsv" accepts DeSmuME saves (footer stripped by
                         // NDS::import_save) and "bin" covers raw flashcart
                         // dumps; both normalize to the same raw payload as
                         // a melonDS-style "sav". See
                         // `docs/design/ir-nand-foreign-sav-design.md` §3.3.
-                        if let Some(p) = rfd::FileDialog::new()
-                            .add_filter("Save file", &["sav", "dsv", "bin"])
-                            .pick_file()
-                        {
-                            match std::fs::read(&p) {
-                                Ok(bytes) => self.nds.import_save(&bytes),
-                                Err(err) => {
-                                    eprintln!("Failed to read save file {}: {err}", p.display())
-                                }
-                            }
+                        if let Some(p) = pollster::block_on(
+                            rfd::AsyncFileDialog::new()
+                                .add_filter("Save file", &["sav", "dsv", "bin"])
+                                .pick_file(),
+                        ) {
+                            let save_path = p.path();
+                            if let Some(dst) = create_save_path(&self.config) {
+                                let _ = std::fs::copy(save_path, &dst);
+                                self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+                            } else {
+                                self.open_rom(Some(save_path));
+                            };
                         }
                         ui.close();
                     }
 
                     if ui.button("Export Save").clicked() {
-                        if let Some(p) =
-                            rfd::FileDialog::new().add_filter("Save file", &["sav"]).save_file()
-                        {
-                            if let Err(err) = std::fs::write(&p, self.nds.export_save()) {
+                        if let Some(p) = pollster::block_on(
+                            rfd::AsyncFileDialog::new()
+                                .add_filter("Save file", &["sav"])
+                                .save_file(),
+                        ) {
+                            let p = p.path();
+                            if let Err(err) = std::fs::write(p, self.nds.export_save()) {
                                 eprintln!("Failed to write save file {}: {err}", p.display());
                             }
                         }
@@ -358,12 +378,9 @@ impl LunarisApp {
                         ui.close();
                     }
                     if ui.button("Reset").clicked() {
-                        if let Some(path) = self.config.last_rom_path.clone() {
-                            self.nds =
-                                create_nds(&path, &self.config, &mut self.cheat_editor_state);
-                            self.paused = false;
-                            self.screens_dirty = true;
-                        }
+                        self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+                        self.paused = false;
+                        self.screens_dirty = true;
                         ui.close();
                     }
                 });
@@ -422,21 +439,21 @@ impl LunarisApp {
         egui::Window::new("Video").open(&mut open).default_size([260.0, 180.0]).show(ctx, |ui| {
             egui::ComboBox::from_label("Filter")
                 .selected_text(match self.config.video.filter {
-                    config::ScreenFilter::Nearest => "Nearest",
-                    config::ScreenFilter::Linear => "Linear",
+                    ScreenFilter::Nearest => "Nearest",
+                    ScreenFilter::Linear => "Linear",
                 })
                 .show_ui(ui, |ui| {
                     changed |= ui
                         .selectable_value(
                             &mut self.config.video.filter,
-                            config::ScreenFilter::Nearest,
+                            ScreenFilter::Nearest,
                             "Nearest",
                         )
                         .changed();
                     changed |= ui
                         .selectable_value(
                             &mut self.config.video.filter,
-                            config::ScreenFilter::Linear,
+                            ScreenFilter::Linear,
                             "Linear",
                         )
                         .changed();
@@ -572,7 +589,7 @@ impl LunarisApp {
                 self.screens.update(
                     ctx,
                     &self.nds,
-                    self.config.video.filter.texture_options(),
+                    texture_options(self.config.video.filter),
                     self.config.video.upscale_method,
                     self.config.video.upscale_factor,
                     display_px,
@@ -668,9 +685,33 @@ impl eframe::App for LunarisApp {
         }
 
         if !ctx.wants_keyboard_input() {
-            input::apply_input(&mut self.nds, ctx, &mut self.gilrs);
+            ctx.input(|i| {
+                for (_, egui_key) in &self.keyboard_keys {
+                    let egui_key = *egui_key;
+                    input::update_keyboard_input(
+                        &mut self.input_state,
+                        egui_key,
+                        i.key_down(egui_key),
+                    );
+                }
+            });
+
+            // detect next pressed key
+            while self.gilrs.next_event().is_some() {}
+
+            input::update_gamepad_input(
+                &self.gilrs,
+                &mut self.input_state,
+                self.config.joystick_id,
+            );
+            input::apply_input_bindings(
+                &mut self.nds,
+                &self.config.input_bindings,
+                &self.input_state,
+            );
             self.handle_state_hotkeys(ctx);
         }
+
         self.handle_file_drop(ctx);
 
         self.menu_bar(ctx);
@@ -704,12 +745,12 @@ fn main() -> eframe::Result<()> {
     )
     .ok();
 
-    let mut config = config::Config::load();
+    let mut config = lunaris_gui_common::config::Config::load();
     let rom = resolve_rom_path(&config).expect("ROM required");
-    config.last_rom_path = Some(rom.clone());
+    config.last_rom_path = Some(rom);
 
     let mut cheat_editor_state = CheatEditorState::default();
-    let nds = create_nds(&rom, &config, &mut cheat_editor_state);
+    let nds = create_nds(&config, &mut cheat_editor_state);
 
     let (icon_rgba, [icon_width, icon_height]) = icon();
     let viewport = egui::ViewportBuilder::default()

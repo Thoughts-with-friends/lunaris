@@ -1,4 +1,4 @@
-use crate::config::WindowConfig;
+use lunaris_gui_common::config::WindowConfig;
 
 pub(crate) fn update_window_geometry(
     ctx: &egui::Context,

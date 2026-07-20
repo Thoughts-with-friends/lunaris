@@ -279,7 +279,7 @@ const NOCASH_HEADER: &[u8] = b"NocashGbaBackupMediaSavDataFile";
 /// Called on every file read from disk ([`SaveMem::new`]) and on every
 /// explicit [`Backup::set_save_bytes`] import, so both the normal load
 /// path and manual "Import Save" both accept foreign formats identically.
-pub(crate) fn normalize_foreign_save(bytes: &[u8]) -> Vec<u8> {
+pub fn normalize_foreign_save(bytes: &[u8]) -> Vec<u8> {
     if let Some(raw) = strip_desmume_footer(bytes) {
         info!(
             target: "nds_core::savedata",

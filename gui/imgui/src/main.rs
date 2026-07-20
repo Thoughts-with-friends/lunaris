@@ -2,22 +2,17 @@
 #![cfg_attr(feature = "release", windows_subsystem = "windows")]
 #![expect(clippy::collapsible_if)]
 
-mod config;
 mod debug;
 mod display;
 mod input;
 mod savestate;
 
-use std::{
-    borrow::Borrow as _,
-    collections::HashSet,
-    fs::File,
-    path::{Path, PathBuf},
-};
+use std::{borrow::Borrow as _, collections::HashSet, fs::File, path::PathBuf};
 
 use glfw::Key;
 use imgui::{Condition, MenuItem, Slider, Ui, Window, im_str};
 
+use lunaris_gui_common::loader::load_rom;
 use nds_core::{
     nds::NDS,
     simplelog::{
@@ -90,7 +85,7 @@ fn setup_logging() {
 // ROM
 // =========================================================
 
-fn resolve_rom_path(config: &config::Config) -> Option<PathBuf> {
+fn resolve_rom_path(config: &lunaris_gui_common::config::Config) -> Option<PathBuf> {
     if let Some(arg) = std::env::args().nth(1) {
         let p = PathBuf::from(arg);
         if p.exists() {
@@ -107,25 +102,19 @@ fn resolve_rom_path(config: &config::Config) -> Option<PathBuf> {
     rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
 }
 
-fn create_nds(rom: &Path, config: &config::Config) -> NDS {
-    NDS::load_rom(
-        config.bios7_path.as_deref(),
-        config.bios9_path.as_deref(),
-        config.firmware_path.as_deref(),
-        rom,
-        config.audio_volume,
-    )
+fn create_nds(config: &lunaris_gui_common::config::Config) -> NDS {
+    load_rom(config)
 }
 
 // =========================================================
 // Save states
 // =========================================================
 
-fn state_slot_path(config: &config::Config, slot: usize) -> PathBuf {
+fn state_slot_path(config: &lunaris_gui_common::config::Config, slot: usize) -> PathBuf {
     config.save_state_dir.join(format!("state_{slot}.bin"))
 }
 
-fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
+fn save_state_to_slot(nds: &mut NDS, config: &lunaris_gui_common::config::Config, slot: usize) {
     let path = state_slot_path(config, slot);
     if let Err(e) = savestate::save_to_file(nds, &path) {
         nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
@@ -134,7 +123,11 @@ fn save_state_to_slot(nds: &mut NDS, config: &config::Config, slot: usize) {
 
 /// Loads slot `slot` into `nds`. Returns `true` on success, so callers can
 /// unpause emulation only when the load actually applied.
-fn load_state_from_slot(nds: &mut NDS, config: &config::Config, slot: usize) -> bool {
+fn load_state_from_slot(
+    nds: &mut NDS,
+    config: &lunaris_gui_common::config::Config,
+    slot: usize,
+) -> bool {
     let path = state_slot_path(config, slot);
     match savestate::load_from_file(nds, &path) {
         Ok(()) => {
@@ -212,7 +205,7 @@ impl DebugState {
 
 struct FrameCtx {
     nds: NDS,
-    config: config::Config,
+    config: lunaris_gui_common::config::Config,
     paused: bool,
     menu_height: f32,
 }
@@ -255,8 +248,8 @@ fn frame(
 
     if dropped.len() == 1 {
         if dropped[0].extension().and_then(|e| e.to_str()) == Some("nds") {
-            ctx.nds = create_nds(&dropped[0], &ctx.config);
             display.set_last_rom_path(Some(dropped[0].clone()));
+            ctx.nds = create_nds(&ctx.config);
             ctx.paused = false;
         }
     }
@@ -272,7 +265,7 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
             if MenuItem::new(im_str!("Open ROM")).build(ui) {
                 if let Some(p) = rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
                 {
-                    ctx.nds = create_nds(&p, &ctx.config);
+                    ctx.nds = create_nds(&ctx.config);
                     ctx.paused = false;
                     ctx.config.last_rom_path = Some(p.to_path_buf());
                     ctx.config.save();
@@ -314,10 +307,8 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
             }
 
             if MenuItem::new(im_str!("Reset")).build(ui) {
-                if let Some(path) = ctx.config.last_rom_path.as_deref() {
-                    ctx.nds = create_nds(path, &ctx.config);
-                    ctx.paused = false;
-                }
+                ctx.nds = create_nds(&ctx.config);
+                ctx.paused = false;
             }
         });
 
@@ -355,7 +346,12 @@ fn render_debug(nds: &mut NDS, ui: &Ui, keys: &HashSet<Key>, debug: &mut DebugSt
 // Audio
 // =========================================================
 
-fn render_audio(config: &mut config::Config, nds: &mut NDS, ui: &Ui, state: &mut UiState) {
+fn render_audio(
+    config: &mut lunaris_gui_common::config::Config,
+    nds: &mut NDS,
+    ui: &Ui,
+    state: &mut UiState,
+) {
     if !state.show_audio {
         return;
     }
@@ -381,7 +377,7 @@ fn render_audio(config: &mut config::Config, nds: &mut NDS, ui: &Ui, state: &mut
 fn main() {
     setup_logging();
 
-    let mut config = config::Config::load();
+    let mut config = lunaris_gui_common::config::Config::load();
     let rom = resolve_rom_path(&config).expect("ROM required");
     config.last_rom_path = Some(rom.clone());
 
@@ -394,8 +390,7 @@ fn main() {
 
     let mut debug = DebugState::new();
     let mut ui_state = UiState::new();
-    let mut ctx =
-        FrameCtx { nds: create_nds(&rom, &config), config, paused: false, menu_height: 0.0 };
+    let mut ctx = FrameCtx { nds: create_nds(&config), config, paused: false, menu_height: 0.0 };
 
     let main_loop = move |display: &mut Display| {
         frame(display, &mut imgui, &mut ctx, &mut debug, &mut ui_state);

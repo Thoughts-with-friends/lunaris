@@ -334,9 +334,17 @@ impl HW {
 
     /// Runs once per frame at the start of V-Blank (line 192).
     ///
-    /// Starts V-Blank-triggered DMA, then lets the 3D engine rasterize the
-    /// frame and execute buffered geometry commands.  Real hardware renders
-    /// the 3D scene during V-Blank into line buffers for the next frame.
+    /// Starts V-Blank-triggered DMA, then resolves the pending SwapBuffers
+    /// and lets the 3D engine rasterize the frame (when enabled) and
+    /// execute buffered geometry commands. Real hardware renders the 3D
+    /// scene during V-Blank into line buffers for the next frame.
+    ///
+    /// The SwapBuffers resolution itself is unconditional: POWCNT1
+    /// "Enable 3D Rendering" (bit 2) only gates the rasterizer, not the
+    /// geometry engine's halt-until-VBlank behavior. Gating the resolution
+    /// on that bit would leave the geometry engine (and GXFIFO) stalled
+    /// forever whenever a game toggles rendering off mid-scene. See
+    /// `docs/design/3d-rendering-bugfix-design.md` §3.1.
     ///
     /// GBATEK "DS 3D Overview" (rendering starts after VBlank):
     /// <https://problemkaputt.de/gbatek.htm#ds3doverview>
@@ -344,12 +352,11 @@ impl HW {
     pub fn on_vblank(&mut self, _event: Event) {
         self.run_dmas_both(dma::Occasion::VBlank);
         // TODO: Render using multiple threads
-        if self.gpu.powcnt1.contains(POWCNT1::ENABLE_3D_RENDERING) {
-            self.gpu.engine3d.render(&self.gpu.vram);
+        let rendering_enabled = self.gpu.powcnt1.contains(POWCNT1::ENABLE_3D_RENDERING);
+        self.gpu.engine3d.render(&self.gpu.vram, rendering_enabled);
 
-            self.gpu.engine3d.exec_commands(&mut self.interrupts[1].request);
-            self.check_geometry_command_fifo();
-        }
+        self.gpu.engine3d.exec_commands(&mut self.interrupts[1].request);
+        self.check_geometry_command_fifo();
     }
 
     fn check_dispstats<F>(&mut self, check: &mut F)
