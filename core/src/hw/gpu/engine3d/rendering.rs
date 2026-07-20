@@ -25,7 +25,8 @@ impl Engine3D {
         }
     }
 
-    /// Rasterizes all submitted polygons into the internal frame buffer.
+    /// Resolves the pending SwapBuffers and, when `rendering_enabled`,
+    /// rasterizes all submitted polygons into the internal frame buffer.
     ///
     /// Runs once per frame after SwapBuffers; on hardware the rendering
     /// engine draws scanline-by-scanline starting 48 lines ahead of the
@@ -33,12 +34,34 @@ impl Engine3D {
     /// polygon with perspective-correct texturing, depth test, and toon /
     /// modulation blending.
     ///
+    /// `rendering_enabled` mirrors POWCNT1 "Enable 3D Rendering" (bit 2).
+    /// Per GBATEK "DS Power Control" (`#dspowercontrol`), that bit only
+    /// gates the rasterizer - the geometry engine's SwapBuffers halt
+    /// (`polygons_submitted`) must still be resolved every V-Blank
+    /// regardless of it, otherwise the GXFIFO fills and the CPU bus stalls
+    /// permanently. See `docs/design/3d-rendering-bugfix-design.md` §3.1.
+    ///
     /// GBATEK "DS 3D Overview – Rendering Engine":
     /// <https://problemkaputt.de/gbatek.htm#ds3doverview>
-    pub fn render(&mut self, vram: &VRAM) {
+    pub fn render(&mut self, vram: &VRAM, rendering_enabled: bool) {
         if !self.polygons_submitted {
             return;
         }
+
+        // GBATEK "DS 3D Polygon List Commands - SwapBuffers"
+        // (`#ds3dpolygonlistcommands`): parameters passed to SwapBuffers
+        // apply to the polygons defined after it, i.e. they take effect
+        // for the frame being swapped in now.
+        self.frame_params = self.next_frame_params;
+
+        if !rendering_enabled {
+            self.polygons.clear();
+            self.vertices.clear();
+            self.gxstat.geometry_engine_busy = false;
+            self.polygons_submitted = false;
+            return;
+        }
+
         // TODO: Optimize
         for pixel in self.frame_buffer.iter_mut() {
             pixel.color = FrameBufferColor::new5(
@@ -48,7 +71,7 @@ impl Engine3D {
             pixel.depth = self.clear_depth.depth();
         }
 
-        assert!(!self.frame_params.w_buffer); // TODO: Implement W-Buffer
+        let w_buffer = self.frame_params.w_buffer;
         warn!("disp3dcnt.alpha_test is not implemented, so alpha test is currently disabled");
         // assert!(!self.disp3dcnt.alpha_test); // TODO: Implement alpha test
 
@@ -72,11 +95,31 @@ impl Engine3D {
                         FrameBufferColor::new8(toon_table[vert_color.r5() as usize], vert_color.a);
                     Self::blend_tex(tex_color, toon_color, modulation_blend, modulation_blend)
                 }
-                // TODO: Use decal blending
+                // GBATEK "DS 3D Texture Blending" (`#ds3dtextureblending`),
+                // Decal mode: texel RGB replaces the vertex RGB weighted by
+                // the texel's own alpha (R = (Rt*At + Rv*(63-At))/64); the
+                // vertex alpha always passes through untouched. Falls back
+                // to the vertex color when there is no texture (mirrors
+                // the other modes). This can't reuse `blend_tex` since its
+                // per-component closures don't see the texel's alpha.
+                PolygonMode::Decal => match tex_color {
+                    Some(tex) => {
+                        let tex_alpha = tex.a6() as u16;
+                        let calc = |t: u16, v: u16| (t * tex_alpha + v * (63 - tex_alpha)) / 64;
+                        FrameBufferColor::new6(
+                            Color::new6(
+                                calc(tex.r6() as u16, vert_color.r6() as u16) as u8,
+                                calc(tex.g6() as u16, vert_color.g6() as u16) as u8,
+                                calc(tex.b6() as u16, vert_color.b6() as u16) as u8,
+                            ),
+                            vert_color.a6(),
+                        )
+                    }
+                    None => vert_color,
+                },
                 PolygonMode::Shadow => {
                     tex_color.unwrap_or_else(|| FrameBufferColor::new5(Color::new5(0, 0, 0), 0))
                 }
-                _ => todo!(),
             }
         };
 
@@ -84,15 +127,22 @@ impl Engine3D {
         let frame_buffer = &mut self.frame_buffer;
         let mut render = |polygon: Polygon| {
             let vertices = &vertices[polygon.start_vert..polygon.end_vert];
-            Self::render_polygon(disp3dcnt, blend, &polygon, vertices, frame_buffer);
+            Self::render_polygon(disp3dcnt, w_buffer, blend, &polygon, vertices, frame_buffer);
         };
 
         if disp3dcnt.alpha_blending {
-            let (opaque, translucent): (Vec<Polygon>, Vec<Polygon>) =
+            let (opaque, mut translucent): (Vec<Polygon>, Vec<Polygon>) =
                 self.polygons.drain(..).partition(|polygon| polygon.attrs.alpha == 0x1F);
 
             for polygon in opaque {
                 render(polygon)
+            }
+            // GBATEK "DS 3D Rendering Engine": unless manual translucent
+            // sorting is requested via SwapBuffers, translucent polygons
+            // are Y-sorted back-to-front before compositing so overlapping
+            // transparent surfaces blend in the correct order.
+            if !self.frame_params.manual_sort_translucent {
+                translucent.sort_by_key(|polygon| polygon.y_bounds.0);
             }
             for polygon in translucent {
                 render(polygon)
@@ -110,6 +160,7 @@ impl Engine3D {
 
     fn render_polygon<B>(
         disp3dcnt: &DISP3DCNT,
+        w_buffer: bool,
         blend: B,
         polygon: &Polygon,
         vertices: &[Vertex],
@@ -153,40 +204,50 @@ impl Engine3D {
         let prev = |cur| {
             if cur == 0 { vertices.len() - 1 } else { cur - 1 }
         };
+        // Winding direction picks which walk direction is the "left" edge;
+        // plain function pointers avoid a per-polygon heap allocation that
+        // a `Box<dyn Fn>` pair would otherwise incur (see
+        // `docs/design/3d-rendering-bugfix-design.md` §5.2).
+        let is_front = polygon.is_front;
+        let next_left = |cur| if is_front { next(cur) } else { prev(cur) };
+        let next_right = |cur| if is_front { prev(cur) } else { next(cur) };
 
-        #[expect(clippy::type_complexity)]
-        let (next_left, next_right): (
-            Box<dyn Fn(usize) -> usize>,
-            Box<dyn Fn(usize) -> usize>,
-        ) = if polygon.is_front {
-            (Box::new(next), Box::new(prev))
-        } else {
-            (Box::new(prev), Box::new(next))
-        };
         let new_left_vert = next_left(left_vert);
         let mut left_slope =
-            VertexSlope::from_verts(&vertices[left_vert], &vertices[new_left_vert]);
+            VertexSlope::from_verts(&vertices[left_vert], &vertices[new_left_vert], w_buffer);
         let mut left_end = vertices[new_left_vert].screen_coords[1];
         left_vert = new_left_vert;
         let new_right_vert = next_right(right_vert);
         let mut right_slope =
-            VertexSlope::from_verts(&vertices[right_vert], &vertices[new_right_vert]);
+            VertexSlope::from_verts(&vertices[right_vert], &vertices[new_right_vert], w_buffer);
         let mut right_end = vertices[new_right_vert].screen_coords[1];
         right_vert = new_right_vert;
 
-        for y in vertices[start_vert].screen_coords[1]..vertices[end_vert].screen_coords[1] {
+        // Defense-in-depth: screen coordinates are clamped at the viewport
+        // transform (see `Viewport::screen_coords`), but clamp the scanline
+        // range here too so a future regression can't index past the
+        // 256x192 frame buffer.
+        let y_start = vertices[start_vert].screen_coords[1].min(GPU::HEIGHT as u32);
+        let y_end = vertices[end_vert].screen_coords[1].min(GPU::HEIGHT as u32);
+        for y in y_start..y_end {
             // Find next vertex below current
             while y >= left_end {
                 let new_left_vert = next_left(left_vert);
-                left_slope =
-                    VertexSlope::from_verts(&vertices[left_vert], &vertices[new_left_vert]);
+                left_slope = VertexSlope::from_verts(
+                    &vertices[left_vert],
+                    &vertices[new_left_vert],
+                    w_buffer,
+                );
                 left_end = vertices[new_left_vert].screen_coords[1];
                 left_vert = new_left_vert;
             }
             while y >= right_end {
                 let new_right_vert = next_right(right_vert);
-                right_slope =
-                    VertexSlope::from_verts(&vertices[right_vert], &vertices[new_right_vert]);
+                right_slope = VertexSlope::from_verts(
+                    &vertices[right_vert],
+                    &vertices[new_right_vert],
+                    w_buffer,
+                );
                 right_end = vertices[new_right_vert].screen_coords[1];
                 right_vert = new_right_vert;
             }
@@ -194,30 +255,8 @@ impl Engine3D {
             let x_end = right_slope.next_x() as usize;
             let (x_start, x_end) =
                 if x_start > x_end { (x_end, x_start) } else { (x_start, x_end) };
-            let w_start = left_slope.next_w() as i16;
-            let w_end = right_slope.next_w() as i16;
-            assert!(x_end >= x_start, "{}", {
-                for vert in polygon.original_verts.iter() {
-                    println!("Clip: {:?}", vert.0);
-                    println!("OVert: {:?}", vert.1);
-                    println!(
-                        "Vert: {:?}",
-                        vert.0
-                            * super::math::Vec4::new(
-                                vert.1[0],
-                                vert.1[1],
-                                vert.1[2],
-                                super::math::FixedPoint::one()
-                            )
-                    );
-                    println!();
-                }
-                for vert in vertices.iter() {
-                    println!("Clip: {:?}", vert.clip_coords);
-                    println!("Screen: {:?}", vert.screen_coords);
-                }
-                format!("{} {}", x_start, x_end)
-            });
+            let w_start = left_slope.next_w() as u16;
+            let w_end = right_slope.next_w() as u16;
             let num_steps = x_end - x_start;
             let mut color = ColorSlope::new(
                 &left_slope.next_color(),
@@ -349,57 +388,99 @@ impl Engine3D {
                 let alpha = if palette_color == 0 && color0_transparent { 0 } else { 0x1F };
                 FrameBufferColor::new5(color, alpha)
             }),
-            TextureFormat::Compressed => Some({
+            TextureFormat::Compressed => {
                 let num_blocks_row = polygon.tex_params.size_s / 4;
                 let block_start_addr = t / 4 * num_blocks_row + s / 4;
                 let base_addr = vram_offset + 4 * block_start_addr;
+                {
+                    use std::sync::atomic::{AtomicUsize, Ordering};
+
+                    // Compressed textures only live in VRAM slot 0 or slot 2
+                    // (GBATEK "DS 3D Textures - Compressed Texture Format",
+                    // `#ds3dtextureformats`). A block address landing outside
+                    // those slots means the game configured an inconsistent
+                    // texture base/size; render it as fully transparent rather
+                    // than panicking.
+                    static SLOT0: AtomicUsize = AtomicUsize::new(0);
+                    static SLOT2: AtomicUsize = AtomicUsize::new(0);
+                    let c = if base_addr < 128 * 0x400 {
+                        SLOT0.fetch_add(1, Ordering::Relaxed)
+                    } else {
+                        SLOT2.fetch_add(1, Ordering::Relaxed)
+                    };
+                    if c % 100_000 == 0 {
+                        eprintln!(
+                            "[dbg-ctex] slot0={} slot2={} base=0x{base_addr:X}",
+                            SLOT0.load(Ordering::Relaxed),
+                            SLOT2.load(Ordering::Relaxed)
+                        );
+                    }
+                }
                 let te = vram.get_textures::<u8>(base_addr + t % 4);
                 let texel_val = te >> (2 * (s % 4)) & 0x3;
-                // TODO: Check behavior and optimize
-                assert!(base_addr / 128 / 0x400 == 0 || base_addr / 128 / 0x400 == 2);
-                let extra_palette_addr = (base_addr & 0x1_FFFF) / 2
-                    + if base_addr < 128 * 0x400 {
-                        0 // Slot 0
-                    } else {
-                        0x1000
-                    }; // Slot 2
-                let extra_palette_info = vram.get_textures::<u16>(128 * 0x400 + extra_palette_addr);
-                let mode = (extra_palette_info >> 14) & 0x3;
-                let pal_offset = pal_offset + 4 * (extra_palette_info & 0x3FFF) as usize;
-                let color = |num: u8| {
-                    FrameBufferColor::new5(
-                        Color::from(vram.get_textures_pal::<u16>(pal_offset + 2 * num as usize)),
-                        0x1F,
-                    )
-                };
-                match mode {
-                    0 => match texel_val {
-                        0..=2 => color(texel_val),
-                        3 => FrameBufferColor::new5(Color::new5(0, 0, 0), 0), // Transparent
+                Some({
+                    // GBATEK "DS 3D Texture Formats - 4x4-Texel Compressed"
+                    // (`#ds3dtextureformats`): the 2-bit texel data lives in
+                    // texture slot 0 or 2, and each 4x4 block's 16-bit extra
+                    // palette entry lives in slot 1, at
+                    // `0x20000 + (texel_offset & 0x1FFFF) / 2` for slot 0 and
+                    // a further `0x10000` higher for slot 2.
+                    //
+                    // The slot-2 displacement is 0x10000, i.e. the second
+                    // half of slot 1. A smaller value makes every slot-2
+                    // compressed texture read its palette entries from the
+                    // wrong place, which decodes whole surfaces to the wrong
+                    // colours or to the transparent entry, so geometry that
+                    // uses them (large textured scenery such as buildings)
+                    // disappears while geometry using other texture formats
+                    // still draws.
+                    let extra_palette_addr = (base_addr & 0x1_FFFF) / 2
+                        + if base_addr < 128 * 0x400 {
+                            0 // Slot 0
+                        } else {
+                            0x10000
+                        }; // Slot 2
+                    let extra_palette_info =
+                        vram.get_textures::<u16>(128 * 0x400 + extra_palette_addr);
+                    let mode = (extra_palette_info >> 14) & 0x3;
+                    let pal_offset = pal_offset + 4 * (extra_palette_info & 0x3FFF) as usize;
+                    let color = |num: u8| {
+                        FrameBufferColor::new5(
+                            Color::from(
+                                vram.get_textures_pal::<u16>(pal_offset + 2 * num as usize),
+                            ),
+                            0x1F,
+                        )
+                    };
+                    match mode {
+                        0 => match texel_val {
+                            0..=2 => color(texel_val),
+                            3 => FrameBufferColor::new5(Color::new5(0, 0, 0), 0), // Transparent
+                            _ => unreachable!(),
+                        },
+                        1 => match texel_val {
+                            0 | 1 => color(texel_val),
+                            2 => Self::combine_colors5(color(0), color(1), |val0, val1| {
+                                (val0 + val1) / 2
+                            }),
+                            3 => FrameBufferColor::new5(Color::new5(0, 0, 0), 0), // Transparent
+                            _ => unreachable!(),
+                        },
+                        2 => color(texel_val),
+                        3 => match texel_val {
+                            0 | 1 => color(texel_val),
+                            2 => Self::combine_colors5(color(0), color(1), |val0, val1| {
+                                (val0 * 5 + val1 * 3) / 8
+                            }),
+                            3 => Self::combine_colors5(color(0), color(1), |val0, val1| {
+                                (val0 * 3 + val1 * 5) / 8
+                            }),
+                            _ => unreachable!(),
+                        },
                         _ => unreachable!(),
-                    },
-                    1 => match texel_val {
-                        0 | 1 => color(texel_val),
-                        2 => Self::combine_colors5(color(0), color(1), |val0, val1| {
-                            (val0 + val1) / 2
-                        }),
-                        3 => FrameBufferColor::new5(Color::new5(0, 0, 0), 0), // Transparent
-                        _ => unreachable!(),
-                    },
-                    2 => color(texel_val),
-                    3 => match texel_val {
-                        0 | 1 => color(texel_val),
-                        2 => Self::combine_colors5(color(0), color(1), |val0, val1| {
-                            (val0 * 5 + val1 * 3) / 8
-                        }),
-                        3 => Self::combine_colors5(color(0), color(1), |val0, val1| {
-                            (val0 * 3 + val1 * 5) / 8
-                        }),
-                        _ => unreachable!(),
-                    },
-                    _ => unreachable!(),
-                }
-            }),
+                    }
+                })
+            }
             TextureFormat::A5I3 => Some({
                 let byte = vram.get_textures::<u8>(vram_offset + texel);
                 let palette_color = byte & 0x7;
@@ -472,7 +553,14 @@ impl Engine3D {
     fn get_depth_test(polygon: &Polygon) -> fn(u32, u32) -> bool {
         // TODO: Account for special cases
         fn eq_depth_test(cur_depth: u32, new_depth: u32) -> bool {
-            new_depth >= cur_depth - 0x200 && new_depth <= cur_depth + 0x200
+            // `cur_depth` is a 24-bit value that can be smaller than 0x200
+            // for geometry very close to the camera (a common case for a
+            // close-up cutscene model); a plain `cur_depth - 0x200` then
+            // underflows the `u32` and wraps to a huge value, which makes
+            // the equal-depth test spuriously fail for exactly that
+            // close-up geometry. Saturate instead of wrapping.
+            new_depth >= cur_depth.saturating_sub(0x200)
+                && new_depth <= cur_depth.saturating_add(0x200)
         }
         fn lt_depth_test(cur_depth: u32, new_depth: u32) -> bool {
             new_depth < cur_depth
@@ -492,10 +580,23 @@ struct VertexSlope {
 
 // TODO: RE slopes
 impl VertexSlope {
-    pub fn from_verts(start: &Vertex, end: &Vertex) -> VertexSlope {
+    /// `w_buffer` selects the depth source per GBATEK "DS 3D Polygon List
+    /// Commands - SwapBuffers" (`#ds3dpolygonlistcommands`): Z-buffering
+    /// interpolates the normalized 24-bit `z_depth`, W-buffering
+    /// interpolates the raw clip-space W linearly (no perspective
+    /// correction is applied to depth in W mode).
+    pub fn from_verts(start: &Vertex, end: &Vertex, w_buffer: bool) -> VertexSlope {
         let num_steps = (end.screen_coords[1] - start.screen_coords[1]) as usize;
         let w_start = start.normalized_w;
         let w_end = end.normalized_w;
+        let (depth_start, depth_end) = if w_buffer {
+            // Clip-space W is the depth value in W-buffer mode. It is read
+            // straight from the vertex rather than cached in a separate
+            // field, so `Vertex`'s savestate layout stays unchanged.
+            (start.clip_coords[3].raw().max(1) as f32, end.clip_coords[3].raw().max(1) as f32)
+        } else {
+            (start.z_depth as f32, end.z_depth as f32)
+        };
         VertexSlope {
             x: FPSlope::new(start.screen_coords[0], end.screen_coords[0], num_steps),
             w: Slope::new(w_start as f32, w_end as f32, num_steps),
@@ -513,7 +614,7 @@ impl VertexSlope {
                 w_start,
                 w_end,
             ),
-            depth: Slope::new(start.z_depth as f32, end.z_depth as f32, num_steps),
+            depth: Slope::new(depth_start, depth_end, num_steps),
             color: ColorSlope::new(&start.color, &end.color, num_steps, w_start, w_end),
         }
     }
@@ -554,8 +655,8 @@ impl ColorSlope {
         start_color: &Color,
         end_color: &Color,
         num_steps: usize,
-        w_start: i16,
-        w_end: i16,
+        w_start: u16,
+        w_end: u16,
     ) -> Self {
         ColorSlope {
             r: PerspectiveSlope::new(
@@ -597,7 +698,7 @@ struct PerspectiveSlope {
 }
 
 impl PerspectiveSlope {
-    pub fn new(start: f32, end: f32, num_steps: usize, w_start: i16, w_end: i16) -> Self {
+    pub fn new(start: f32, end: f32, num_steps: usize, w_start: u16, w_end: u16) -> Self {
         PerspectiveSlope {
             cur: 0,
             start,
@@ -609,11 +710,22 @@ impl PerspectiveSlope {
     }
 
     pub fn next(&mut self) -> f32 {
-        // TODO: Use linear interpolation for same w values
         let factor_fn = |cur| {
             (cur * self.w_start) / (((self.num_steps - cur) * self.w_end) + (cur * self.w_start))
         };
         let factor = (factor_fn)(self.cur as f32);
+        // Hardware falls back to linear interpolation when the perspective
+        // factor is degenerate (equal W values give a 0/0 denominator; a
+        // zero-length span gives num_steps == 0). Without this guard a
+        // single scanline can receive a NaN/±inf factor, which manifests
+        // as a garbled horizontal line across an otherwise-correct polygon.
+        let factor = if factor.is_finite() && self.num_steps > 0.0 {
+            factor
+        } else if self.num_steps > 0.0 {
+            self.cur as f32 / self.num_steps
+        } else {
+            0.0
+        };
         self.cur += 1;
         self.start + factor * self.diff
     }

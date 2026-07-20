@@ -77,22 +77,38 @@ impl Engine3D {
         match command_entry.command {
             NOP => (),
             MtxMode => self.mtx_mode = MatrixMode::from(param as u8 & 0x3),
+            // GBATEK "DS 3D Matrix Stack" (`#ds3dmatrixstack`): overflow or
+            // underflow of any matrix stack sets GXSTAT bit 15 (the "mat
+            // stack error" flag) and otherwise leaves the geometry engine
+            // running - it never halts the emulated machine. The
+            // projection and texture stacks hold a single entry each; the
+            // position/direction stack holds 31 entries addressed by a
+            // 6-bit (0..63, wrapping) pointer.
             MtxPush => match self.mtx_mode {
                 MatrixMode::Proj => {
-                    self.proj_stack[self.proj_stack_sp as usize] = self.cur_proj;
-                    self.proj_stack_sp += 1;
-                    assert!(self.proj_stack_sp <= 1);
+                    if self.proj_stack_sp >= 1 {
+                        self.gxstat.mat_stack_error = true;
+                    } else {
+                        self.proj_stack[0] = self.cur_proj;
+                        self.proj_stack_sp += 1;
+                    }
                 }
                 MatrixMode::Pos | MatrixMode::PosVec => {
-                    self.pos_stack[self.pos_vec_stack_sp as usize] = self.cur_pos;
-                    self.vec_stack[self.pos_vec_stack_sp as usize] = self.cur_vec;
-                    self.pos_vec_stack_sp += 1;
-                    assert!(self.pos_vec_stack_sp <= 31);
+                    if self.pos_vec_stack_sp >= 31 {
+                        self.gxstat.mat_stack_error = true;
+                    } else {
+                        self.pos_stack[self.pos_vec_stack_sp as usize] = self.cur_pos;
+                        self.vec_stack[self.pos_vec_stack_sp as usize] = self.cur_vec;
+                        self.pos_vec_stack_sp += 1;
+                    }
                 }
                 MatrixMode::Texture => {
-                    self.tex_stack[self.tex_stack_sp as usize] = self.cur_tex;
-                    self.tex_stack_sp += 1;
-                    assert!(self.tex_stack_sp <= 31);
+                    if self.tex_stack_sp >= 1 {
+                        self.gxstat.mat_stack_error = true;
+                    } else {
+                        self.tex_stack[0] = self.cur_tex;
+                        self.tex_stack_sp += 1;
+                    }
                 }
             },
             MtxPop => {
@@ -100,67 +116,72 @@ impl Engine3D {
                 let offset = if offset & 0x20 != 0 { 0xC0 | offset } else { offset } as i8;
                 match self.mtx_mode {
                     MatrixMode::Proj => {
-                        self.proj_stack_sp -= 1;
-                        assert!(self.proj_stack_sp < 1);
-                        self.cur_proj = self.proj_stack[self.proj_stack_sp as usize];
-                        self.calc_clip_mat();
+                        if self.proj_stack_sp == 0 {
+                            self.gxstat.mat_stack_error = true;
+                        } else {
+                            self.proj_stack_sp -= 1;
+                            self.cur_proj = self.proj_stack[0];
+                            self.calc_clip_mat();
+                        }
                     }
                     MatrixMode::Pos | MatrixMode::PosVec => {
-                        self.pos_vec_stack_sp = (self.pos_vec_stack_sp as i8 - offset) as u8;
-                        assert!(self.pos_vec_stack_sp < 31);
-                        self.cur_pos = self.pos_stack[self.pos_vec_stack_sp as usize];
-                        self.calc_clip_mat();
-                        self.cur_vec = self.vec_stack[self.pos_vec_stack_sp as usize];
+                        let new_sp = self.pos_vec_stack_sp as i8 - offset;
+                        // 6-bit pointer, wraps modulo 64; slots 31..63 are
+                        // out of range and only raise the error flag.
+                        self.pos_vec_stack_sp = new_sp.rem_euclid(64) as u8;
+                        if self.pos_vec_stack_sp >= 31 {
+                            self.gxstat.mat_stack_error = true;
+                        } else {
+                            self.cur_pos = self.pos_stack[self.pos_vec_stack_sp as usize];
+                            self.calc_clip_mat();
+                            self.cur_vec = self.vec_stack[self.pos_vec_stack_sp as usize];
+                        }
                     }
                     MatrixMode::Texture => {
-                        self.tex_stack_sp = (self.tex_stack_sp as i8 - offset) as u8;
-                        assert!(self.tex_stack_sp < 31);
-                        self.cur_tex = self.tex_stack[self.tex_stack_sp as usize];
+                        if self.tex_stack_sp == 0 {
+                            self.gxstat.mat_stack_error = true;
+                        } else {
+                            self.tex_stack_sp -= 1;
+                            self.cur_tex = self.tex_stack[0];
+                        }
                     }
                 }
             }
             MtxStore => {
                 let index = param & 0x3F;
                 if index == 31 {
-                    self.gxstat.mat_stack_error = true
+                    self.gxstat.mat_stack_error = true;
                 }
                 match self.mtx_mode {
-                    MatrixMode::Proj => {
-                        assert!(index <= 1);
-                        self.proj_stack[0] = self.cur_proj;
-                    }
+                    MatrixMode::Proj => self.proj_stack[0] = self.cur_proj,
                     MatrixMode::Pos | MatrixMode::PosVec => {
-                        assert!(index <= 31);
-                        self.pos_stack[index as usize] = self.cur_pos;
-                        self.vec_stack[index as usize] = self.cur_vec;
+                        if index >= 31 {
+                            self.gxstat.mat_stack_error = true;
+                        } else {
+                            self.pos_stack[index as usize] = self.cur_pos;
+                            self.vec_stack[index as usize] = self.cur_vec;
+                        }
                     }
-                    MatrixMode::Texture => {
-                        assert!(index <= 31);
-                        self.tex_stack[index as usize] = self.cur_tex;
-                    }
+                    MatrixMode::Texture => self.tex_stack[0] = self.cur_tex,
                 }
             }
             MtxRestore => {
                 let index = param & 0x3F;
-                if index == 31 {
-                    self.gxstat.mat_stack_error = true
-                }
                 match self.mtx_mode {
                     MatrixMode::Proj => {
-                        assert!(index <= 1);
                         self.cur_proj = self.proj_stack[0];
                         self.calc_clip_mat();
                     }
                     MatrixMode::Pos | MatrixMode::PosVec => {
-                        assert!(index <= 31);
-                        self.cur_pos = self.pos_stack[index as usize];
-                        self.calc_clip_mat();
-                        self.cur_vec = self.vec_stack[index as usize];
+                        if index >= 31 {
+                            self.gxstat.mat_stack_error = true;
+                        } else {
+                            self.cur_pos = self.pos_stack[index as usize];
+                            self.calc_clip_mat();
+                            self.cur_vec = self.vec_stack[index as usize];
+                        }
                     }
-                    MatrixMode::Texture => {
-                        assert!(index <= 31);
-                        self.cur_tex = self.tex_stack[index as usize];
-                    }
+                    MatrixMode::Texture => self.cur_tex = self.tex_stack[0],
                 }
             }
             MtxIdentity => self.apply_cur_mat(Matrix::set_identity, true),
@@ -600,25 +621,72 @@ impl Engine3D {
             is_front,
             original_verts: self.original_verts.drain(..).collect(),
         };
+        // GBATEK "DS 3D View Volumes and Viewports" (`#ds3dviewsvolumesandviewports`):
+        // the view volume requires W > 0 for any vertex surviving clipping.
+        // Clamp defensively so a rounding artifact can't produce a negative
+        // or zero W, which would otherwise corrupt the W-size computation
+        // below (huge shift counts) and the perspective interpolation used
+        // during rasterization.
         let mut w_size = 0;
         for vert in self.cur_poly_verts.iter() {
-            let w = vert.clip_coords[3].raw() as u32;
-            while w >> w_size != 0 {
+            let w = (vert.clip_coords[3].raw().max(1)) as u32;
+            while w_size < 32 && w >> w_size != 0 {
                 w_size += 4;
-                assert!(w_size < 32);
             }
         }
         let (mut bot, mut top) = (0, 191);
         for vert in self.cur_poly_verts.drain(..) {
             let z = vert.clip_coords[2].raw() as i64;
-            let w = vert.clip_coords[3].raw();
+            let w = vert.clip_coords[3].raw().max(1);
+            // GBATEK "DS 3D Rendering Engine - Depth Buffering"
+            // (`#ds3drenderingengine`): the 24-bit Z-buffer value is a
+            // monotonic function of clip-space Z/W across the view volume
+            // [-W, W]. For vertices sitting almost exactly on the near
+            // clip plane (Z very close to -W) the un-clamped formula below
+            // evaluates slightly negative before scaling; bitwise-masking
+            // that with `& 0xFFFFFF` (as opposed to clamping) wraps it to
+            // just under the *far*-plane encoding instead of the *near*
+            // one. On real hardware depth is unsigned and the near plane
+            // always produces the smallest depth value, so masking here
+            // was making close-up geometry (e.g. a camera-filling model
+            // during a cutscene) sort as if it were maximally far away,
+            // producing the depth-test "torn strip" artifact described in
+            // `docs/design/3d-rendering-bugfix-design.md` (investigated
+            // further after that document was written).
+            // let raw_z_depth = ((z * 0x4000 / w as i64) + 0x3FFF) * 0x200;
+            // let vert = Vertex {
+            //     screen_coords: self.viewport.screen_coords(&vert.clip_coords),
+            //     z_depth: raw_z_depth.clamp(0, 0xFFFFFF) as u32,
+            //     // Normalized to a 16-bit unsigned magnitude, matching the
+            //     // hardware interpolator's positive W factors.
+            //     normalized_w: (if w_size < 16 { w << (16 - w_size) } else { w >> (w_size - 16) })
+            //         as u16,
+            //     ..vert
+            // };
+
+            // Test version 1------------------------------------------------------
+            let z_scaled = z * 0x4000;
+            let z_ratio = if (z_scaled < 0) ^ (w < 0) {
+                (z_scaled - (w as i64 - 1)) / w as i64
+            } else {
+                z_scaled / w as i64
+            };
+
+            let mut raw_z_depth = (z_ratio + 0x3FFF) * 0x200;
+
+            if raw_z_depth < 0 {
+                raw_z_depth = 0;
+            }
+
             let vert = Vertex {
                 screen_coords: self.viewport.screen_coords(&vert.clip_coords),
-                z_depth: ((((z * 0x4000 / w as i64) + 0x3FFF) * 0x200) & 0xFFFFFF) as u32,
-                normalized_w: if w_size < 16 { w << (16 - w_size) } else { w >> (w_size - 16) }
-                    as i16,
+                z_depth: (raw_z_depth.clamp(0, 0xFFFFFF)) as u32,
+                normalized_w: (if w_size < 16 { w << (16 - w_size) } else { w >> (w_size - 16) })
+                    as u16,
                 ..vert
             };
+            // ------------------------------------------------------
+
             if vert.screen_coords[1] < top {
                 top = vert.screen_coords[1]
             };
@@ -1114,7 +1182,9 @@ pub struct Vertex {
     pub clip_coords: Vec4,
     pub screen_coords: [u32; 2],
     pub z_depth: u32, // 24 bit depth
-    pub normalized_w: i16,
+    /// W normalized to a 16-bit unsigned magnitude, used for perspective
+    /// interpolation of color/texture coordinates across a scanline.
+    pub normalized_w: u16,
     pub color: Color,
     pub tex_coord: [i16; 2], // 1 + 11 + 4 fixed point
 }

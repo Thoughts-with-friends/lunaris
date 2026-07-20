@@ -102,13 +102,15 @@ pub enum CommandFifoIRQ {
 }
 
 impl From<u8> for CommandFifoIRQ {
+    /// Value `3` is reserved per GBATEK "DS 3D Status" (`#ds3dstatus`).
+    /// Hardware does not halt on reserved register values, so this is
+    /// treated as `Never` rather than panicking.
     fn from(value: u8) -> Self {
         match value {
             0 => CommandFifoIRQ::Never,
             1 => CommandFifoIRQ::LessHalf,
             2 => CommandFifoIRQ::Empty,
-            3 => panic!("Reserved Command FIFO IRQ"),
-            _ => unreachable!(),
+            _ => CommandFifoIRQ::Never,
         }
     }
 }
@@ -462,38 +464,50 @@ impl Viewport {
         Viewport { x1: 0, y1: 0, x2: 0, y2: 0, width: 0, height: 0 }
     }
 
+    /// GBATEK "DS 3D Viewport" (`#ds3dviewsvolumesandviewports`): X/Y1/X/Y2
+    /// are plain 8-bit coordinates (X: 0..255, Y: 0..191); hardware does not
+    /// halt on values that would make width/height fall outside the screen,
+    /// so out-of-range coordinates are clamped rather than asserted.
     pub fn write(&mut self, value: u32) {
         self.x1 = value as u8 as i32;
-        self.y1 = (value >> 8) as u8 as i32;
+        self.y1 = ((value >> 8) as u8 as i32).min(GPU::HEIGHT as i32 - 1);
         self.x2 = (value >> 16) as u8 as i32;
-        self.y2 = (value >> 24) as u8 as i32;
-        assert!((self.y1 as usize) < GPU::HEIGHT);
-        assert!((self.y2 as usize) < GPU::HEIGHT);
-        self.width = self.x2 - self.x1 + 1;
-        self.height = self.y2 - self.y1 + 1;
-        assert!(self.width as usize <= GPU::WIDTH);
-        assert!(self.height as usize <= GPU::HEIGHT);
+        self.y2 = ((value >> 24) as u8 as i32).min(GPU::HEIGHT as i32 - 1);
+        self.width = (self.x2 - self.x1 + 1).clamp(1, GPU::WIDTH as i32);
+        self.height = (self.y2 - self.y1 + 1).clamp(1, GPU::HEIGHT as i32);
     }
 
+    /// Projects a clip-space vertex to screen coordinates.
+    ///
+    /// GBATEK "DS 3D Viewport" (`#ds3dviewsvolumesandviewports`):
+    /// SCREENX = (X+W)*(X2-X1+1)/(2W) + X1,
+    /// SCREENY = (Y+W)*(Y2-Y1+1)/(2W) + Y1.
+    ///
+    /// The intermediate products are evaluated in `i64`. `X+W` spans up to
+    /// `2W`, and W is a 1+19+12 fixed-point value, so `(X+W) * width` can
+    /// exceed `i32` for large or distant geometry. In release builds that
+    /// wraps to a negative value, which the final clamp then collapses onto
+    /// the screen's left/top border: several vertices of one polygon snap to
+    /// x=0, destroying its shape and making the rasterizer walk a span
+    /// across most of the scanline. That is the direct cause of the
+    /// full-width horizontal streaks documented in
+    /// `docs/design/3d-background-rendering-design.md`.
+    ///
+    /// Because the polygon has already been clipped to the view volume
+    /// (`-W <= X,Y,Z <= W`), a correctly computed result is always inside
+    /// the viewport; the final clamp is therefore only a safety net against
+    /// boundary rounding, never a substitute for clipping.
     pub fn screen_coords(&self, clip_coords: &Vec4) -> [u32; 2] {
-        let w = clip_coords[3].raw();
+        let w = clip_coords[3].raw() as i64;
         if w == 0 {
             [0, 0]
         } else {
-            let x_offset = clip_coords[0].raw() + w;
-            let y_offset = -clip_coords[1].raw() + w;
-            let (x_offset, y_offset, w) = if w > 0xFFFF {
-                // To avoid overflow
-                (x_offset >> 1, y_offset >> 1, w >> 1)
-            } else {
-                (x_offset, y_offset, w)
-            };
-
+            let x_offset = clip_coords[0].raw() as i64 + w;
+            let y_offset = -(clip_coords[1].raw() as i64) + w;
             let denom = 2 * w;
-            [
-                (x_offset * self.width / denom + self.x1) as u32 & 0x1FF,
-                (y_offset * self.height / denom + self.x1) as u32 & 0xFF,
-            ]
+            let x = x_offset * self.width as i64 / denom + self.x1 as i64;
+            let y = y_offset * self.height as i64 / denom + self.y1 as i64;
+            [x.clamp(0, GPU::WIDTH as i64 - 1) as u32, y.clamp(0, GPU::HEIGHT as i64 - 1) as u32]
         }
     }
 }
@@ -514,6 +528,64 @@ impl From<u32> for VertexPrimitive {
             2 => VertexPrimitive::TriangleStrips,
             3 => VertexPrimitive::QuadStrips,
             _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hw::gpu::engine3d::math::FixedPoint;
+
+    /// Full-screen viewport, as written by `VIEWPORT` = `0xBFFF0000`
+    /// (X1=0, Y1=0, X2=255, Y2=191).
+    fn full_screen() -> Viewport {
+        let mut viewport = Viewport::new();
+        viewport.write(0xBF_FF_00_00);
+        viewport
+    }
+
+    fn project(viewport: &Viewport, x: i32, y: i32, w: i32) -> [u32; 2] {
+        viewport.screen_coords(&Vec4::new(
+            FixedPoint::from_frac12(x),
+            FixedPoint::from_frac12(y),
+            FixedPoint::from_frac12(0),
+            FixedPoint::from_frac12(w),
+        ))
+    }
+
+    #[test]
+    fn projects_view_volume_corners_to_screen_corners() {
+        let viewport = full_screen();
+        let w = 0x1000;
+        // X = -W maps to the left edge, X = +W to the right edge; Y is
+        // flipped because screen Y grows downwards.
+        assert_eq!(project(&viewport, -w, w, w), [0, 0]);
+        assert_eq!(project(&viewport, 0, 0, w)[0], 128);
+    }
+
+    /// Regression test for the horizontal-streak / black-background bug.
+    ///
+    /// With a large W the intermediate `(X + W) * width` exceeds `i32`.
+    /// When that product wrapped, the result went negative and the final
+    /// clamp collapsed the vertex onto x=0, so several vertices of one
+    /// polygon snapped to the screen edge and the rasterizer drew a span
+    /// across most of the scanline. A vertex on the left half of the view
+    /// volume must never project to the far right, and one on the right
+    /// half must never project to x=0, no matter how large W is.
+    #[test]
+    fn large_w_does_not_overflow_the_projection() {
+        let viewport = full_screen();
+        for shift in 12..27 {
+            let w = 1 << shift;
+            assert_eq!(project(&viewport, -w, w, w), [0, 0], "left/top corner at w=2^{shift}");
+            assert_eq!(
+                project(&viewport, w, -w, w),
+                [255, 191],
+                "right/bottom corner at w=2^{shift}"
+            );
+            // The centre of the view volume stays at the centre of the screen.
+            assert_eq!(project(&viewport, 0, 0, w), [128, 96], "centre at w=2^{shift}");
         }
     }
 }
