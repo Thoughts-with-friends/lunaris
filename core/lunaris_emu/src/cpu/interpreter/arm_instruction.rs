@@ -1462,8 +1462,19 @@ pub fn blx(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     emu.get_cpu_mut(cpu_type).jp(target, true);
 }
 
-/// Software interrupt
+/// Software interrupt.
+///
+/// `config.hle_bios` previously had no effect anywhere: this call always
+/// vectored into the loaded BIOS binary (LLE), so the HLE routines in
+/// `bios.rs` (`Emulator::hle_bios`/`swi7`/`swi9`) were dead code. Now that
+/// the config flag actually gates this, HLE mode intercepts the call
+/// directly instead of jumping to the exception vector.
 pub fn swi(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let _ = instruction;
-    emu.get_cpu_mut(cpu_type).handle_swi();
+    if emu.config.hle_bios {
+        let cpu_id = emu.get_cpu(cpu_type).get_id();
+        emu.hle_bios(cpu_id);
+    } else {
+        emu.get_cpu_mut(cpu_type).handle_swi();
+    }
 }

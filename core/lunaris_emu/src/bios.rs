@@ -66,6 +66,30 @@ impl Emulator {
         }
     }
 
+    /// Approximates `SWI 0x04` (`IntrWait`) / `SWI 0x05` (`VBlankIntrWait`).
+    ///
+    /// The real BIOS routine waits for a *new* occurrence of one of the
+    /// interrupts in `wait_mask`, tracked via a caller-maintained shared RAM
+    /// flag distinct from IE/IF, and only returns once the BIOS's own IRQ
+    /// handler observes and acknowledges it. This emulator has no HLE IRQ
+    /// dispatcher to maintain that shared flag, so instead this enables the
+    /// requested interrupt bit(s) in IE, enables IME, and halts the CPU —
+    /// relying on the existing hardware interrupt-request path (already
+    /// used by `SWI 0x06` `Halt`) to wake it. This is not bit-exact (it
+    /// does not honor "discard stale flags" and leaves the bits enabled in
+    /// IE afterward) but is enough to unblock games whose main loop
+    /// synchronizes every frame via `SWI 0x05`.
+    fn intr_wait(&mut self, cpu_type: CpuType, wait_mask: u32) {
+        if self.get_cpu(cpu_type).get_id() == 0 {
+            self.int9_reg.irq_enable |= wait_mask;
+            self.int9_reg.ime = 1;
+        } else {
+            self.int7_reg.irq_enable |= wait_mask;
+            self.int7_reg.ime = 1;
+        }
+        self.get_cpu_mut(cpu_type).halt();
+    }
+
     /// Calculates CRC16 over a sequence of halfwords.
     fn get_crc16(&mut self, cpu_type: CpuType) {
         let crcs: [u16; 8] = [
@@ -102,6 +126,11 @@ impl Emulator {
                 let reg = self.arm7.get_register(0);
                 self.arm7.add_internal_cycles((reg * 4) as i32);
             }
+            0x04 => {
+                let wait_mask = self.arm7.get_register(1);
+                self.intr_wait(CpuType::Arm7, wait_mask);
+            }
+            0x05 => self.intr_wait(CpuType::Arm7, 1), // VBlank (IE/IF bit 0)
             0x06 => self.arm7.halt(),
             0x0B => self.cpu_set(CpuType::Arm7),
             0x0E => self.get_crc16(CpuType::Arm7),
@@ -122,6 +151,11 @@ impl Emulator {
                 self.get_cpu_mut(CpuType::Arm9)
                     .add_internal_cycles(value as i32);
             }
+            0x04 => {
+                let wait_mask = self.get_cpu(CpuType::Arm9).get_register(1);
+                self.intr_wait(CpuType::Arm9, wait_mask);
+            }
+            0x05 => self.intr_wait(CpuType::Arm9, 1), // VBlank (IE/IF bit 0)
             0x06 => self.get_cpu_mut(CpuType::Arm9).halt(),
             0x0B => self.cpu_set(CpuType::Arm9),
             0x0E => self.get_crc16(CpuType::Arm9),

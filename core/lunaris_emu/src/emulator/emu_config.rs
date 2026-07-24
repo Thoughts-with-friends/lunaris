@@ -24,7 +24,15 @@ pub struct Config {
     /// Enable frame limiter
     pub enable_framelimiter: bool,
 
-    /// Use HLE BIOS
+    /// Use HLE BIOS.
+    ///
+    /// When `true`, `SWI` instructions are intercepted directly by
+    /// [`crate::emulator::Emulator::hle_bios`] instead of jumping into the
+    /// loaded/synthetic BIOS binary. The bundled `lunaris_ds_free_bios`
+    /// image is only a minimal placeholder (e.g. unimplemented routines
+    /// like `IntrWait`/`VBlankIntrWait` are stub infinite loops), so real
+    /// commercial ROMs — which rely on `SWI 5` every frame for vsync —
+    /// hang permanently under LLE. HLE is therefore the default.
     pub hle_bios: bool,
 
     /// Test mode
@@ -50,7 +58,7 @@ impl Config {
             bg_enable: Default::default(),
             frameskip: Default::default(),
             enable_framelimiter: Default::default(),
-            hle_bios: Default::default(),
+            hle_bios: true,
             test: Default::default(),
         }
     }

@@ -1119,7 +1119,13 @@ fn thumb_cond_branch(emu: &mut Emulator, cpu_type: CpuType) {
         // if emu.get_cpu_mut(cpu_type).can_disassemble() {
         //     println!("SWI ${:02X}", instruction & 0xFF);
         // }
-        emu.get_cpu_mut(cpu_type).handle_swi();
+        // See `arm_instruction::swi` for why this now checks `hle_bios`.
+        if emu.config.hle_bios {
+            let cpu_id = emu.get_cpu(cpu_type).get_id();
+            emu.hle_bios(cpu_id);
+        } else {
+            emu.get_cpu_mut(cpu_type).handle_swi();
+        }
         return;
     }
 

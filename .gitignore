@@ -16,4 +16,5 @@ core/examples
 /config.json
 docs/design/
 core/lunaris_emu/tests/
+core/lunaris_emu/examples/
 .serena
