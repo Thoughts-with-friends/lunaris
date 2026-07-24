@@ -8,7 +8,7 @@ use std::convert::TryInto;
 /// Cartridge header fields, in ROM order.
 ///
 /// GBATEK: <https://problemkaputt.de/gbatek.htm#dscartridgeheader>
-#[derive(emu_utils::Savestate)]
+#[derive(Debug, emu_utils::Savestate)]
 pub struct Header {
     pub game_title: [u8; 12], // ASCII
     pub game_code: u32,       // ASCII - 0 = homebrew
@@ -117,7 +117,7 @@ impl Header {
     }
 }
 
-#[derive(emu_utils::Savestate)]
+#[derive(Debug, emu_utils::Savestate)]
 pub enum UnitCode {
     NDS,
     Both,
@@ -135,7 +135,7 @@ impl UnitCode {
     }
 }
 
-#[derive(emu_utils::Savestate)]
+#[derive(Debug, emu_utils::Savestate)]
 pub enum Region {
     Normal,
     China,

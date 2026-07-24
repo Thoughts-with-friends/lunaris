@@ -161,14 +161,22 @@ impl HW {
         );
     }
 
+    /// DS Firmware User Settings
+    /// https://mgba-emu.github.io/gbatek/#current-settings-ram-27ffc80h-27ffcefh:~:text=000h%20%202%20%20%20Version%20(5)%20(Always%205%2C%20for%20all%20NDS/DSi%20Firmware%20versions)    ///
     pub fn init_arm9(&mut self) -> u32 {
+        // #[cfg(feature = "debug")]
+        // std::fs::write(
+        //     "./logs/header_dump.log",
+        //     format!("header = {:#?}", self.cartridge.header()),
+        // )
+        // .unwrap();
         let start_addr = self.cartridge.header().arm9_ram_addr;
         let rom_offset = self.cartridge.header().arm9_rom_offset as usize;
         let size = self.cartridge.header().arm9_size;
         for (i, addr) in (start_addr..start_addr + size).enumerate() {
             self.arm9_write(addr, self.cartridge.rom()[rom_offset + i]);
         }
-        self.arm9_write(0x23FFC80, 0x5u8);
+        self.arm9_write(0x23FFC80, 0x5u8); // 5: firmware version
         self.cartridge.header().arm9_entry_addr
     }
 
