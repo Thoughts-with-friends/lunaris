@@ -7,8 +7,12 @@ dist/
 node_modules/
 
 *.nds
+*sav
 *.log
 logs/
+cheats/
+core/examples
 
 /config.json
 docs/design/
+.serena
