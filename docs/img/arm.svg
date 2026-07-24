@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="760" viewBox="0 0 1000 760">
+  <defs>
+    <style>
+      .title { font: bold 28px sans-serif; fill:#222; }
+      .subtitle { font: bold 18px sans-serif; fill:#333; }
+      .text { font: 15px sans-serif; fill:#222; }
+      .small { font: 13px sans-serif; fill:#444; }
+      .box { fill:#eef6ff; stroke:#2b6cb0; stroke-width:2; rx:10; ry:10; }
+      .cpu { fill:#fff8dc; stroke:#c48a00; stroke-width:3; rx:12; ry:12; }
+      .pipe { fill:#f8f8f8; stroke:#777; stroke-width:2; rx:8; }
+      .state { fill:#e8ffe8; stroke:#3b8c3b; stroke-width:2; rx:8; }
+      .mem { fill:#fff0f0; stroke:#b04040; stroke-width:2; rx:8; }
+      .arrow { stroke:#444; stroke-width:2.5; fill:none; marker-end:url(#arrow); }
+      .dashed { stroke-dasharray:6 4; }
+    </style>
+
+    <marker id="arrow" markerWidth="10" markerHeight="10"
+            refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#444"/>
+    </marker>
+  </defs>
+
+  <text x="500" y="40" text-anchor="middle" class="title">
+    ARM7TDMI CPU Architecture (Conceptual)
+  </text>
+
+  <!-- ARM / THUMB -->
+  <rect x="40" y="80" width="255" height="140" class="state"/>
+  <text x="150" y="110" text-anchor="middle" class="subtitle">CPU States</text>
+
+  <text x="60" y="145" class="text">ARM State</text>
+  <text x="170" y="145" class="small">32-bit Instructions</text>
+
+  <text x="60" y="180" class="text">THUMB State</text>
+  <text x="170" y="180" class="small">16-bit Instructions</text>
+
+  <text x="60" y="205" class="small">Switch by BX instruction</text>
+
+  <!-- CPU -->
+  <rect x="320" y="80" width="360" height="540" class="cpu"/>
+
+  <text x="500" y="115" text-anchor="middle" class="subtitle">
+    ARM7TDMI Core
+  </text>
+
+  <!-- Pipeline -->
+  <rect x="360" y="150" width="280" height="60" class="pipe"/>
+  <text x="500" y="185" text-anchor="middle" class="text">
+    Fetch
+  </text>
+
+  <rect x="360" y="230" width="280" height="60" class="pipe"/>
+  <text x="500" y="265" text-anchor="middle" class="text">
+    Decode
+  </text>
+
+  <rect x="360" y="310" width="280" height="60" class="pipe"/>
+  <text x="500" y="345" text-anchor="middle" class="text">
+    Execute
+  </text>
+
+  <!-- Register file -->
+  <rect x="360" y="410" width="280" height="90" class="box"/>
+  <text x="500" y="440" text-anchor="middle" class="subtitle">
+    Register File
+  </text>
+  <text x="500" y="470" text-anchor="middle" class="text">
+    R0 ～ R15 (32-bit)
+  </text>
+
+  <!-- ALU -->
+  <rect x="360" y="530" width="280" height="60" class="box"/>
+  <text x="500" y="565" text-anchor="middle" class="subtitle">
+    32-bit ALU / Logic Unit
+  </text>
+
+  <!-- Pipeline arrows -->
+  <line x1="500" y1="210" x2="500" y2="230" class="arrow"/>
+  <line x1="500" y1="290" x2="500" y2="310" class="arrow"/>
+  <line x1="500" y1="370" x2="500" y2="410" class="arrow"/>
+  <line x1="500" y1="500" x2="500" y2="530" class="arrow"/>
+
+  <!-- Memory -->
+  <rect x="760" y="120" width="190" height="120" class="mem"/>
+  <text x="855" y="155" text-anchor="middle" class="subtitle">
+    Instruction Memory
+  </text>
+  <text x="855" y="185" text-anchor="middle" class="small">
+    ARM / THUMB Code
+  </text>
+  <text x="855" y="210" text-anchor="middle" class="small">
+    16-bit or 32-bit Bus
+  </text>
+
+  <rect x="760" y="350" width="190" height="120" class="mem"/>
+  <text x="855" y="385" text-anchor="middle" class="subtitle">
+    Data Memory
+  </text>
+  <text x="855" y="415" text-anchor="middle" class="small">
+    Byte (8)
+  </text>
+  <text x="855" y="435" text-anchor="middle" class="small">
+    Halfword (16)
+  </text>
+  <text x="855" y="455" text-anchor="middle" class="small">
+    Word (32)
+  </text>
+
+  <!-- Memory arrows -->
+  <line x1="760" y1="180" x2="640" y2="180" class="arrow"/>
+  <line x1="640" y1="470" x2="760" y2="410" class="arrow"/>
+  <line x1="760" y1="440" x2="640" y2="520" class="arrow dashed"/>
+
+  <!-- ARM/THUMB connection -->
+  <line x1="260" y1="150" x2="320" y2="150" class="arrow"/>
+
+  <!-- Bottom notes -->
+  <rect x="40" y="640" width="910" height="90" fill="#fafafa" stroke="#999"/>
+
+  <text x="60" y="670" class="text">
+    • ARM: 32-bit instructions, higher functionality, all registers (R0–R15)
+  </text>
+
+  <text x="60" y="695" class="text">
+    • THUMB: 16-bit instructions, smaller code, faster on 16-bit memory, mainly R0–R7
+  </text>
+
+  <text x="60" y="720" class="text">
+    • Both modes share the same 32-bit registers and address space. Exceptions automatically enter ARM state.
+  </text>
+</svg>
