@@ -38,8 +38,13 @@ impl DmaCnt {
         }
     }
 
-    /// Get register value as 16-bit halfword
-    pub fn get(&self) -> u16 {
+    /// Get register value as 16-bit halfword.
+    ///
+    /// `is_arm9` selects the *DMA Start Timing* field width per GBATEK: 3
+    /// bits (11-13) on ARM9, 2 bits (11-12) on ARM7.
+    pub fn get(&self, is_arm9: bool) -> u16 {
+        let timing_mask = if is_arm9 { 0x7 } else { 0x3 };
+
         let mut value = 0_u16;
         value |= ((self.dest_control & 0x3) as u16) << 5;
         value |= ((self.source_control & 0x3) as u16) << 7;
@@ -50,7 +55,7 @@ impl DmaCnt {
         if self.word_transfer {
             value |= 1 << 10;
         }
-        value |= ((self.timing & 0x3) as u16) << 11;
+        value |= ((self.timing & timing_mask) as u16) << 11;
         if self.irq_after_transfer {
             value |= 1 << 14;
         }
@@ -60,14 +65,21 @@ impl DmaCnt {
         value
     }
 
-    /// Set register value from 16-bit halfword
-    pub fn set(&mut self, value: u16) {
-        // 33088
+    /// Set register value from 16-bit halfword.
+    ///
+    /// `is_arm9` selects the *DMA Start Timing* field width (see [`Self::get`]).
+    /// Previously this always masked to 2 bits, so ARM9-only timings 4-7
+    /// (Main-Memory-Display, DS-Cartridge, GBA-Cartridge, Geometry-Command-FIFO)
+    /// could never be represented, silently preventing cartridge- and
+    /// GXFIFO-triggered DMA from ever starting.
+    pub fn set(&mut self, value: u16, is_arm9: bool) {
+        let timing_mask = if is_arm9 { 0x7 } else { 0x3 };
+
         self.dest_control = ((value >> 5) & 0x3) as u32;
         self.source_control = ((value >> 7) & 0x3) as u32;
         self.repeat = (value & (1 << 9)) != 0;
         self.word_transfer = (value & (1 << 10)) != 0;
-        self.timing = ((value >> 11) & 0x3) as u32;
+        self.timing = ((value >> 11) & timing_mask) as u32;
         self.irq_after_transfer = (value & (1 << 14)) != 0;
         self.enabled = (value & (1 << 15)) != 0;
 
@@ -183,7 +195,7 @@ impl NDSDma {
 
         for (i, dma) in self.dmas.iter_mut().enumerate() {
             dma.is_arm9 = i < 4;
-            dma.cnt.set(0);
+            dma.cnt.set(0, dma.is_arm9);
         }
     }
 
@@ -223,7 +235,7 @@ impl NDSDma {
     /// Read control register of DMA channel
     pub fn read_cnt(&self, index: usize) -> u16 {
         match index < 8 {
-            true => self.dmas[index].cnt.get(),
+            true => self.dmas[index].cnt.get(self.dmas[index].is_arm9),
             false => 0,
         }
     }
@@ -239,6 +251,38 @@ impl NDSDma {
     pub fn write_dest(&mut self, index: usize, dest: u32) {
         if index < 8 {
             self.dmas[index].destination = dest;
+        }
+    }
+
+    /// Write the low halfword of a DMA channel's source address (`DMAxSAD` bits 0-15).
+    pub fn write_source_lo(&mut self, index: usize, lo: u16) {
+        if index < 8 {
+            let dma = &mut self.dmas[index];
+            dma.source = (dma.source & 0xFFFF_0000) | u32::from(lo);
+        }
+    }
+
+    /// Write the high halfword of a DMA channel's source address (`DMAxSAD` bits 16-31).
+    pub fn write_source_hi(&mut self, index: usize, hi: u16) {
+        if index < 8 {
+            let dma = &mut self.dmas[index];
+            dma.source = (dma.source & 0x0000_FFFF) | (u32::from(hi) << 16);
+        }
+    }
+
+    /// Write the low halfword of a DMA channel's destination address (`DMAxDAD` bits 0-15).
+    pub fn write_dest_lo(&mut self, index: usize, lo: u16) {
+        if index < 8 {
+            let dma = &mut self.dmas[index];
+            dma.destination = (dma.destination & 0xFFFF_0000) | u32::from(lo);
+        }
+    }
+
+    /// Write the high halfword of a DMA channel's destination address (`DMAxDAD` bits 16-31).
+    pub fn write_dest_hi(&mut self, index: usize, hi: u16) {
+        if index < 8 {
+            let dma = &mut self.dmas[index];
+            dma.destination = (dma.destination & 0x0000_FFFF) | (u32::from(hi) << 16);
         }
     }
 

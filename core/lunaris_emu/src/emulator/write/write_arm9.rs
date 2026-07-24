@@ -44,8 +44,36 @@ impl Emulator {
                 self.gpu.set_bgcnt_a((word & 0xFFFF) as u16, 2);
                 self.gpu.set_bgcnt_a((word >> 16) as u16, 3);
             }
-            0x0400_000E..=0x0400_0070 => { /* GPU other registers, implement similarly */ }
-            0x0400_00B0..=0x0400_00DC => { /* DMA registers, call self.dma.write_* */ }
+            0x0400_000E..=0x0400_0070 => {
+                // BG offset/affine, window, mosaic, blend, and 3D-select
+                // registers. This range was an empty stub, so word stores
+                // (common for e.g. `STR Rn, [r0, #0x40]` setting WIN0H/WIN0V
+                // together) were silently dropped even though the halfword
+                // dispatch below already implements every register here.
+                // Decomposing into the two halfwords guarantees parity with
+                // it instead of duplicating each register's logic.
+                self.arm9_write_halfword(address, (word & 0xFFFF) as u16);
+                self.arm9_write_halfword(address + 2, (word >> 16) as u16);
+            }
+            // DMA0-3 SAD/DAD/CNT (word count in the low halfword, control in
+            // the high halfword; `dma_write_len_cnt` splits those for us).
+            // Mirrors the ARM7 dispatch in `write_arm7.rs`, which already
+            // wires this correctly for its own channels (4-7).
+            0x0400_00B0 => self.dma.write_source(0, word),
+            0x0400_00B4 => self.dma.write_dest(0, word),
+            0x0400_00B8 => self.dma_write_len_cnt(0, word),
+
+            0x0400_00BC => self.dma.write_source(1, word),
+            0x0400_00C0 => self.dma.write_dest(1, word),
+            0x0400_00C4 => self.dma_write_len_cnt(1, word),
+
+            0x0400_00C8 => self.dma.write_source(2, word),
+            0x0400_00CC => self.dma.write_dest(2, word),
+            0x0400_00D0 => self.dma_write_len_cnt(2, word),
+
+            0x0400_00D4 => self.dma.write_source(3, word),
+            0x0400_00D8 => self.dma.write_dest(3, word),
+            0x0400_00DC => self.dma_write_len_cnt(3, word),
             0x0400_00E0..=0x0400_00EC => {
                 let i = ((address - 0x0400_00E0) / 4) as usize;
                 self.dma_fill[i] = word;
@@ -133,6 +161,15 @@ impl Emulator {
             VRAM_OBJB_START..VRAM_LCDC_A => {
                 self.gpu.write_objb(address, (word & 0xFFFF) as u16);
                 self.gpu.write_objb(address + 2, (word >> 16) as u16);
+            }
+
+            // LCDC-mapped VRAM (0x06800000-0x06FFFFFF). This range had no
+            // word arm at all, so word stores fell through to the `_ =>`
+            // warning and were lost, even though the halfword dispatch
+            // already handles it via `write_lcdc`.
+            VRAM_LCDC_A..OAM_START => {
+                self.gpu.write_lcdc(address, (word & 0xFFFF) as u16);
+                self.gpu.write_lcdc(address + 2, (word >> 16) as u16);
             }
 
             OAM_START..GBA_ROM_START => {
@@ -256,10 +293,36 @@ impl Emulator {
             0x04000054 => self.gpu.set_bldy_a(halfword as u8),
             0x04000060 => self.gpu.set_disp3dcnt(halfword),
             0x0400006C => self.gpu.set_master_bright_a(halfword),
+            // DMA0-3 SAD/DAD/CNT halfword sub-writes. Previously only the
+            // control halfword (and DMA2's length) were wired here, so
+            // source/destination addresses set via halfword stores (STRH)
+            // were silently dropped and every transfer read/wrote address 0.
+            0x040000B0 => self.dma.write_source_lo(0, halfword),
+            0x040000B2 => self.dma.write_source_hi(0, halfword),
+            0x040000B4 => self.dma.write_dest_lo(0, halfword),
+            0x040000B6 => self.dma.write_dest_hi(0, halfword),
+            0x040000B8 => self.dma.write_len(0, halfword),
             0x040000BA => self.dma_write_cnt(0, halfword),
+
+            0x040000BC => self.dma.write_source_lo(1, halfword),
+            0x040000BE => self.dma.write_source_hi(1, halfword),
+            0x040000C0 => self.dma.write_dest_lo(1, halfword),
+            0x040000C2 => self.dma.write_dest_hi(1, halfword),
+            0x040000C4 => self.dma.write_len(1, halfword),
             0x040000C6 => self.dma_write_cnt(1, halfword),
+
+            0x040000C8 => self.dma.write_source_lo(2, halfword),
+            0x040000CA => self.dma.write_source_hi(2, halfword),
+            0x040000CC => self.dma.write_dest_lo(2, halfword),
+            0x040000CE => self.dma.write_dest_hi(2, halfword),
             0x040000D0 => self.dma.write_len(2, halfword),
             0x040000D2 => self.dma_write_cnt(2, halfword),
+
+            0x040000D4 => self.dma.write_source_lo(3, halfword),
+            0x040000D6 => self.dma.write_source_hi(3, halfword),
+            0x040000D8 => self.dma.write_dest_lo(3, halfword),
+            0x040000DA => self.dma.write_dest_hi(3, halfword),
+            0x040000DC => self.dma.write_len(3, halfword),
             0x040000DE => self.dma_write_cnt(3, halfword),
             0x04000100 => self.nds_timing.write_lo(halfword, 4),
             0x04000102 => self.nds_timing.write_hi(halfword, 4),

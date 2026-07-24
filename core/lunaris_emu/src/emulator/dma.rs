@@ -203,8 +203,9 @@ impl Emulator {
 
         let dma = &mut self.dma.dmas[index];
         let old_enabled = dma.cnt.enabled;
+        let is_arm9 = dma.is_arm9;
 
-        dma.cnt.set(cnt);
+        dma.cnt.set(cnt, is_arm9);
 
         if !old_enabled && (cnt & (1 << 15) != 0) {
             dma.internal_source = dma.source;

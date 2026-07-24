@@ -767,12 +767,25 @@ impl ArmCpu {
         self.set_zero_neg_flags(x ^ y);
     }
 
+    /// Executes `MOV Rd, operand`.
+    ///
+    /// Previously this only handled `MOV PC, ...` with the S-bit set (the
+    /// exception-return form); every ordinary `MOV Rd, #imm` / `MOV Rd, Rm`
+    /// fell through and silently discarded the operand, leaving `Rd`
+    /// unchanged. `Rd` must always receive `operand`, mirroring [`Self::mvn`].
     pub fn mov(&mut self, dst: u32, operand: u32, alter_flags: bool) {
-        if dst == REG_PC && alter_flags {
-            let index = self.cpsr.mode;
-            self.update_reg_mode(self.spsr[index as usize].mode);
-            self.cpsr.set(self.spsr[index as usize].get());
+        if dst == REG_PC {
+            if alter_flags {
+                let index = self.cpsr.mode;
+                self.update_reg_mode(self.spsr[index as usize].mode);
+                self.cpsr.set(self.spsr[index as usize].get());
+            }
             self.jp(operand, true);
+        } else {
+            self.set_register(dst as i32, operand);
+            if alter_flags {
+                self.set_zero_neg_flags(operand);
+            }
         }
     }
 

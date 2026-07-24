@@ -158,9 +158,36 @@ impl Emulator {
             // IO register halfword writes
             0x04000004 => self.gpu.set_dispstat7(halfword),
 
+            // DMA0-3 (ARM7 channels 4-7) SAD/DAD/CNT halfword sub-writes.
+            // Previously only the control halfword was wired here, so
+            // source/destination addresses set via halfword stores (STRH)
+            // were silently dropped and every transfer read/wrote address 0.
+            0x040000B0 => self.dma.write_source_lo(4, halfword),
+            0x040000B2 => self.dma.write_source_hi(4, halfword),
+            0x040000B4 => self.dma.write_dest_lo(4, halfword),
+            0x040000B6 => self.dma.write_dest_hi(4, halfword),
+            0x040000B8 => self.dma.write_len(4, halfword),
             0x040000BA => self.dma_write_cnt(4, halfword),
+
+            0x040000BC => self.dma.write_source_lo(5, halfword),
+            0x040000BE => self.dma.write_source_hi(5, halfword),
+            0x040000C0 => self.dma.write_dest_lo(5, halfword),
+            0x040000C2 => self.dma.write_dest_hi(5, halfword),
+            0x040000C4 => self.dma.write_len(5, halfword),
             0x040000C6 => self.dma_write_cnt(5, halfword),
+
+            0x040000C8 => self.dma.write_source_lo(6, halfword),
+            0x040000CA => self.dma.write_source_hi(6, halfword),
+            0x040000CC => self.dma.write_dest_lo(6, halfword),
+            0x040000CE => self.dma.write_dest_hi(6, halfword),
+            0x040000D0 => self.dma.write_len(6, halfword),
             0x040000D2 => self.dma_write_cnt(6, halfword),
+
+            0x040000D4 => self.dma.write_source_lo(7, halfword),
+            0x040000D6 => self.dma.write_source_hi(7, halfword),
+            0x040000D8 => self.dma.write_dest_lo(7, halfword),
+            0x040000DA => self.dma.write_dest_hi(7, halfword),
+            0x040000DC => self.dma.write_len(7, halfword),
             0x040000DE => self.dma_write_cnt(7, halfword),
 
             0x04000100 => self.nds_timing.write_lo(halfword, 0),

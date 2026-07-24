@@ -193,6 +193,11 @@ impl Gpu {
                     engine.dispcnt.vram_block
                 };
                 for x in 0..PIXELS_PER_LINE {
+                    // safe access (mirrors the guard used by display modes 0/1 above)
+                    if (line_start + x) >= PIXELS_PER_LINE * SCANLINES {
+                        break;
+                    }
+
                     let ds_color = {
                         let vram = self.get_vram_block(vram_block);
                         vram[line_start + x]

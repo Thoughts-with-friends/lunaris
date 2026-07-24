@@ -198,15 +198,18 @@ impl Gpu {
             self.set_bgvofs_b(0, i);
         }
 
-        self.vram_a.clear();
-        self.vram_b.clear();
-        self.vram_c.clear();
-        self.vram_d.clear();
-        self.vram_e.clear();
-        self.vram_f.clear();
-        self.vram_g.clear();
-        self.vram_h.clear();
-        self.vram_i.clear();
+        // `Vec::clear` sets length to 0 rather than zeroing the fixed-size
+        // banks allocated in `Gpu::new`, which left every bank permanently
+        // empty (and any VRAM read/write out of range) after power-on.
+        self.vram_a.fill(0);
+        self.vram_b.fill(0);
+        self.vram_c.fill(0);
+        self.vram_d.fill(0);
+        self.vram_e.fill(0);
+        self.vram_f.fill(0);
+        self.vram_g.fill(0);
+        self.vram_h.fill(0);
+        self.vram_i.fill(0);
     }
 
     // moved struct Emulator;
