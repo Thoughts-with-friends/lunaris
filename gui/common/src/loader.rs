@@ -78,7 +78,7 @@ pub fn load_rom(config: &Config) -> NDS {
 pub fn create_save_path(config: &Config) -> Option<PathBuf> {
     let rom_path = config.last_rom_path.as_ref()?;
     let rom_stem = rom_path.file_stem()?;
-    let save_dir = config.save_dir.join(rom_stem);
-    let _ = std::fs::create_dir_all(&save_dir);
+    let save_dir = &config.save_dir;
+    let _ = std::fs::create_dir_all(save_dir);
     Some(save_dir.join(format!("{}.sav", rom_stem.to_string_lossy())))
 }
