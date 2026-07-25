@@ -149,7 +149,11 @@ impl IPC {
         if !recv_cnt.enable {
             return (*prev_value, InterruptRequest::empty());
         }
-        assert!(send_cnt.enable); // TODO: Figure out behavior
+        // Reading while the *sending* side has its FIFO disabled is legal on
+        // hardware - the queue simply stays empty and the read returns the last
+        // received word with the error flag set, which the empty branch below
+        // already implements. This used to be an `assert!`, i.e. a crash on a
+        // path the sound driver and the video decoder both exercise.
         let interrupt = if let Some(value) = recv_fifo.pop_front() {
             *prev_value = value;
             if send_cnt.enable && send_cnt.send_fifo_empty_irq && recv_fifo.is_empty() {
@@ -234,7 +238,9 @@ impl SYNC {
         if match byte {
             0 => false,
             1 => {
-                self.output = value;
+                // IPCSYNC bits 8-11 only: bits 12-15 are the IRQ controls and
+                // must not leak into the other CPU's 4-bit input field.
+                self.output = value & 0xF;
                 other.input = self.output;
                 self.sync_irq = value >> 6 & 0x1 != 0;
                 other.sync_irq && value >> 5 & 0x1 != 0

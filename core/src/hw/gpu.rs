@@ -144,6 +144,9 @@ impl GPU {
     /// <https://problemkaputt.de/gbatek.htm#dsvideocaptureandmainmemorydisplaymode>
     // Dot: HBLANK_DOT - TODO: Check for drift
     pub fn render_line(&mut self) {
+        if self.vcount == 0 {
+            self.log_engine_state();
+        }
         // TODO: Use POWCNT to selectively render engines
         if self.powcnt1.contains(POWCNT1::ENABLE_ENGINE_A) {
             self.engine_a.render_line(&self.engine3d, &self.vram, self.vcount);
@@ -234,6 +237,37 @@ impl GPU {
         }
     }
 
+    /// Diagnostic D-1 / D-6: dumps both engines' display configuration and the
+    /// display-capture state once per frame when `LUNARIS_DIAG` requests it.
+    ///
+    /// See `docs/design/rendering-audio-fix-design.md` §3.
+    fn log_engine_state(&self) {
+        if crate::hw::diag::probe("dispcnt") {
+            for (name, line) in
+                [("A", self.engine_a.diag_summary()), ("B", self.engine_b.diag_summary())]
+            {
+                crate::diag!("dispcnt", "engine{name} {line}");
+            }
+        }
+        if self.capturing {
+            crate::diag!(
+                "capture",
+                "src={:?} src_a_3d_only={} src_b_fifo={} read_block={} read_off={:#X} \
+                 write_block={} write_off={:#X} size={:?} eva={} evb={}",
+                self.dispcapcnt.capture_src,
+                self.dispcapcnt.src_a_is_3d_only,
+                self.dispcapcnt.src_b_fifo,
+                self.engine_a.dispcnt.vram_block,
+                self.dispcapcnt.vram_read_offset.offset(),
+                self.dispcapcnt.vram_write_block,
+                self.dispcapcnt.vram_write_offset.offset(),
+                self.dispcapcnt.capture_size,
+                self.dispcapcnt.eva,
+                self.dispcapcnt.evb,
+            );
+        }
+    }
+
     pub fn bus_stalled(&self) -> bool {
         self.engine3d.bus_stalled
     }
@@ -292,12 +326,23 @@ impl HW {
             });
         }
 
+        // VCOUNT match: DISPSTAT bit 2 is the status flag and bit 5 is the IRQ
+        // enable. Testing the V-Blank enable here (bit 3) made every game that
+        // only wanted the V-Blank IRQ also receive a spurious VCOUNT-match IRQ,
+        // and starved games that only enabled the VCOUNT IRQ. The status flag
+        // is surfaced through `DISPSTAT::read` byte 0.
+        //
+        // GBATEK "LCD I/O Interrupts and Status":
+        // <https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus>
         let vcount = self.gpu.vcount;
         self.check_dispstats(&mut |dispstat, interrupts| {
-            if dispstat.contains(DISPSTATFlags::VBLANK_IRQ_ENABLE)
-                && vcount == dispstat.vcount_setting
-            {
-                interrupts.request |= InterruptRequest::VCOUNTER_MATCH;
+            if vcount == dispstat.vcount_setting {
+                dispstat.insert(DISPSTATFlags::VCOUNTER);
+                if dispstat.contains(DISPSTATFlags::VCOUNTER_IRQ_ENABLE) {
+                    interrupts.request |= InterruptRequest::VCOUNTER_MATCH;
+                }
+            } else {
+                dispstat.remove(DISPSTATFlags::VCOUNTER);
             }
         });
     }

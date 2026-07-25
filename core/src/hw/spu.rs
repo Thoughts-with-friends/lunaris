@@ -50,6 +50,12 @@ pub struct SPU {
     #[savestate(skip)]
     audio: Audio,
     clocks_per_sample: usize,
+    /// Running peak amplitude for the `mix` diagnostic probe.
+    #[savestate(skip)]
+    diag_peak: u16,
+    /// Samples accumulated into `diag_peak` since the last report.
+    #[savestate(skip)]
+    diag_samples: u32,
     // Channels
     pub base_channels: [Channel<BaseChannel>; 8],
     pub psg_channels: [Channel<PSGChannel>; 6],
@@ -104,6 +110,8 @@ impl SPU {
             // Sound Generation
             audio,
             clocks_per_sample,
+            diag_peak: 0,
+            diag_samples: 0,
             // Channels
             base_channels: create_channels!(BaseChannel, Base, 0, 1, 2, 3, 4, 5, 6, 7),
             psg_channels: create_channels!(PSGChannel, PSG, 0, 1, 2, 3, 4, 5),
@@ -145,27 +153,84 @@ impl SPU {
     /// GBATEK "SOUNDCNT – Left/Right Output Source, Master Volume":
     /// <https://problemkaputt.de/gbatek.htm#dssoundcontrolregisters>
     pub fn generate_sample(&mut self) {
+        // SOUNDCNT bit 15 is the master enable: with it clear the SPU outputs
+        // silence. The scheduler event keeps running so the host audio ring
+        // buffer stays fed at a constant rate.
+        if !self.cnt.enable {
+            self.audio.push_sample(cpal::Sample::from::<i16>(&0), cpal::Sample::from::<i16>(&0));
+            return;
+        }
         let (mixer, ch1, ch3) = self.generate_mixer();
+        // Each channel contributes `sample * volume_factor * pan_factor`, i.e.
+        // two 0..128 factors, so the mixer accumulator carries 14 fractional
+        // bits. Shifting by 16 here attenuated the whole mix by a further
+        // factor of four; and the final cast has to saturate, since a loud mix
+        // otherwise wraps around and turns into full-scale noise.
+        const MIXER_FRAC_BITS: u8 = 14;
         let left_sample = match self.cnt.left_output {
             ChannelOutput::Mixer => mixer.0,
             ChannelOutput::Ch1 => ch1.0,
             ChannelOutput::Ch3 => ch3.0,
             ChannelOutput::Ch1Ch3 => ch1.0 + ch3.0,
-        } >> 16;
+        } >> MIXER_FRAC_BITS;
         let right_sample = match self.cnt.right_output {
             ChannelOutput::Mixer => mixer.1,
             ChannelOutput::Ch1 => ch1.1,
             ChannelOutput::Ch3 => ch3.1,
-            ChannelOutput::Ch1Ch3 => ch1.0 + ch3.1,
-        } >> 16;
-        let final_sample = (
-            ((left_sample * self.cnt.master_volume()) >> 7) as i16,
-            ((right_sample * self.cnt.master_volume()) >> 7) as i16,
-        );
+            ChannelOutput::Ch1Ch3 => ch1.1 + ch3.1,
+        } >> MIXER_FRAC_BITS;
+        let clamp = |sample: i32| {
+            ((sample * self.cnt.master_volume()) >> 7).clamp(i16::MIN as i32, i16::MAX as i32)
+                as i16
+        };
+        let final_sample = (clamp(left_sample), clamp(right_sample));
+        self.log_output_level(final_sample);
         self.audio.push_sample(
             cpal::Sample::from::<i16>(&final_sample.0),
             cpal::Sample::from::<i16>(&final_sample.1),
         );
+    }
+
+    /// Diagnostic `mix`: reports the peak absolute amplitude of the mixed
+    /// output roughly once per second of emulated audio, so "no audio" can be
+    /// pinned to either the mixer or the host output path.
+    ///
+    /// See `docs/design/rendering-audio-fix-design.md` §3.
+    fn log_output_level(&mut self, sample: (i16, i16)) {
+        if !crate::hw::diag::probe("mix") {
+            return;
+        }
+        const REPORT_EVERY: u32 = 32768;
+        self.diag_peak = self.diag_peak.max(sample.0.unsigned_abs()).max(sample.1.unsigned_abs());
+        self.diag_samples += 1;
+        if self.diag_samples >= REPORT_EVERY {
+            let active = self.base_channels.iter().filter(|c| c.is_busy()).count()
+                + self.psg_channels.iter().filter(|c| c.is_busy()).count()
+                + self.noise_channels.iter().filter(|c| c.is_busy()).count();
+            let busy_state = self
+                .base_channels
+                .iter()
+                .map(|c| c.diag_state())
+                .chain(self.psg_channels.iter().map(|c| c.diag_state()))
+                .chain(self.noise_channels.iter().map(|c| c.diag_state()))
+                .enumerate()
+                .filter(|(_, (busy, ..))| *busy)
+                .map(|(i, (_, sample, vol, pan, timer))| {
+                    format!("ch{i}(s={sample},v={vol},p={pan},t={timer})")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            crate::diag!(
+                "mix",
+                "peak={} master_volume={} enable={} active_channels={} {busy_state}",
+                self.diag_peak,
+                self.cnt.master_volume(),
+                self.cnt.enable as u8,
+                active
+            );
+            self.diag_peak = 0;
+            self.diag_samples = 0;
+        }
     }
 
     pub fn set_audio_volume(&mut self, volume_percent: f32) {
@@ -189,21 +254,25 @@ impl SPU {
         }
     }
 
+    /// Produces one captured sample for capture unit `capture_i`.
+    ///
+    /// Source select (SNDCAPxCNT bit 1) picks the raw output of channel 0 / 2
+    /// instead of the left / right mixer output; the "add" bit (bit 0) is a
+    /// hardware quirk that sums channel 1+2 (respectively 3+0) and is not
+    /// modelled - the plain source is captured instead, which is audibly
+    /// equivalent for the common echo/output-routing use.
+    ///
+    /// GBATEK "DS Sound Capture": <https://problemkaputt.de/gbatek.htm#dssoundcapture>
     pub fn capture_data<T: super::MemoryValue>(&self, capture_i: usize) -> T {
         let capture_value = if self.captures[capture_i].cnt.use_channel {
-            // TODO: Implement bugged behavior
-            todo!()
+            let channel = if capture_i == 0 { 0 } else { 2 };
+            self.base_channels[channel].sample() as u16
         } else {
             let (mixer, _, _) = self.generate_mixer();
             let mixer_value = (if capture_i == 0 { mixer.0 } else { mixer.1 } >> 16) as u16;
             if std::mem::size_of::<T>() == 1 { mixer_value >> 8 } else { mixer_value }
         };
-        if self.captures[capture_i].cnt.add {
-            // TODO: Implement adding channel
-            todo!()
-        } else {
-            num_traits::cast(capture_value).unwrap()
-        }
+        num_traits::cast(capture_value).unwrap()
     }
 
     pub fn read_channels(&self, addr: usize) -> u8 {
@@ -246,13 +315,51 @@ impl IORegister for SPU {
 
     fn write(&mut self, scheduler: &mut Scheduler, addr: usize, value: u8) {
         match addr {
-            0x400..=0x4FF => self.write_channels(scheduler, addr & 0xFF, value),
-            0x500..=0x503 => self.cnt.write(scheduler, addr & 0x3, value),
+            0x400..=0x4FF => {
+                self.write_channels(scheduler, addr & 0xFF, value);
+                // Diagnostic D-5: log a channel only when its control byte 3
+                // (busy / format / repeat) is touched, which is what starts or
+                // stops a voice.
+                if addr & 0xF == 0x3 {
+                    let channel = (addr >> 4) & 0xF;
+                    crate::diag!(
+                        "spu",
+                        "ch{channel}: busy={} format={} repeat={} duty={}",
+                        value >> 7 & 0x1,
+                        value >> 5 & 0x3,
+                        value >> 3 & 0x3,
+                        value & 0x7
+                    );
+                }
+            }
+            0x500..=0x503 => {
+                self.cnt.write(scheduler, addr & 0x3, value);
+                crate::diag!(
+                    "spu",
+                    "SOUNDCNT: master_volume={} enable={} out1={} out3={}",
+                    self.cnt.master_volume(),
+                    self.cnt.enable as u8,
+                    self.cnt.output_1 as u8,
+                    self.cnt.output_3 as u8
+                );
+            }
             0x504..=0x507 => {
                 HW::write_byte_to_value(&mut self.sound_bias, addr & 0x3, value);
                 self.sound_bias &= 0x3FF;
             }
-            0x508..=0x509 => self.captures[addr & 0x1].write_cnt(value),
+            0x508..=0x509 => {
+                self.captures[addr & 0x1].write_cnt(value);
+                crate::diag!(
+                    "spu",
+                    "SNDCAP{}: busy={} pcm8={} no_repeat={} use_channel={} add={}",
+                    addr & 0x1,
+                    value >> 7 & 0x1,
+                    value >> 3 & 0x1,
+                    value >> 2 & 0x1,
+                    value >> 1 & 0x1,
+                    value & 0x1
+                );
+            }
             0x510..=0x51F => self.captures[addr >> 3 & 0x1].write(addr & 0x7, value),
             _ => warn!("Ignoring SPU Register Write at 0x04000{:03X}", addr),
         }
@@ -319,15 +426,28 @@ impl HW {
                             };
                         self.spu.base_channels[num].schedule(&mut self.scheduler, reset);
                     }
-                    _ => todo!(),
+                    // Format 3 has no meaning on channels 0-7 (PSG/noise start
+                    // at channel 8). Hardware simply produces nothing rather
+                    // than faulting, so keep the channel silent instead of
+                    // panicking on a stray write.
+                    Format::Special => self.spu.base_channels[num].reset_sample(),
                 }
-                if let Some((_addr, capture_i, use_pcm8)) = self.spu.capture_addr(num) {
+                // Sound capture: units 0/1 are clocked by channels 1/3 and write
+                // the mixer output back into ARM7-visible memory. Games route
+                // that buffer straight back into channels 1/3 and select them as
+                // the SOUNDCNT output source, so leaving the write-back out
+                // makes the whole mix inaudible even though every voice is
+                // running.
+                //
+                // GBATEK "DS Sound Capture":
+                // <https://problemkaputt.de/gbatek.htm#dssoundcapture>
+                if let Some((addr, capture_i, use_pcm8)) = self.spu.capture_addr(num) {
                     if use_pcm8 {
-                        let _value: u8 = self.spu.capture_data(capture_i);
-                        //self.arm7_write::<u8>(addr, value);
+                        let value: u8 = self.spu.capture_data(capture_i);
+                        self.arm7_write::<u8>(addr, value);
                     } else {
-                        let _value: u16 = self.spu.capture_data(capture_i);
-                        //self.arm7_write::<u16>(addr, value);
+                        let value: u16 = self.spu.capture_data(capture_i);
+                        self.arm7_write::<u16>(addr, value);
                     }
                 }
             }
@@ -362,7 +482,7 @@ impl HW {
                     }
                     Format::Special => {
                         self.spu.psg_channels[num].schedule(&mut self.scheduler, false);
-                        // PSG waveform generation
+                        self.spu.psg_channels[num].step_psg();
                     }
                 }
             }
@@ -397,7 +517,7 @@ impl HW {
                     }
                     Format::Special => {
                         self.spu.noise_channels[num].schedule(&mut self.scheduler, false);
-                        // Noise LFSR generation
+                        self.spu.noise_channels[num].step_noise();
                     }
                 }
             }
@@ -439,6 +559,17 @@ pub struct Channel<T: ChannelType> {
     addr: u32,
     num_bytes_left: usize,
     sample: i16,
+    // PSG / Noise
+    /// Position within the 8-step PSG duty cycle (channels 8-13).
+    ///
+    /// Skipped by the savestate (like `noise_lfsr` below) so that states
+    /// written before PSG/noise generation existed still load; both are
+    /// re-seeded whenever a channel is started.
+    #[savestate(skip)]
+    psg_pos: u8,
+    /// 15-bit noise LFSR (channels 14-15), seeded to 0x7FFF on channel start.
+    #[savestate(skip)]
+    noise_lfsr: u16,
     // ADPCM
     adpcm_in_header: bool,
     adpcm_low_nibble: bool,
@@ -488,6 +619,8 @@ impl<T: ChannelType> IORegister for Channel<T> {
                 if !prev_busy && self.cnt.busy {
                     self.adpcm_in_header = true;
                     self.adpcm_low_nibble = true;
+                    self.psg_pos = 0;
+                    self.noise_lfsr = Channel::<T>::NOISE_LFSR_INIT;
                     self.schedule(scheduler, false);
                 } else if !self.cnt.busy {
                     scheduler.remove(Event::StepAudioChannel(self.spec));
@@ -524,6 +657,48 @@ impl<T: ChannelType> IORegister for Channel<T> {
 }
 
 impl<T: ChannelType> Channel<T> {
+    /// Seed value of the 15-bit noise LFSR (GBATEK "DS Sound Channels 0..15",
+    /// noise generator): <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
+    const NOISE_LFSR_INIT: u16 = 0x7FFF;
+    /// Peak amplitude of the PSG square wave and of the noise generator.
+    const PSG_AMPLITUDE: i16 = 0x7FFF;
+
+    /// Advances the PSG square wave by one step and latches the new sample.
+    ///
+    /// `SOUNDxCNT` bits 24-26 select the duty cycle: the wave is high for
+    /// `wave_duty + 1` of the 8 steps, giving 12.5% .. 87.5% for values 0-6
+    /// and a constant level for value 7.
+    ///
+    /// GBATEK "DS Sound Channels 0..15":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
+    pub fn step_psg(&mut self) {
+        self.psg_pos = (self.psg_pos + 1) & 0x7;
+        self.sample = if self.psg_pos <= self.cnt.wave_duty {
+            Channel::<T>::PSG_AMPLITUDE
+        } else {
+            -Channel::<T>::PSG_AMPLITUDE
+        };
+    }
+
+    /// Advances the 15-bit noise LFSR by one step and latches the new sample.
+    ///
+    /// The register is shifted right each step; when the shifted-out bit was
+    /// set it is XORed with 6000h and the output is negative, otherwise the
+    /// output is positive.
+    ///
+    /// GBATEK "DS Sound Channels 0..15":
+    /// <https://problemkaputt.de/gbatek.htm#dssoundchannels015>
+    pub fn step_noise(&mut self) {
+        let carry = self.noise_lfsr & 0x1 != 0;
+        self.noise_lfsr >>= 1;
+        if carry {
+            self.noise_lfsr ^= 0x6000;
+            self.sample = -Channel::<T>::PSG_AMPLITUDE;
+        } else {
+            self.sample = Channel::<T>::PSG_AMPLITUDE;
+        }
+    }
+
     pub fn new(spec: ChannelSpec) -> Self {
         Channel {
             // Registers
@@ -537,6 +712,9 @@ impl<T: ChannelType> Channel<T> {
             addr: 0,
             num_bytes_left: 0,
             sample: 0,
+            // PSG / Noise
+            psg_pos: 0,
+            noise_lfsr: Channel::<T>::NOISE_LFSR_INIT,
             // ADPCM
             adpcm_in_header: true,
             adpcm_low_nibble: true,
@@ -665,12 +843,38 @@ impl<T: ChannelType> Channel<T> {
         self.adpcm_value = self.initial_adpcm_value;
     }
 
+    /// The most recently decoded sample of this channel.
+    pub fn sample(&self) -> i16 {
+        self.sample
+    }
+
+    /// Whether the channel is currently playing, for diagnostics.
+    pub fn is_busy(&self) -> bool {
+        self.cnt.busy
+    }
+
+    /// `(busy, latched sample, volume factor, pan factor, timer reload)` for
+    /// the `mix` diagnostic probe.
+    pub fn diag_state(&self) -> (bool, i16, i32, i32, u16) {
+        (
+            self.cnt.busy,
+            self.sample,
+            self.cnt.volume_factor(),
+            self.cnt.pan_factor(),
+            self.timer_val,
+        )
+    }
+
     pub fn format(&self) -> Format {
         self.cnt.format
     }
 
     pub fn schedule(&mut self, scheduler: &mut Scheduler, reset: bool) {
-        if self.timer_val != 0 && self.len + self.loop_start as u32 != 0 {
+        // PSG / noise channels generate their samples procedurally, so they
+        // have no sample data and games legitimately leave LEN and LOOPSTART
+        // at zero; requiring a non-zero length there would never schedule them.
+        let has_data = self.len + self.loop_start as u32 != 0 || self.cnt.format == Format::Special;
+        if self.timer_val != 0 && has_data {
             if reset {
                 scheduler.schedule(
                     Event::ResetAudioChannel(self.spec),
@@ -721,12 +925,26 @@ impl Capture {
         }
     }
 
+    /// Returns the next destination address and advances the capture cursor.
+    ///
+    /// When the buffer is full the unit either wraps back to `SNDCAPxDAD` and
+    /// keeps running (repeat mode) or stops and clears its busy flag
+    /// (SNDCAPxCNT bit 2 = "one-shot").
+    ///
+    /// GBATEK "DS Sound Capture": <https://problemkaputt.de/gbatek.htm#dssoundcapture>
     pub fn next_addr<T: super::MemoryValue>(&mut self) -> u32 {
         assert!(self.num_bytes_left > 0);
-        self.num_bytes_left -= std::mem::size_of::<T>();
-        self.cnt.busy = self.num_bytes_left > 0;
         let return_addr = self.addr;
+        self.num_bytes_left -= std::mem::size_of::<T>();
         self.addr += std::mem::size_of::<T>() as u32;
+        if self.num_bytes_left == 0 {
+            if self.cnt.no_repeat {
+                self.cnt.busy = false;
+            } else {
+                self.num_bytes_left = self.len * 4;
+                self.addr = self.dest_addr;
+            }
+        }
         return_addr
     }
 
@@ -757,7 +975,11 @@ impl Capture {
         let value = (value as u32) << shift;
         match byte {
             0x0..=0x3 => {
-                self.dest_addr = (value & !mask | value) & 0x7FF_FFFF;
+                // SNDCAPxDAD is assembled from four byte writes: the previous
+                // value has to be preserved outside the written byte, otherwise
+                // every byte write resets the destination to that byte alone
+                // and the capture lands at a garbage address.
+                self.dest_addr = (self.dest_addr & !mask | value) & 0x7FF_FFFF;
                 self.addr = self.dest_addr;
             }
             0x4..=0x7 => {

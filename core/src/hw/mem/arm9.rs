@@ -76,6 +76,14 @@ impl HW {
                     value,
                 ),
                 MemoryRegion::IO => self.arm9_write_io(addr, value),
+                // The NDS9 discards 8-bit writes to palette RAM, VRAM and OAM;
+                // only 16- and 32-bit writes reach those memories. Letting byte
+                // writes through corrupts half of a BGR555 entry, which for
+                // palette index 0 renders as a black backdrop.
+                //
+                // GBATEK "DS Memory Maps" / "LCD VRAM Overview".
+                MemoryRegion::Palette | MemoryRegion::VRAM | MemoryRegion::OAM
+                    if size_of::<T>() == 1 => {}
                 MemoryRegion::Palette if addr & 0x7FFF < 0x400 => {
                     HW::write_palette_ram(&mut self.gpu.engine_a, addr, value)
                 }

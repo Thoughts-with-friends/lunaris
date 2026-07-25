@@ -7,7 +7,7 @@ use super::EngineType;
 use crate::hw::{mem::IORegister, scheduler::Scheduler};
 
 #[derive(emu_utils::Savestate)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BGMode {
     Mode0 = 0,
     Mode1 = 1,
@@ -35,7 +35,7 @@ impl BGMode {
 }
 
 #[derive(emu_utils::Savestate)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DisplayMode {
     Mode0 = 0,
     Mode1 = 1,
@@ -278,6 +278,13 @@ impl RotationScalingParameter {
         RotationScalingParameter { value: 0 }
     }
 
+    /// Builds a parameter from a whole number of pixels per step (1.8 fixed
+    /// point), for tests and for callers that need a known scale.
+    #[cfg(test)]
+    pub fn from_int(value: i8) -> RotationScalingParameter {
+        RotationScalingParameter { value: (value as i16) << 8 }
+    }
+
     pub fn get_float_from_u16(value: u16) -> f64 {
         (value >> 8) as i8 as i32 as f64 + value as u8 as f64 / 256.0
     }
@@ -309,6 +316,13 @@ pub struct ReferencePointCoord {
 impl ReferencePointCoord {
     pub fn new() -> ReferencePointCoord {
         ReferencePointCoord { value: 0 }
+    }
+
+    /// Builds a reference point from a whole pixel coordinate (the register
+    /// is 1.19.8 fixed point), for tests.
+    #[cfg(test)]
+    pub fn from_int(value: i32) -> ReferencePointCoord {
+        ReferencePointCoord { value: value << 8 }
     }
 
     pub fn integer(&self) -> i32 {
@@ -482,7 +496,7 @@ impl BLDCNTTargetPixelSelection {
 }
 
 #[derive(emu_utils::Savestate)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ColorSFX {
     None = 0,
     AlphaBlend = 1,
@@ -605,7 +619,7 @@ impl IORegister for BLDY {
 }
 
 #[derive(emu_utils::Savestate)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum MasterBrightMode {
     Disable = 0,
     Up = 1,
@@ -633,6 +647,16 @@ pub struct MasterBright {
 impl MasterBright {
     pub fn new() -> Self {
         MasterBright { factor_read: 0, factor: 0, mode: MasterBrightMode::Disable }
+    }
+
+    /// Current mode, for diagnostics.
+    pub fn mode(&self) -> MasterBrightMode {
+        self.mode
+    }
+
+    /// Current 0..16 brightness factor, for diagnostics.
+    pub fn factor(&self) -> u8 {
+        self.factor
     }
 
     pub fn apply(&self, color: u16) -> u16 {

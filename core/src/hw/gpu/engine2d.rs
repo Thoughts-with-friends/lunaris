@@ -263,6 +263,21 @@ impl<E: EngineType> Engine2D<E> {
     /// - Windows: <https://problemkaputt.de/gbatek.htm#lcdiowindowfeature>
     /// - BLDCNT/BLDALPHA/BLDY: <https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects>
     fn process_lines(&mut self, vcount: u16, start_line: usize, end_line: usize) {
+        // Diagnostic D-2: per-layer opacity of one representative scanline,
+        // which distinguishes "a layer is black" from "a layer is covered".
+        if vcount == 100 && crate::hw::diag::probe("layers") {
+            for bg_i in start_line..=end_line {
+                let opaque = self.bg_lines[bg_i].iter().filter(|c| *c & 0x8000 != 0).count();
+                crate::diag!(
+                    "layers",
+                    "engine{} bg{bg_i}: enabled={} prio={} opaque={opaque}/256 first={:#06X}",
+                    if E::is_a() { "A" } else { "B" },
+                    self.dispcnt.bits() >> (8 + bg_i) & 0x1,
+                    self.bgcnts[bg_i].priority(),
+                    self.bg_lines[bg_i][128],
+                );
+            }
+        }
         let mut bgs: Vec<(usize, u8)> = Vec::new();
         for bg_i in start_line..=end_line {
             if self.dispcnt.bits() & (1 << (8 + bg_i)) != 0 {
@@ -491,8 +506,22 @@ impl<E: EngineType> Engine2D<E> {
                 let obj_size = (obj[1] >> 14 & 0x3) as usize;
                 let affine = obj[0] >> 8 & 0x1 != 0;
                 let (obj_width, obj_height) = Engine2D::<E>::OBJ_SIZES[obj_size][obj_shape];
-                let dot_x_signed = (dot_x as i16) / self.mosaic.obj_size.h_size as i16
-                    * self.mosaic.obj_size.h_size as i16;
+                // Mosaic applies per sprite, gated on OAM attribute 0 bit 12 -
+                // not to every sprite on the line. Quantizing unconditionally
+                // made a non-zero OBJ mosaic size (often left over from a
+                // transition effect) duplicate rows and columns across every
+                // sprite, which shows up as fine horizontal banding on
+                // characters.
+                //
+                // GBATEK "LCD OBJ - OAM Attributes":
+                // <https://problemkaputt.de/gbatek.htm#lcdobjoamattributes>
+                let obj_mosaic = obj[0] >> 12 & 0x1 != 0;
+                let (mosaic_x, mosaic_y) = if obj_mosaic {
+                    (self.mosaic.obj_size.h_size, self.mosaic.obj_size.v_size)
+                } else {
+                    (1, 1)
+                };
+                let dot_x_signed = (dot_x as i16) / mosaic_x as i16 * mosaic_x as i16;
                 let obj_x = obj[1] & 0x1FF;
                 let obj_x = if obj_x & 0x100 != 0 { 0xFE00 | obj_x } else { obj_x } as i16;
                 let obj_y = obj[0] & 0xFF;
@@ -504,7 +533,7 @@ impl<E: EngineType> Engine2D<E> {
 
                 let base_tile_num = (obj[2] & 0x3FF) as usize;
                 let x_diff = dot_x_signed - obj_x;
-                let y = vcount / self.mosaic.obj_size.v_size * self.mosaic.obj_size.v_size;
+                let y = vcount / mosaic_y * mosaic_y;
                 let y_diff = y.wrapping_sub(obj_y) & 0xFF;
                 let (x_diff, y_diff) = if affine {
                     let (x_diff, y_diff) = if double_size {
@@ -647,29 +676,92 @@ impl<E: EngineType> Engine2D<E> {
     /// GBATEK "BG Mode Control – extended rot/scale BG types":
     /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
     fn render_extended_line(&mut self, vram: &VRAM, bg_i: usize) {
-        // TODO: Use Screen Base
         let bgcnt = self.bgcnts[bg_i];
         if bgcnt.bpp8() {
-            if bgcnt.tile_block() & 0x1 != 0 {
-                // Direct Color
-                self.render_affine_line(vram, bg_i, |_, _, _, _, _, _, map_size, _, _, x, y| {
-                    vram.get_bg::<E, u16>(2 * (y * map_size + x))
-                });
-            } else {
-                self.render_affine_line(vram, bg_i, |engine, _, _, _, _, _, _, _, _, x, y| {
-                    let color_num = vram.get_bg::<E, u8>(y * GPU::WIDTH + x) as usize;
-                    if color_num == 0 {
-                        0
-                    }
-                    // Transparent Color
-                    else {
-                        engine.bg_palettes[color_num] | 0x8000
-                    }
-                });
-            }
+            // Bitmap variants: BGCNT bit 2 picks direct color over 256-color.
+            self.render_bitmap_line(vram, bg_i, bgcnt.tile_block() & 0x1 != 0);
         } else {
             // Affine Line with 16 bit entries
             self.render_affine_line(vram, bg_i, Engine2D::<E>::render_16bit_entry);
+        }
+    }
+
+    /// Pixel dimensions of an extended *bitmap* BG, indexed by
+    /// `BGCNT.screen_size`.
+    ///
+    /// These are **not** the rotation/scaling sizes (128/256/512/1024 square)
+    /// used by [`Engine2D::render_affine_line`]: GBATEK's `BGxCNT` size table
+    /// has a separate `bitmap` column, in which size 2 is non-square and
+    /// size 3 tops out at 512.
+    ///
+    /// GBATEK "DS Video BG Modes / Control":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
+    const BITMAP_BG_SIZES: [(usize, usize); 4] = [(128, 128), (256, 256), (512, 256), (512, 512)];
+
+    /// Renders one line of an extended *bitmap* BG (256-color or direct color).
+    ///
+    /// The bitmap data base is the **screen base** field (`BGCNT` bits 8-12)
+    /// scaled by 16 KiB, and - unlike tiled BG bases - the `DISPCNT` screen
+    /// base offset is *not* added ("screen base used in bitmap modes as
+    /// BGxCNT.bits*16K, without DISPCNT.bits*64K"). The row stride is the
+    /// bitmap's own width, not the 256-pixel screen width.
+    ///
+    /// GBATEK "DS Video BG Modes / Control":
+    /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
+    fn render_bitmap_line(&mut self, vram: &VRAM, bg_i: usize, direct_color: bool) {
+        let mut base_x = self.bgxs_latch[bg_i - 2];
+        let mut base_y = self.bgys_latch[bg_i - 2];
+        self.bgxs_latch[bg_i - 2] += self.dmxs[bg_i - 2];
+        self.bgys_latch[bg_i - 2] += self.dmys[bg_i - 2];
+        let dx = self.dxs[bg_i - 2];
+        let dy = self.dys[bg_i - 2];
+        let bgcnt = self.bgcnts[bg_i];
+        let start_addr = bgcnt.map_block() as usize * 0x4000;
+        let (width, height) = Engine2D::<E>::BITMAP_BG_SIZES[bgcnt.screen_size() as usize];
+        let (mosaic_x, mosaic_y) = if bgcnt.mosaic() {
+            (self.mosaic.bg_size.h_size as usize, self.mosaic.bg_size.v_size as usize)
+        } else {
+            (1, 1)
+        };
+
+        for dot_x in 0..GPU::WIDTH {
+            let (x_raw, y_raw) = (base_x.integer(), base_y.integer());
+            base_x += dx;
+            base_y += dy;
+            let in_bounds =
+                (0..width as i32).contains(&x_raw) && (0..height as i32).contains(&y_raw);
+            let (x, y) = if in_bounds {
+                (x_raw as usize, y_raw as usize)
+            } else if bgcnt.wrap() {
+                (x_raw.rem_euclid(width as i32) as usize, y_raw.rem_euclid(height as i32) as usize)
+            } else {
+                self.bg_lines[bg_i][dot_x] = 0; // Transparent Color
+                continue;
+            };
+            let (x, y) = (x / mosaic_x * mosaic_x, y / mosaic_y * mosaic_y);
+            let texel = y * width + x;
+            if crate::hw::diag::probe("bitmap") && dot_x == 0 {
+                crate::diag!(
+                    "bitmap",
+                    "bg{bg_i} direct={} base={:#X} size={width}x{height} src=({x},{y}) \
+                     raw={:#06X}",
+                    direct_color as u8,
+                    start_addr,
+                    vram.get_bg::<E, u16>(start_addr + 2 * texel)
+                );
+            }
+            self.bg_lines[bg_i][dot_x] = if direct_color {
+                // Bit 15 is the alpha bit, so a raw read already encodes
+                // "transparent" the way `process_lines` expects.
+                vram.get_bg::<E, u16>(start_addr + 2 * texel)
+            } else {
+                let color_num = vram.get_bg::<E, u8>(start_addr + texel) as usize;
+                if color_num == 0 {
+                    0 // Transparent Color
+                } else {
+                    self.bg_palettes[color_num] | 0x8000
+                }
+            };
         }
     }
 
@@ -718,10 +810,15 @@ impl<E: EngineType> Engine2D<E> {
             let (x_raw, y_raw) = (base_x.integer(), base_y.integer());
             base_x += dx;
             base_y += dy;
+            // The valid range is `0 ..= map_size - 1`; `>` let the last
+            // coordinate through unwrapped, one row/column past the map.
             let (x, y) =
-                if x_raw < 0 || x_raw > map_size as i32 || y_raw < 0 || y_raw > map_size as i32 {
+                if x_raw < 0 || x_raw >= map_size as i32 || y_raw < 0 || y_raw >= map_size as i32 {
                     if bgcnt.wrap() {
-                        ((x_raw % map_size as i32) as usize, (y_raw % map_size as i32) as usize)
+                        (
+                            x_raw.rem_euclid(map_size as i32) as usize,
+                            y_raw.rem_euclid(map_size as i32) as usize,
+                        )
                     } else {
                         self.bg_lines[bg_i][dot_x] = 0; // Transparent Color
                         continue;
@@ -967,8 +1064,9 @@ impl<E: EngineType> Engine2D<E> {
             final_colors[i] = if *color_num == 0 {
                 0
             }
-            // Transparent Color
-            else if bgcnt.bpp8() & self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) {
+            // Transparent Color - see `render_16bit_entry` for why the test is
+            // on `bit_depth` rather than on `BGCNT.bpp8()`.
+            else if bit_depth == 8 && self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) {
                 // Wrap bit is Change Ext Palette Slot for BG0/BG1
                 let slot = if bg_i < 2 && bgcnt.wrap() { bg_i + 2 } else { bg_i };
                 vram.get_bg_ext_pal::<E>(slot, original_palette_num * 256 + color_num) | 0x8000
@@ -1017,7 +1115,18 @@ impl<E: EngineType> Engine2D<E> {
             0
         }
         // Transparent Color
-        else if bgcnt.bpp8() & self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) {
+        //
+        // Extended palettes apply to every 256-color tile, so the test is on
+        // the effective color depth (`bit_depth`), not on `BGCNT.bpp8()`. For
+        // an *extended* rot/scale BG with 16-bit map entries that bit means
+        // "bitmap format", not "8bpp": tiles there are always 256-color, so
+        // keying off it sent those BGs to the standard 256-entry BG palette
+        // and dropped both the extended palette slot and the per-entry palette
+        // number - which renders as flat wrong colors, usually black.
+        //
+        // GBATEK "DS Video Extended Palettes":
+        // <https://problemkaputt.de/gbatek.htm#dsvideoextendedpalettes>
+        else if bit_depth == 8 && self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) {
             // Wrap bit is Change Ext Palette Slot for BG0/BG1
             let slot = if bg_i < 2 && bgcnt.wrap() { bg_i + 2 } else { bg_i };
             vram.get_bg_ext_pal::<E>(slot, original_palette_num * 256 + color_num) | 0x8000
@@ -1348,8 +1457,18 @@ impl<E: EngineType> Engine2D<E> {
             0x049 => self.win_1_cnt.set_byte0(value),
             0x04A => self.win_out_cnt.set_byte0(value),
             0x04B => self.win_obj_cnt.set_byte0(value),
-            0x04C => self.mosaic.write(scheduler, 0, value),
-            0x04D => self.mosaic.write(scheduler, 1, value),
+            0x04C | 0x04D => {
+                self.mosaic.write(scheduler, addr as usize & 0x1, value);
+                crate::diag!(
+                    "mosaic",
+                    "engine{} bg={}x{} obj={}x{}",
+                    if E::is_a() { "A" } else { "B" },
+                    self.mosaic.bg_size.h_size,
+                    self.mosaic.bg_size.v_size,
+                    self.mosaic.obj_size.h_size,
+                    self.mosaic.obj_size.v_size
+                );
+            }
             0x04E..=0x04F => (),
             0x050 => self.bldcnt.write(scheduler, 0, value),
             0x051 => self.bldcnt.write(scheduler, 1, value),
@@ -1387,6 +1506,51 @@ impl<E: EngineType> Engine2D<E> {
         palettes[index] = value;
     }
 
+    /// One-line summary of this engine's display configuration, used by the
+    /// `dispcnt` diagnostic probe (D-1 in
+    /// `docs/design/rendering-audio-fix-design.md`).
+    pub(super) fn diag_summary(&self) -> String {
+        let mut out = format!(
+            "display_mode={:?} bg_mode={:?} vram_block={} char_base={} screen_base={} \
+             is_3d={} bgs=[{}{}{}{}] obj={} ext_pal(bg={},obj={}) forced_blank={}              windows={}{}{} master_bright={:?}/{} bld={:?}/evy={}",
+            self.dispcnt.display_mode,
+            self.dispcnt.bg_mode,
+            self.dispcnt.vram_block,
+            self.dispcnt.char_base,
+            self.dispcnt.screen_base,
+            self.dispcnt.contains(DISPCNTFlags::IS_3D) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_BG0) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_BG1) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_BG2) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_BG3) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_OBJ) as u8,
+            self.dispcnt.contains(DISPCNTFlags::BG_EXTENDED_PALETTES) as u8,
+            self.dispcnt.contains(DISPCNTFlags::OBJ_EXTENDED_PALETTES) as u8,
+            self.dispcnt.contains(DISPCNTFlags::FORCED_BLANK) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_WINDOW0) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_WINDOW1) as u8,
+            self.dispcnt.contains(DISPCNTFlags::DISPLAY_OBJ_WINDOW) as u8,
+            self.master_bright.mode(),
+            self.master_bright.factor(),
+            self.bldcnt.effect,
+            self.bldy.evy,
+        );
+        for (i, bgcnt) in self.bgcnts.iter().enumerate() {
+            out += &format!(
+                "\n            bg{i}: prio={} tile_block={} map_block={} bpp8={} \
+                 size={} wrap={} mosaic={}",
+                bgcnt.priority(),
+                bgcnt.tile_block(),
+                bgcnt.map_block(),
+                bgcnt.bpp8() as u8,
+                bgcnt.screen_size(),
+                bgcnt.wrap() as u8,
+                bgcnt.mosaic() as u8,
+            );
+        }
+        out
+    }
+
     pub fn bg_palettes(&self) -> &Vec<u16> {
         &self.bg_palettes
     }
@@ -1395,5 +1559,97 @@ impl<E: EngineType> Engine2D<E> {
     }
     pub fn pixels(&self) -> &Vec<u16> {
         &self.pixels
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hw::gpu::EngineA;
+
+    /// Maps VRAM bank A as Engine A BG memory at offset 0, which is where both
+    /// tests below place their data.
+    fn vram_with_bank_a_as_bg() -> VRAM {
+        let mut vram = VRAM::new();
+        vram.write_vram_cnt(0, 0x81); // enable, MST=1 (engine A BG), OFS=0
+        vram
+    }
+
+    /// C-11: an extended direct-color bitmap BG must read from
+    /// `BGCNT.map_block * 0x4000` using the bitmap's own width as the row
+    /// stride, not from offset 0 with a hard-coded 256-pixel stride.
+    #[test]
+    fn extended_bitmap_bg_uses_screen_base_and_own_stride() {
+        let mut vram = vram_with_bank_a_as_bg();
+        let mut engine = Engine2D::<EngineA>::new();
+
+        // Screen size 2 is 512x256 for bitmaps (it is 512x512 for tiled
+        // rot/scale BGs, which is what the old shared size table assumed).
+        const MAP_BLOCK: usize = 3;
+        const BASE: usize = MAP_BLOCK * 0x4000;
+        const WIDTH: usize = 512;
+
+        // Row 1, column 0 - only reachable with the correct 512-pixel stride.
+        vram.arm9_write::<u16>((BASE + 2 * WIDTH) as u32, 0x8000 | 0x1F);
+        // Where a 256-pixel stride would wrongly land for the same texel.
+        vram.arm9_write::<u16>((BASE + 2 * 256) as u32, 0x8000 | 0x3E0);
+
+        engine.bgcnts[2].set_map_block(MAP_BLOCK as u8);
+        engine.bgcnts[2].set_bpp8(true); // bitmap variant
+        engine.bgcnts[2].set_tile_block(1); // bit 0 set = direct color
+        engine.bgcnts[2].set_screen_size(2);
+
+        // Reference point (0, 1) with dx = 1, dy = 0: sample row 1 rightwards.
+        engine.bgxs_latch[0] = ReferencePointCoord::from_int(0);
+        engine.bgys_latch[0] = ReferencePointCoord::from_int(1);
+        engine.dxs[0] = RotationScalingParameter::from_int(1);
+        engine.dys[0] = RotationScalingParameter::from_int(0);
+
+        engine.render_bitmap_line(&vram, 2, true);
+        assert_eq!(engine.bg_lines[2][0], 0x8000 | 0x1F);
+    }
+
+    /// C-6: OBJ mosaic applies only to sprites with OAM attribute 0 bit 12
+    /// set. A sprite without that bit must sample at full resolution even
+    /// while a non-zero OBJ mosaic size is loaded.
+    #[test]
+    fn obj_mosaic_only_applies_to_sprites_with_the_mosaic_bit() {
+        let mut vram = VRAM::new();
+        vram.write_vram_cnt(0, 0x82); // enable, MST=2 (engine A OBJ), OFS=0
+
+        // 4bpp tile 0: row 0 alternates palette indices 1 and 2 per pixel, so
+        // a horizontal mosaic of 2 is directly visible in the output.
+        // The ARM9-side OBJ window starts at 0x400000 within the VRAM address
+        // space that `VRAM::arm9_write` decodes.
+        const OBJ_BASE: u32 = 0x40_0000;
+        for byte in 0..4u32 {
+            vram.arm9_write::<u8>(OBJ_BASE + byte, 0x21);
+        }
+
+        let render = |mosaic_bit: bool| {
+            let mut engine = Engine2D::<EngineA>::new();
+            engine.obj_palettes[1] = 0x1F;
+            engine.obj_palettes[2] = 0x3E0;
+            engine.dispcnt.flags.insert(DISPCNTFlags::DISPLAY_OBJ);
+            engine.dispcnt.flags.insert(DISPCNTFlags::TILE_OBJ_1D);
+            engine.mosaic.obj_size.h_size = 2;
+            engine.mosaic.obj_size.v_size = 2;
+
+            // OBJ 0 at (0, 0), 8x8, 4bpp, tile 0.
+            let attr0: u16 = if mosaic_bit { 1 << 12 } else { 0 };
+            engine.oam[0..2].copy_from_slice(&attr0.to_le_bytes());
+            engine.oam[2..4].copy_from_slice(&0u16.to_le_bytes());
+            engine.oam[4..6].copy_from_slice(&0u16.to_le_bytes());
+
+            engine.render_objs_line(&vram, 0);
+            [engine.objs_line[0].color, engine.objs_line[1].color]
+        };
+
+        // Without the mosaic bit the two neighbouring pixels keep their own
+        // colors; with it, pixel 1 is replaced by pixel 0.
+        let plain = render(false);
+        assert_ne!(plain[0], plain[1]);
+        let mosaicked = render(true);
+        assert_eq!(mosaicked[0], mosaicked[1]);
     }
 }

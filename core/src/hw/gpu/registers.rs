@@ -235,7 +235,7 @@ impl From<u8> for CaptureOffset {
 }
 
 #[derive(emu_utils::Savestate)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum CaptureSize {
     S128x128 = 0,
     S256x64 = 1,
@@ -276,7 +276,7 @@ impl From<u8> for CaptureSize {
 }
 
 #[derive(emu_utils::Savestate)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CaptureSource {
     A = 0,
     B = 1,

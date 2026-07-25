@@ -140,6 +140,15 @@ impl VRAM {
     pub fn write_vram_cnt(&mut self, index: usize, value: u8) {
         let bank = Bank::from_index(index);
         let new_cnt = VRAMCNT::new(index, value);
+        crate::diag!(
+            "vramcnt",
+            "bank {:?}: enabled={} mst={} ofs={} (raw={:#04X})",
+            bank,
+            new_cnt.enabled as u8,
+            new_cnt.mst,
+            new_cnt.offset,
+            value
+        );
 
         if self.cnts[index].enabled {
             match (index, self.cnts[index].mst) {
@@ -434,12 +443,23 @@ impl VRAM {
         }
     }
 
+    /// Reads texture image data (512 KiB of mappings, VRAM slots 0-3).
+    ///
+    /// The mapping index is reduced modulo the number of mappings, matching
+    /// how [`VRAM::arm9_read`] masks its per-region indices: a polygon whose
+    /// texture base plus size runs past the end of texture memory must read
+    /// mirrored data, not panic.
     pub fn get_textures<T: MemoryValue>(&self, addr: usize) -> T {
-        VRAM::read_mapping(&self.banks, &self.textures[addr / VRAM::MAPPING_LEN], addr)
+        let index = (addr / VRAM::MAPPING_LEN) % self.textures.len();
+        VRAM::read_mapping(&self.banks, &self.textures[index], addr)
     }
 
+    /// Reads texture palette data (96 KiB of mappings, palette slots 0-5).
+    ///
+    /// Index bounding as in [`VRAM::get_textures`].
     pub fn get_textures_pal<T: MemoryValue>(&self, addr: usize) -> T {
-        VRAM::read_mapping(&self.banks, &self.textures_pal[addr / VRAM::MAPPING_LEN], addr)
+        let index = (addr / VRAM::MAPPING_LEN) % self.textures_pal.len();
+        VRAM::read_mapping(&self.banks, &self.textures_pal[index], addr)
     }
 
     #[expect(clippy::ptr_arg)]

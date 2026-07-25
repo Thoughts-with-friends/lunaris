@@ -2781,6 +2781,7 @@ dependencies = [
  "priority-queue",
  "ringbuf",
  "simplelog",
+ "zstd",
 ]
 
 [[package]]

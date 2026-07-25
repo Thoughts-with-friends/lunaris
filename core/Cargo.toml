@@ -33,6 +33,9 @@ free_bios = { workspace = true }
 # Only used by the `dump_frame` diagnostic example to write PNGs for visual
 # inspection of headless frames; not a production dependency.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Also diagnostic-only: lets `dump_frame` restore GUI-written (zstd-compressed)
+# savestates so headless runs can start from an in-game scene.
+zstd = "0.13"
 
 [features]
 nightly = []

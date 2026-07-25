@@ -34,9 +34,13 @@ impl IORegister for SoundControl {
             1 => {
                 self.left_output = ChannelOutput::from(value & 0x3);
                 self.right_output = ChannelOutput::from(value >> 2 & 0x3);
-                self.output_1 = value >> 4 != 0;
-                self.output_3 = value >> 5 != 0;
-                self.enable = value >> 7 != 0;
+                // SOUNDCNT bits 12/13 ("output ch1/ch3 to mixer"). Without the
+                // single-bit masks, every write that set the master enable
+                // (bit 15, also in this byte) turned both of these on, which
+                // mixed channels 1 and 3 into the output a second time.
+                self.output_1 = value >> 4 & 0x1 != 0;
+                self.output_3 = value >> 5 & 0x1 != 0;
+                self.enable = value >> 7 & 0x1 != 0;
             }
             2 | 3 => (),
             _ => unreachable!(),
@@ -303,5 +307,34 @@ impl CaptureControl {
         self.no_repeat = value >> 2 & 0x1 != 0;
         self.use_pcm8 = value >> 3 & 0x1 != 0;
         self.busy = value >> 7 & 0x1 != 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hw::scheduler::Scheduler;
+
+    /// C-2: SOUNDCNT byte 1 carries the master enable in bit 7 alongside the
+    /// two "output chN to mixer" bits. Enabling sound must not turn those on.
+    #[test]
+    fn soundcnt_master_enable_does_not_set_the_mixer_output_bits() {
+        let mut scheduler = Scheduler::new();
+        let mut cnt = SoundControl::new();
+
+        cnt.write(&mut scheduler, 1, 0x80); // enable only
+        assert!(cnt.enable);
+        assert!(!cnt.output_1);
+        assert!(!cnt.output_3);
+
+        cnt.write(&mut scheduler, 1, 0xB0); // enable + both output bits
+        assert!(cnt.enable);
+        assert!(cnt.output_1);
+        assert!(cnt.output_3);
+
+        cnt.write(&mut scheduler, 1, 0x10); // ch1 output only, sound disabled
+        assert!(!cnt.enable);
+        assert!(cnt.output_1);
+        assert!(!cnt.output_3);
     }
 }

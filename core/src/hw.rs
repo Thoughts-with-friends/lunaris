@@ -11,6 +11,7 @@
 
 mod ar;
 mod cartridge;
+pub mod diag;
 mod dma;
 mod gpu;
 mod interrupt_controller;

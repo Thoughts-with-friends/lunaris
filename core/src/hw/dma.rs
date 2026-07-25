@@ -435,10 +435,10 @@ impl Occasion {
         } else {
             match start_timing >> 1 {
                 0 => Occasion::Immediate,
-                1 => {
-                    warn!("ARM7 VBlank DMA not implemented!");
-                    Occasion::VBlank
-                }
+                // ARM7 V-Blank DMA is implemented: the channel is registered in
+                // `by_type` like any other, and `HW::on_vblank` runs both CPUs'
+                // channels through `run_dmas_both`.
+                1 => Occasion::VBlank,
                 2 => Occasion::DSCartridge,
                 3 if dma_num.is_multiple_of(2) => {
                     warn!("ARM7 WirelessInterrupt DMA not implemented!");

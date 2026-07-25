@@ -48,22 +48,6 @@ impl Engine3D {
             return;
         }
 
-        // TEMP DIAGNOSTIC (docs/design/bw2-3d-building-render-design.md §4):
-        // env-gated so normal runs are unaffected; removed once the
-        // discriminator verdict is reached.
-        if std::env::var_os("LUNARIS_3D_DEBUG").is_some() {
-            eprintln!(
-                "[3d-dbg] render() polygons_submitted={} polygons={} vertices={} clear_color=({},{},{},a={})",
-                self.polygons_submitted,
-                self.polygons.len(),
-                self.vertices.len(),
-                self.clear_color.r,
-                self.clear_color.g,
-                self.clear_color.b,
-                self.clear_color.a,
-            );
-        }
-
         // GBATEK "DS 3D Polygon List Commands - SwapBuffers"
         // (`#ds3dpolygonlistcommands`): parameters passed to SwapBuffers
         // apply to the polygons defined after it, i.e. they take effect
@@ -88,8 +72,10 @@ impl Engine3D {
         }
 
         let w_buffer = self.frame_params.w_buffer;
-        warn!("disp3dcnt.alpha_test is not implemented, so alpha test is currently disabled");
-        // assert!(!self.disp3dcnt.alpha_test); // TODO: Implement alpha test
+        // Alpha test (DISP3DCNT bit 2 + ALPHA_TEST_REF) is applied per fragment
+        // in `render_polygon`; see `docs/design/rendering-audio-fix-design.md`
+        // item F-1.
+        let alpha_test_ref = if self.disp3dcnt.alpha_test { self.alpha_test_ref } else { 0 };
 
         let disp3dcnt = &self.disp3dcnt;
         let toon_table = &self.toon_table;
@@ -100,10 +86,16 @@ impl Engine3D {
                 PolygonMode::Modulation => {
                     Self::blend_tex(tex_color, vert_color, modulation_blend, modulation_blend)
                 }
+                // GBATEK "DS 3D Texture Blending" (`#ds3dtextureblending`),
+                // highlight shading: the modulated value has the vertex
+                // component added on top and the sum is *clamped* to the 6-bit
+                // maximum. Using `max` here instead of `min` forced every
+                // highlight-shaded surface to at least 63 in all three
+                // channels, i.e. flat white.
                 PolygonMode::ToonHighlight if disp3dcnt.highlight_shading => Self::blend_tex(
                     tex_color,
                     vert_color,
-                    |val1, val2| std::cmp::max(modulation_blend(val1, val2) + val2, 0x3F),
+                    |val1, val2| std::cmp::min(modulation_blend(val1, val2) + val2, 0x3F),
                     modulation_blend,
                 ),
                 PolygonMode::ToonHighlight => {
@@ -143,7 +135,15 @@ impl Engine3D {
         let frame_buffer = &mut self.frame_buffer;
         let mut render = |polygon: Polygon| {
             let vertices = &vertices[polygon.start_vert..polygon.end_vert];
-            Self::render_polygon(disp3dcnt, w_buffer, blend, &polygon, vertices, frame_buffer);
+            Self::render_polygon(
+                disp3dcnt,
+                w_buffer,
+                alpha_test_ref,
+                blend,
+                &polygon,
+                vertices,
+                frame_buffer,
+            );
         };
 
         if disp3dcnt.alpha_blending {
@@ -174,9 +174,18 @@ impl Engine3D {
         self.polygons_submitted = false;
     }
 
+    /// Rasterizes one polygon.
+    ///
+    /// `alpha_test_ref` is the ALPHA_TEST_REF value when DISP3DCNT bit 2 is
+    /// set, and 0 when the alpha test is disabled: a fragment is discarded
+    /// when its 5-bit alpha is less than or equal to it, which also covers
+    /// the always-applied "alpha 0 is invisible" rule.
+    ///
+    /// GBATEK "DS 3D Display Control": <https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol>
     fn render_polygon<B>(
         disp3dcnt: &DISP3DCNT,
         w_buffer: bool,
+        alpha_test_ref: u8,
         blend: B,
         polygon: &Polygon,
         vertices: &[Vertex],
@@ -307,8 +316,9 @@ impl Engine3D {
                 let fb_color = &pixel.color;
                 let poly_color =
                     blend(polygon, vert_color, s.next() as i32 >> 4, t.next() as i32 >> 4);
-                if poly_color.a5() == 0 {
-                    // Pixel is totally tranpsarent so not rendered
+                if poly_color.a5() <= alpha_test_ref {
+                    // Fragment failed the alpha test (or is fully transparent),
+                    // so neither color nor depth is written.
                 } else if disp3dcnt.alpha_blending && fb_color.a5() != 0 && poly_color.a5() != 0x1F
                 {
                     let poly_alpha = poly_color.a5() as u16;
@@ -347,10 +357,13 @@ impl Engine3D {
             } else {
                 s
             }
-        // TODO: Replace with clamp
+        // Clamped (non-repeating) mode: the valid texel range is
+        // `0 ..= size - 1`, so a coordinate equal to the texture dimension
+        // must already clamp to the last texel instead of being used as an
+        // index one column past the end of the texture.
         } else if s < 0 {
             0
-        } else if s as u32 > size.0 {
+        } else if s as u32 >= size.0 {
             mask.0
         } else {
             s as u32
@@ -363,10 +376,10 @@ impl Engine3D {
             } else {
                 t
             }
-        // TODO: Replace with clamp
+        // Same off-by-one as the S axis above.
         } else if t < 0 {
             0
-        } else if t as u32 > size.1 {
+        } else if t as u32 >= size.1 {
             mask.1
         } else {
             t as u32
@@ -408,30 +421,6 @@ impl Engine3D {
                 let num_blocks_row = polygon.tex_params.size_s / 4;
                 let block_start_addr = t / 4 * num_blocks_row + s / 4;
                 let base_addr = vram_offset + 4 * block_start_addr;
-                {
-                    use std::sync::atomic::{AtomicUsize, Ordering};
-
-                    // Compressed textures only live in VRAM slot 0 or slot 2
-                    // (GBATEK "DS 3D Textures - Compressed Texture Format",
-                    // `#ds3dtextureformats`). A block address landing outside
-                    // those slots means the game configured an inconsistent
-                    // texture base/size; render it as fully transparent rather
-                    // than panicking.
-                    static SLOT0: AtomicUsize = AtomicUsize::new(0);
-                    static SLOT2: AtomicUsize = AtomicUsize::new(0);
-                    let c = if base_addr < 128 * 0x400 {
-                        SLOT0.fetch_add(1, Ordering::Relaxed)
-                    } else {
-                        SLOT2.fetch_add(1, Ordering::Relaxed)
-                    };
-                    if c % 100_000 == 0 {
-                        eprintln!(
-                            "[dbg-ctex] slot0={} slot2={} base=0x{base_addr:X}",
-                            SLOT0.load(Ordering::Relaxed),
-                            SLOT2.load(Ordering::Relaxed)
-                        );
-                    }
-                }
                 let te = vram.get_textures::<u8>(base_addr + t % 4);
                 let texel_val = te >> (2 * (s % 4)) & 0x3;
                 Some({

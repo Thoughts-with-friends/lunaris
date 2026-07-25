@@ -62,6 +62,16 @@ pub struct Engine3D {
     viewport: Viewport,
     clear_color: ClearColor,
     clear_depth: ClearDepth,
+    /// ALPHA_TEST_REF (4000340h): fragments whose alpha is less than or equal
+    /// to this 5-bit reference are discarded while DISP3DCNT bit 2 is set.
+    ///
+    /// GBATEK "DS 3D Display Control": <https://problemkaputt.de/gbatek.htm#ds3ddisplaycontrol>
+    ///
+    /// Skipped by the savestate so that states written before the alpha test
+    /// existed still load; games reprogram it as part of their per-frame 3D
+    /// setup.
+    #[savestate(skip)]
+    alpha_test_ref: u8,
     #[load(with = "save.load()?", with_in_place = "*frame_buffer = save.load()?")]
     frame_buffer: Vec<FrameBufferPixel>,
     polygons_submitted: bool,
@@ -129,6 +139,7 @@ impl Engine3D {
             viewport: Viewport::new(),
             clear_color: ClearColor::new(),
             clear_depth: ClearDepth::new(),
+            alpha_test_ref: 0,
             frame_buffer: vec![FrameBufferPixel::new(); GPU::WIDTH * GPU::HEIGHT],
             polygons_submitted: false,
             // Polygons
@@ -208,6 +219,10 @@ impl Engine3D {
     ) {
         assert_eq!(addr >> 12, 0x04000);
         match addr & 0xFFF {
+            // ALPHA_TEST_REF: only the low 5 bits are meaningful; the register
+            // is 32 bit wide but bits 5-31 are unused.
+            0x340 => self.alpha_test_ref = value & 0x1F,
+            0x341..=0x343 => (),
             0x350..=0x353 => self.clear_color.write(scheduler, addr as usize & 0x3, value),
             0x354..=0x355 => self.clear_depth.write(scheduler, addr as usize & 0x1, value),
             0x380..=0x3BF => {
