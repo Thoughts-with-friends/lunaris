@@ -699,7 +699,55 @@ impl Engine3D {
         self.polygons.push(polygon);
     }
 
+    /// Reports whether a cuboid (in the current position/vector-matrix
+    /// space) intersects the view volume.
+    ///
+    /// GBATEK "DS 3D Tests – Box Test" (`#ds3dtests`): `BOX_TEST` reports
+    /// whether a cuboid is (even partially) inside the view volume. Games
+    /// use it to cull whole objects before submitting their geometry, so an
+    /// over-conservative `false` here makes the object vanish entirely
+    /// rather than merely render slightly wrong.
+    ///
+    /// Implemented as the standard box-vs-frustum *plane separation* test:
+    /// transform the 8 corners into clip space, and for each of the 6 view
+    /// volume planes (`+-X <= W`, `+-Y <= W`, `+-Z <= W`) check whether
+    /// *every* corner lies outside it. If some single plane has all 8
+    /// corners outside it, that plane fully separates the box from the
+    /// frustum and the box cannot be visible; otherwise the box is reported
+    /// visible. This has no false negatives for a convex box against a
+    /// convex frustum (a corner-containment check, tried first, does *not*
+    /// have this property — see below).
+    ///
+    /// An earlier version of this function only checked whether any single
+    /// *corner* fell inside `-W..=W` on all three axes. That is wrong: a box
+    /// that straddles a frustum plane, or one that fully **encloses** the
+    /// frustum, can have all 8 corners outside the frustum while still
+    /// unambiguously overlapping it (enclosure is the case a first
+    /// alternative fix — clipping each of the box's 6 faces against the
+    /// frustum, mirroring [`Engine3D::clip_plane`] — was also found not to
+    /// handle: when the frustum sits entirely *inside* the box, every face
+    /// of the box is a flat quad sitting entirely outside the frustum on the
+    /// very axis it is perpendicular to, so face-clipping alone also
+    /// under-reports. See `box_test_tests::box_enclosing_the_view_volume_is_visible`
+    /// for the regression, and `docs/design/bw2-3d-building-render-design.md`
+    /// §5 for the empirical evidence: a real Pokémon Black/White 2 save
+    /// spent 330 consecutive frames issuing `BoxTest` for a large box
+    /// straddling the camera that the old corner test always rejected,
+    /// while only the 2 polygons of the ground tile directly under the
+    /// player were ever submitted — matching the reported "buildings
+    /// missing, purple background" symptom.
     fn box_test(&self, pos: (i16, i16, i16), size: (i16, i16, i16)) -> bool {
+        // The 8 corners of the cuboid, transformed into clip space by the
+        // current position/vector matrix (mirrors the geometry engine's
+        // vertex transform, but a raw `Vec4` is enough here since Box Test
+        // has no color/texture/attribute output).
+        let mut corners = [Vec4::new(
+            FixedPoint::zero(),
+            FixedPoint::zero(),
+            FixedPoint::zero(),
+            FixedPoint::zero(),
+        ); 8];
+        let mut i = 0;
         for x_factor in 0..2 {
             for y_factor in 0..2 {
                 for z_factor in 0..2 {
@@ -709,22 +757,20 @@ impl Engine3D {
                         FixedPoint::from_frac12((pos.2 + size.2 * z_factor) as i32),
                         FixedPoint::one(),
                     );
-                    let clip_coords = self.clip_mat * check_pos;
-                    let w = clip_coords[3];
-                    let mut inside = true;
-                    for i in 0..3 {
-                        if !(-w..=w).contains(&clip_coords[i]) {
-                            inside = false;
-                            break;
-                        }
-                    }
-                    if inside {
-                        return true;
-                    }
+                    corners[i] = self.clip_mat * check_pos;
+                    i += 1;
                 }
             }
         }
-        false
+
+        for coord_i in 0..3 {
+            let all_outside_positive = corners.iter().all(|c| c[coord_i].raw64() > c[3].raw64());
+            let all_outside_negative = corners.iter().all(|c| c[coord_i].raw64() < -c[3].raw64());
+            if all_outside_positive || all_outside_negative {
+                return false;
+            }
+        }
+        true
     }
 
     fn clip_plane(&mut self, coord_i: usize) {
@@ -830,6 +876,69 @@ impl Engine3D {
                 interpolate(inside.tex_coord[1] as i64, out.tex_coord[1] as i64) as i16,
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod box_test_tests {
+    use super::*;
+
+    /// `Engine3D::new()` defaults `clip_mat` to the identity matrix, so
+    /// `pos`/`size` (raw 1+19+12 fixed-point, i.e. `4096` = `1.0`) map
+    /// straight into clip space with `w` pinned at `1.0` (`4096`). The view
+    /// volume `-w <= x,y,z <= w` is therefore exactly `-4096..=4096` on each
+    /// axis, which keeps every test case's expected corner values easy to
+    /// state exactly.
+    fn engine() -> Engine3D {
+        Engine3D::new()
+    }
+
+    #[test]
+    fn box_fully_inside_the_view_volume_is_visible() {
+        let engine = engine();
+        assert!(engine.box_test((-2048, -2048, -2048), (4096, 4096, 4096)));
+    }
+
+    #[test]
+    fn box_fully_outside_the_view_volume_is_not_visible() {
+        let engine = engine();
+        assert!(!engine.box_test((8192, 8192, 8192), (4096, 4096, 4096)));
+    }
+
+    /// Regression test for the corner-containment bug (§5.1 of
+    /// `docs/design/bw2-3d-building-render-design.md`): a box that fully
+    /// encloses the view volume has all 8 corners *outside* it (each corner
+    /// sits at `+-8192`, beyond the `+-4096` frustum boundary on every
+    /// axis), yet the box unambiguously intersects (in fact contains) the
+    /// frustum and must report visible. The old implementation, which only
+    /// checked whether any single corner fell inside `-w..=w`, returned
+    /// `false` here.
+    #[test]
+    fn box_enclosing_the_view_volume_is_visible() {
+        let engine = engine();
+        assert!(engine.box_test((-8192, -8192, -8192), (16384, 16384, 16384)));
+    }
+
+    /// A box that straddles exactly one frustum face (half inside, half
+    /// outside, no corner inside) must also be visible - this is the shape
+    /// of query the real BW2 save was observed issuing every frame while
+    /// buildings failed to render (see the design doc's evidence log).
+    #[test]
+    fn box_straddling_one_face_is_visible() {
+        let engine = engine();
+        // x spans 2048..10240 (half inside the view volume, half beyond
+        // it), while y and z span -8192..8192 - wider than the frustum on
+        // every corner, so no single corner is inside, but the x=2048 face
+        // fully covers the frustum's y/z extent at that depth and must be
+        // reported visible.
+        assert!(engine.box_test((2048, -8192, -8192), (8192, 16384, 16384)));
+    }
+
+    #[test]
+    fn box_fully_behind_the_view_volume_on_one_axis_is_not_visible() {
+        let engine = engine();
+        // y and z comfortably overlap the view volume, but x never does.
+        assert!(!engine.box_test((5000, -1000, -1000), (4096, 2000, 2000)));
     }
 }
 

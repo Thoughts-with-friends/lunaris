@@ -30,6 +30,9 @@ emu-utils = { git = "https://github.com/Thoughts-with-friends/emu-utils", rev = 
 
 [dev-dependencies]
 free_bios = { workspace = true }
+# Only used by the `dump_frame` diagnostic example to write PNGs for visual
+# inspection of headless frames; not a production dependency.
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 nightly = []

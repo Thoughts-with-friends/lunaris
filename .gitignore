@@ -18,4 +18,7 @@ logs/
 docs/design/
 cheats/
 states/
+
 core/examples/
+core/lunaris_emu/examples/
+core/lunaris_emu/tests/

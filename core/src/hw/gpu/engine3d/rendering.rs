@@ -48,6 +48,22 @@ impl Engine3D {
             return;
         }
 
+        // TEMP DIAGNOSTIC (docs/design/bw2-3d-building-render-design.md §4):
+        // env-gated so normal runs are unaffected; removed once the
+        // discriminator verdict is reached.
+        if std::env::var_os("LUNARIS_3D_DEBUG").is_some() {
+            eprintln!(
+                "[3d-dbg] render() polygons_submitted={} polygons={} vertices={} clear_color=({},{},{},a={})",
+                self.polygons_submitted,
+                self.polygons.len(),
+                self.vertices.len(),
+                self.clear_color.r,
+                self.clear_color.g,
+                self.clear_color.b,
+                self.clear_color.a,
+            );
+        }
+
         // GBATEK "DS 3D Polygon List Commands - SwapBuffers"
         // (`#ds3dpolygonlistcommands`): parameters passed to SwapBuffers
         // apply to the polygons defined after it, i.e. they take effect
