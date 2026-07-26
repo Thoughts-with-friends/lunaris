@@ -229,6 +229,39 @@ impl IORegister for ClearColor {
     }
 }
 
+/// FOG_COLOR (4000358h): fog RGBA used by the fog post-pass.
+///
+/// GBATEK "DS 3D Toon, Edge, Fog, Alpha Blending, Anti-aliasing":
+/// <https://problemkaputt.de/gbatek-ds-3d-toon-edge-fog-alpha-blending-anti-aliasing.htm>
+pub struct FogColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl FogColor {
+    pub fn new() -> Self {
+        FogColor { r: 0, g: 0, b: 0, a: 0 }
+    }
+
+    pub fn write(&mut self, byte: usize, value: u8) {
+        match byte {
+            0 => {
+                self.r = value & 0x1F;
+                self.g = self.g & !0x7 | (value >> 5) & 0x7;
+            }
+            1 => {
+                self.g = self.g & !0x18 | (value << 3) & 0x18;
+                self.b = value >> 2 & 0x1F;
+            }
+            2 => self.a = value & 0x1F,
+            3 => (),
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(emu_utils::Savestate)]
 pub struct ClearDepth {
     depth: u16,

@@ -62,13 +62,29 @@ impl Engine3D {
             return;
         }
 
+        if self.attr_buffer.len() != self.frame_buffer.len() {
+            // A savestate saved before `attr_buffer` existed does not resize
+            // it, since the field is skipped entirely; recreate it here so
+            // an old state still renders.
+            self.attr_buffer = vec![FrameBufferAttr::default(); self.frame_buffer.len()];
+        }
+
         // TODO: Optimize
-        for pixel in self.frame_buffer.iter_mut() {
+        // GBATEK "DS 3D Toon, Edge, Fog, Alpha Blending, Anti-aliasing":
+        // CLEAR_COLOR bit 15 seeds the fog flag for pixels the rear plane
+        // still shows through, exactly like an opaque polygon's POLYGON_ATTR
+        // bit 15 does for a drawn pixel.
+        for (pixel, attr) in self.frame_buffer.iter_mut().zip(self.attr_buffer.iter_mut()) {
             pixel.color = FrameBufferColor::new5(
                 Color::new5(self.clear_color.r, self.clear_color.g, self.clear_color.b),
                 self.clear_color.a,
             );
             pixel.depth = self.clear_depth.depth();
+            *attr = FrameBufferAttr {
+                fog: self.clear_color.fog,
+                opaque_id: self.clear_color.polygon_id,
+                translucent_id: None,
+            };
         }
 
         let w_buffer = self.frame_params.w_buffer;
@@ -133,6 +149,7 @@ impl Engine3D {
 
         let vertices = &self.vertices;
         let frame_buffer = &mut self.frame_buffer;
+        let attr_buffer = &mut self.attr_buffer;
         let mut render = |polygon: Polygon| {
             let vertices = &vertices[polygon.start_vert..polygon.end_vert];
             Self::render_polygon(
@@ -143,6 +160,7 @@ impl Engine3D {
                 &polygon,
                 vertices,
                 frame_buffer,
+                attr_buffer,
             );
         };
 
@@ -169,9 +187,89 @@ impl Engine3D {
             }
         }
 
+        if self.disp3dcnt.fog_master_enable {
+            self.apply_fog();
+        }
+
         self.vertices.clear();
         self.gxstat.geometry_engine_busy = false;
         self.polygons_submitted = false;
+    }
+
+    /// Fog post-pass, run once over the whole frame buffer after every
+    /// polygon has been rasterized. Blends `FOG_COLOR` into every pixel
+    /// flagged for fog (see `render_polygon` and the clear loop in
+    /// `render`), weighted by a density that ramps from `FOG_TABLE[0]` at
+    /// `FOG_OFFSET` up to `FOG_TABLE[31]` by the end of the fog range set by
+    /// DISP3DCNT's Fog Depth Shift.
+    ///
+    /// GBATEK "DS 3D Toon, Edge, Fog, Alpha Blending, Anti-aliasing":
+    /// <https://problemkaputt.de/gbatek-ds-3d-toon-edge-fog-alpha-blending-anti-aliasing.htm>
+    ///
+    /// melonDS `GPU3D_Soft.cpp`: `CalculateFogDensity`, `ScanlineFinalPass`.
+    /// See `docs/design/3d-fog-and-rendering-fixes-design.md` §4.
+    fn apply_fog(&mut self) {
+        // FOG_OFFSET is a 15-bit depth; the Z-buffer is 24-bit, so scale up
+        // by the same 0x200 factor CLEAR_DEPTH uses (`ClearDepth::depth`).
+        let fog_offset = self.fog_offset as u32 * 0x200;
+        let fog_shift = self.disp3dcnt.fog_depth_shift;
+
+        // Density lookup interpolates between table entries `n` and `n+1`,
+        // and `n` can reach 32, so pad the raw 32-entry table on both ends
+        // rather than indexing past its bounds.
+        let mut padded = [0u8; 34];
+        padded[0] = self.fog_table[0];
+        padded[1..=32].copy_from_slice(&self.fog_table);
+        padded[33] = self.fog_table[31];
+
+        let fog_color = FrameBufferColor::new5(
+            Color::new5(self.fog_color.r, self.fog_color.g, self.fog_color.b),
+            self.fog_color.a,
+        );
+        let fog_alpha_only = self.disp3dcnt.fog_alpha_only;
+
+        for (pixel, attr) in self.frame_buffer.iter_mut().zip(self.attr_buffer.iter()) {
+            if !attr.fog {
+                continue;
+            }
+            let density = Self::fog_density(pixel.depth, fog_offset, fog_shift, &padded);
+            let blend = |old: u32, new: u32| (new * density + old * (128 - density)) >> 7;
+            let color = if fog_alpha_only {
+                pixel.color.color
+            } else {
+                Color::new6(
+                    blend(pixel.color.r6() as u32, fog_color.r6() as u32) as u8,
+                    blend(pixel.color.g6() as u32, fog_color.g6() as u32) as u8,
+                    blend(pixel.color.b6() as u32, fog_color.b6() as u32) as u8,
+                )
+            };
+            let alpha = blend(pixel.color.a6() as u32, fog_color.a6() as u32) as u8;
+            pixel.color = FrameBufferColor::new6(color, alpha);
+        }
+    }
+
+    /// Computes the 0..=128 fog density (blend weight, out of 128) for a
+    /// 24-bit depth value. `padded` is the 34-entry table built by
+    /// `apply_fog`. See `docs/design/3d-fog-and-rendering-fixes-design.md`
+    /// §4.3 and melonDS `GPU3D_Soft.cpp::CalculateFogDensity`.
+    fn fog_density(depth: u32, fog_offset: u32, fog_shift: u8, padded: &[u8; 34]) -> u32 {
+        let (density_id, density_frac) = if depth < fog_offset {
+            (0, 0)
+        } else {
+            // Z difference is shifted right by 2, then left by the fog
+            // shift; bits 0-16 of the result are the interpolation
+            // fraction, bits 17+ are the table index. Hardware lets this
+            // wrap on a large enough shift, so use wrapping arithmetic
+            // rather than panicking on overflow in debug builds.
+            let z = ((depth - fog_offset) >> 2).wrapping_shl(fog_shift as u32);
+            let density_id = z >> 17;
+            if density_id >= 32 { (32, 0) } else { (density_id, z & 0x1_FFFF) }
+        };
+
+        let density = (padded[density_id as usize] as u32 * (0x2_0000 - density_frac)
+            + padded[density_id as usize + 1] as u32 * density_frac)
+            >> 17;
+        if density >= 127 { 128 } else { density }
     }
 
     /// Rasterizes one polygon.
@@ -190,6 +288,7 @@ impl Engine3D {
         polygon: &Polygon,
         vertices: &[Vertex],
         frame_buffer: &mut [FrameBufferPixel],
+        attr_buffer: &mut [FrameBufferAttr],
     ) where
         B: Fn(&Polygon, FrameBufferColor, i32, i32) -> FrameBufferColor,
     {
@@ -310,7 +409,9 @@ impl Engine3D {
             for x in x_start..x_end {
                 let y = y as usize;
                 let depth_val = depth.next() as u32;
-                let pixel = &mut frame_buffer[y * GPU::WIDTH + x];
+                let index = y * GPU::WIDTH + x;
+                let pixel = &mut frame_buffer[index];
+                let attr = &mut attr_buffer[index];
 
                 let vert_color = FrameBufferColor::new5(color.next(), polygon.attrs.alpha);
                 let fb_color = &pixel.color;
@@ -318,7 +419,7 @@ impl Engine3D {
                     blend(polygon, vert_color, s.next() as i32 >> 4, t.next() as i32 >> 4);
                 if poly_color.a5() <= alpha_test_ref {
                     // Fragment failed the alpha test (or is fully transparent),
-                    // so neither color nor depth is written.
+                    // so neither color, depth, nor attributes are written.
                 } else if disp3dcnt.alpha_blending && fb_color.a5() != 0 && poly_color.a5() != 0x1F
                 {
                     let poly_alpha = poly_color.a5() as u16;
@@ -334,9 +435,18 @@ impl Engine3D {
                     if polygon.attrs.set_depth_translucent {
                         pixel.depth = depth_val
                     }
+                    // GBATEK "DS 3D Toon, Edge, Fog, Alpha Blending,
+                    // Anti-aliasing"; melonDS `PlotTranslucentPixel`: a
+                    // translucent write can only *clear* the destination's
+                    // fog flag, never set it (the polygon's own fog flag is
+                    // ANDed in, not OR'd).
+                    attr.fog &= polygon.attrs.fog_enable;
+                    attr.translucent_id = Some(polygon.attrs.polygon_id);
                 } else if depth_test(pixel.depth, depth_val) {
                     pixel.color = poly_color;
                     pixel.depth = depth_val;
+                    attr.fog = polygon.attrs.fog_enable;
+                    attr.opaque_id = polygon.attrs.polygon_id;
                 }
             }
         }
@@ -861,6 +971,24 @@ impl FrameBufferPixel {
     }
 }
 
+/// Per-pixel render attributes, rebuilt from scratch every frame alongside
+/// `frame_buffer`. Not part of the savestate; see
+/// `docs/design/3d-fog-and-rendering-fixes-design.md` §2.
+#[derive(Clone, Copy, Default)]
+pub struct FrameBufferAttr {
+    /// Whether this pixel should be affected by the fog post-pass. Set from
+    /// POLYGON_ATTR bit 15 on an opaque write or the rear-plane's fog flag on
+    /// clear; a translucent write can only clear it (never set it), matching
+    /// melonDS `PlotTranslucentPixel`.
+    pub fog: bool,
+    /// Polygon ID of the last opaque write, used by edge marking.
+    pub opaque_id: u8,
+    /// Polygon ID of the last translucent write, if any; used to reject
+    /// blending a translucent polygon's own overlapping faces against
+    /// themselves.
+    pub translucent_id: Option<u8>,
+}
+
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 struct FrameBufferColor {
@@ -903,5 +1031,67 @@ impl FrameBufferColor {
     // TODO: Convert 2D engine to also use 8 bit color
     pub fn as_u16(&self) -> u16 {
         self.color.as_u16() | if self.a == 0 { 0 } else { 0x8000 }
+    }
+}
+
+#[cfg(test)]
+mod fog_tests {
+    use super::Engine3D;
+
+    fn padded(raw: [u8; 32]) -> [u8; 34] {
+        let mut padded = [0u8; 34];
+        padded[0] = raw[0];
+        padded[1..=32].copy_from_slice(&raw);
+        padded[33] = raw[31];
+        padded
+    }
+
+    /// A depth below FOG_OFFSET always reads FOG_TABLE[0] with no
+    /// interpolation, per GBATEK/melonDS `CalculateFogDensity`.
+    #[test]
+    fn depth_below_offset_uses_first_table_entry_unblended() {
+        let mut raw = [0u8; 32];
+        raw[0] = 40;
+        raw[1] = 100;
+        let padded = padded(raw);
+        assert_eq!(Engine3D::fog_density(0, 0x1000, 4, &padded), 40);
+        assert_eq!(Engine3D::fog_density(0xFFF, 0x1000, 4, &padded), 40);
+    }
+
+    /// A density index that would reach 33 must clamp to 32 rather than
+    /// indexing one entry past the padded table's end.
+    #[test]
+    fn density_id_clamps_at_the_end_of_the_table_without_panicking() {
+        let mut raw = [0u8; 32];
+        raw[31] = 77;
+        let padded = padded(raw);
+        // A huge depth pushes density_id well past 32; must not panic and
+        // must saturate to the last table entry (77, unblended).
+        let density = Engine3D::fog_density(u32::MAX, 0, 15, &padded);
+        assert_eq!(density, 77);
+    }
+
+    /// Per melonDS: `if (density >= 127) density = 128;` -- not `min(_, 127)`.
+    /// Only a raw density of exactly 128 (achieved by rounding up from 127)
+    /// produces the fully-saturated `>> 7` blend weight.
+    #[test]
+    fn density_of_127_rounds_up_to_128_not_clamped_to_127() {
+        let raw = [127u8; 32];
+        let padded = padded(raw);
+        assert_eq!(Engine3D::fog_density(0x10000, 0, 0, &padded), 128);
+    }
+
+    /// FOG_TABLE writes mask to 7 bits and FOG_OFFSET writes mask to 15
+    /// bits; exercised through the same padding path unit tests use.
+    #[test]
+    fn padded_table_repeats_first_and_last_entries() {
+        let mut raw = [0u8; 32];
+        raw[0] = 5;
+        raw[31] = 9;
+        let padded = padded(raw);
+        assert_eq!(padded[0], 5);
+        assert_eq!(padded[1], 5);
+        assert_eq!(padded[32], 9);
+        assert_eq!(padded[33], 9);
     }
 }
