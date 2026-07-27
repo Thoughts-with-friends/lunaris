@@ -1,7 +1,7 @@
 use super::{HW, IORegister};
 
 impl HW {
-    pub(super) fn arm7_read_io8(&self, addr: u32) -> u8 {
+    pub(super) fn arm7_read_io8(&mut self, addr: u32) -> u8 {
         match addr {
             0x0400_0004 => self.gpu.dispstats[0].read(0),
             0x0400_0005 => self.gpu.dispstats[0].read(1),
@@ -66,8 +66,13 @@ impl HW {
             0x0400_0306 => self.powcnt2.read(2),
             0x0400_0307 => self.powcnt2.read(3),
             0x0400_0400..=0x0400_051F => self.spu.read(addr as usize & 0xFFF),
-            0x0480_4000..=0x0480_5FFF => 0, // TODO: WiFi RAM
-            0x0480_8000..=0x0480_8FFF => 0, // TOOD: WiFi Registers
+            // Wi-Fi 8-bit accesses extract a byte from a full 16-bit
+            // register read; see `Wifi::read8` and
+            // `docs/design/design_lan.md` §6.2. CPU 16/32-bit accesses
+            // bypass this path entirely (see `arm7_read_io16`/`32` below)
+            // so a side-effecting register (e.g. `W_RXBufDataRead`'s
+            // auto-increment) never fires twice for one CPU access.
+            0x0480_0000..=0x0480_FFFF => self.wifi.read8(addr - 0x0480_0000),
             _ => {
                 warn!("Ignoring ARM7 IO Register Read at 0x{:08X}", addr);
                 0
@@ -75,7 +80,10 @@ impl HW {
         }
     }
 
-    pub(super) fn arm7_read_io16(&self, addr: u32) -> u16 {
+    pub(super) fn arm7_read_io16(&mut self, addr: u32) -> u16 {
+        if let 0x0480_0000..=0x0480_FFFF = addr {
+            return self.wifi.read16(addr - 0x0480_0000);
+        }
         (self.arm7_read_io8(addr) as u16) | (self.arm7_read_io8(addr + 1) as u16) << 8
     }
 
@@ -83,6 +91,10 @@ impl HW {
         match addr {
             0x0410_0000 => self.ipc_fifo_recv(false),
             0x0410_0010 => self.read_game_card(false),
+            0x0480_0000..=0x0480_FFFF => {
+                (self.wifi.read16(addr - 0x0480_0000) as u32)
+                    | (self.wifi.read16(addr + 2 - 0x0480_0000) as u32) << 16
+            }
             _ => {
                 (self.arm7_read_io8(addr) as u32)
                     | (self.arm7_read_io8(addr + 1) as u32) << 8
@@ -196,20 +208,30 @@ impl HW {
             0x0400_0241 => (),                           // WRAMCNT is read-only
             0x0400_0300 => self.postflg7 |= value & 0x1, // Should only be written to during boot
             0x0400_0301 => self.haltcnt.write(&mut self.scheduler, 0, value),
-            0x0400_0304 => self.powcnt2.write(&mut self.scheduler, 0, value),
+            0x0400_0304 => {
+                self.powcnt2.write(&mut self.scheduler, 0, value);
+                self.wifi.set_power_cnt(self.powcnt2.enable_wifi(), &mut self.scheduler);
+            }
             0x0400_0305 => self.powcnt2.write(&mut self.scheduler, 1, value),
             0x0400_0306 => self.powcnt2.write(&mut self.scheduler, 2, value),
             0x0400_0307 => self.powcnt2.write(&mut self.scheduler, 3, value),
             0x0400_0400..=0x0400_051F => {
                 self.spu.write(&mut self.scheduler, addr as usize & 0xFFF, value)
             }
-            0x0480_4000..=0x0480_5FFF => (), // TODO: WiFi RAM
-            0x0480_8000..=0x0480_8FFF => (), // TOOD: WiFi Registers
+            // Wi-Fi 8-bit writes are dropped (see `Wifi::write8`); real
+            // hardware and games never issue them, and composing two
+            // 8-bit writes into a 16-bit register access would
+            // double-fire side effects.
+            0x0480_0000..=0x0480_FFFF => self.wifi.write8(addr - 0x0480_0000, value),
             _ => warn!("Ignoring ARM7 IO Register Write 0x{:08X} = {:02X}", addr, value),
         }
     }
 
     pub(super) fn arm7_write_io16(&mut self, addr: u32, value: u16) {
+        if let 0x0480_0000..=0x0480_FFFF = addr {
+            self.wifi.write16(addr - 0x0480_0000, value);
+            return;
+        }
         self.arm7_write_io8(addr, value as u8);
         self.arm7_write_io8(addr + 1, (value >> 8) as u8);
     }
@@ -217,6 +239,10 @@ impl HW {
     pub(super) fn arm7_write_io32(&mut self, addr: u32, value: u32) {
         match addr {
             0x0400_0188 => self.ipc_fifo_send(true, value),
+            0x0480_0000..=0x0480_FFFF => {
+                self.wifi.write16(addr - 0x0480_0000, value as u16);
+                self.wifi.write16(addr + 2 - 0x0480_0000, (value >> 16) as u16);
+            }
             _ => {
                 self.arm7_write_io8(addr, value as u8);
                 self.arm7_write_io8(addr + 1, (value >> 8) as u8);

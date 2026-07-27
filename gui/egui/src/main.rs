@@ -6,6 +6,7 @@ mod cheat_editor;
 mod debug;
 mod fonts;
 mod input;
+mod lan_room;
 mod screens;
 mod window;
 
@@ -184,6 +185,7 @@ struct LunarisApp {
     show_video_window: bool,
     show_audio_window: bool,
     debug: DebugState,
+    lan_room: crate::lan_room::LanRoomState,
     /// Set whenever the displayed screens need to be re-converted/re-uploaded:
     /// a new frame was emulated, a ROM was (re)loaded, a savestate was
     /// loaded, or a video setting changed. Cleared every time
@@ -221,6 +223,7 @@ impl LunarisApp {
             show_video_window: false,
             show_audio_window: false,
             debug: DebugState::new(),
+            lan_room: crate::lan_room::LanRoomState::default(),
             screens_dirty: true,
             emulated_frames: 0,
             last_title_update: std::time::Instant::now(),
@@ -241,6 +244,13 @@ impl LunarisApp {
         });
         let Some(slot) = pressed else { return };
         if shift {
+            // A room member currently believed MP-ready would have its
+            // timeline rewound out from under the other peers; refuse
+            // rather than silently desync the room. See
+            // `docs/design/design_lan.md` §13.3.
+            if self.lan_room.blocks_state_load() {
+                return;
+            }
             if load_state_from_slot(&mut self.nds, &self.config, slot) {
                 self.paused = false;
                 self.screens_dirty = true;
@@ -262,6 +272,7 @@ impl LunarisApp {
         self.config.last_rom_path = Some(path.clone());
 
         self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+        self.lan_room.on_rom_changed(&self.nds);
 
         // Save config
         self.config.save();
@@ -286,6 +297,7 @@ impl LunarisApp {
             }
             self.config.last_rom_path = Some(p);
             self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+            self.lan_room.on_rom_changed(&self.nds);
             self.config.save();
             self.paused = false;
             self.screens_dirty = true;
@@ -310,16 +322,25 @@ impl LunarisApp {
                         }
                     });
 
-                    ui.menu_button("Load State", |ui| {
-                        for slot in 1..=5 {
-                            if ui.button(format!("State {slot}")).clicked() {
-                                if load_state_from_slot(&mut self.nds, &self.config, slot) {
-                                    self.paused = false;
-                                    self.screens_dirty = true;
+                    let blocks_state_load = self.lan_room.blocks_state_load();
+                    ui.add_enabled_ui(!blocks_state_load, |ui| {
+                        ui.menu_button("Load State", |ui| {
+                            for slot in 1..=5 {
+                                if ui.button(format!("State {slot}")).clicked() {
+                                    if load_state_from_slot(&mut self.nds, &self.config, slot) {
+                                        self.paused = false;
+                                        self.screens_dirty = true;
+                                    }
+                                    ui.close();
                                 }
-                                ui.close();
                             }
-                        }
+                        })
+                        .response
+                        .on_disabled_hover_text(
+                            "Disabled while this instance is MP-ready in a LAN room: loading a \
+                             savestate would rewind this instance's timeline out from under the \
+                             other room members.",
+                        );
                     });
 
                     if ui
@@ -341,6 +362,7 @@ impl LunarisApp {
                             if let Some(dst) = create_save_path(&self.config) {
                                 let _ = std::fs::copy(save_path, &dst);
                                 self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+                                self.lan_room.on_rom_changed(&self.nds);
                             } else {
                                 self.open_rom(Some(save_path));
                             };
@@ -379,6 +401,7 @@ impl LunarisApp {
                     }
                     if ui.button("Reset").clicked() {
                         self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
+                        self.lan_room.on_rom_changed(&self.nds);
                         self.paused = false;
                         self.screens_dirty = true;
                         ui.close();
@@ -409,6 +432,10 @@ impl LunarisApp {
 
                 ui.menu_button("Debug", |ui| {
                     self.debug.menu(ui);
+                });
+
+                ui.menu_button("Multiplayer", |ui| {
+                    self.lan_room.menu_item(ui);
                 });
             });
         });
@@ -723,6 +750,13 @@ impl eframe::App for LunarisApp {
 
         if let Some(cheat_map) = self.cheat_editor_state.show_cheats(ctx, &self.config) {
             self.nds.set_cheat_map(cheat_map);
+        }
+
+        if matches!(
+            self.lan_room.show(ctx, &mut self.config, &mut self.nds),
+            crate::lan_room::LanUiAction::SaveConfig
+        ) {
+            self.config.save();
         }
     }
 

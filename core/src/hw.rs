@@ -24,6 +24,7 @@ mod scheduler;
 mod spi;
 mod spu;
 mod timers;
+mod wifi;
 
 use std::convert::TryInto;
 use std::path::PathBuf;
@@ -46,6 +47,8 @@ use scheduler::{Event, EventHandler, Scheduler};
 use spi::SPI;
 use spu::SPU;
 use timers::Timers;
+use wifi::Wifi;
+pub use wifi::mp::{LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport};
 
 /// Aggregated hardware state of the Nintendo DS.
 ///
@@ -111,6 +114,7 @@ pub struct HW {
     ipc: IPC,
     rtc: RTC,
     spi: SPI,
+    pub wifi: Wifi,
     // Registers
     wramcnt: WRAMCNT,
     powcnt2: POWCNT2,
@@ -140,6 +144,7 @@ impl HW {
         // would wake it up is otherwise lost across a save/load cycle.
         // See `docs/design/savestate-and-video-design.md` §2.3 (C3).
         self.gpu.engine3d.check_interrupts(&mut self.interrupts[1].request);
+        self.wifi.post_load();
         Ok(())
     }
 
@@ -166,7 +171,12 @@ impl HW {
             Event::GenerateAudioSample => HW::generate_audio_sample,
             Event::StepAudioChannel(_) => HW::step_audio_channel,
             Event::ResetAudioChannel(_) => HW::reset_audio_channel,
+            Event::Wifi => HW::on_wifi_timer,
         }
+    }
+
+    fn on_wifi_timer(hw: &mut HW, _event: Event) {
+        hw.wifi.tick(&mut hw.scheduler, &mut hw.interrupts[0].request);
     }
 
     const ITCM_SIZE: usize = 0x8000; // 32 KiB
@@ -211,6 +221,7 @@ impl HW {
             ipc: IPC::new(),
             rtc: RTC::new(),
             spi: SPI::new(firmware_path),
+            wifi: Wifi::new(),
             // Registesr
             wramcnt: WRAMCNT::new(3),
             powcnt2: POWCNT2::new(),
@@ -224,6 +235,9 @@ impl HW {
             // Misc
             scheduler,
         };
+        if let Some(config) = hw.spi.wifi_config_bytes() {
+            hw.wifi.load_firmware_config(config);
+        }
         hw.init_arm7_page_tables();
         hw.init_arm9_page_tables();
         if direct_boot {
@@ -312,6 +326,64 @@ impl HW {
     pub fn release_screen(&mut self) {
         self.keypad.release_screen();
         self.spi.release_screen();
+    }
+
+    /// Installs (or removes, with `None`) the frontend-supplied MP
+    /// transport that carries multiplayer frames to/from other `lunaris`
+    /// instances. See `docs/design/design_lan.md` §8.1.
+    pub fn set_mp_transport(&mut self, transport: Option<Box<dyn MpTransport>>) {
+        self.wifi.set_transport(transport);
+    }
+
+    /// Loads RF channel calibration from a firmware Wi-Fi config block
+    /// (starting at firmware offset `02Ch`). Call once after constructing
+    /// [`HW`], before the game has a chance to select a channel. See
+    /// `docs/design/design_lan.md` §7.
+    pub fn load_wifi_firmware_config(&mut self, config: &[u8]) {
+        self.wifi.load_firmware_config(config);
+    }
+
+    /// Returns `true` if the Wi-Fi hardware currently believes it is
+    /// engaged in a multiplayer session (host or client).
+    pub fn wifi_mp_active(&self) -> bool {
+        self.wifi.is_mp_active()
+    }
+
+    /// Current adaptive link parameters in effect, or the defaults if no
+    /// transport is installed. UI display use only.
+    pub fn wifi_link_hints(&self) -> LinkHints {
+        self.wifi.link_hints()
+    }
+
+    /// Diagnostic escape hatch: pokes a Wi-Fi register directly, bypassing
+    /// CPU memory decoding entirely. Used by `core/examples/mp_loopback.rs`
+    /// to drive the Wi-Fi hardware without a Wi-Fi-capable test ROM,
+    /// mirroring `NDS::offset_cycles_for_test`'s role for cycle-counter
+    /// testing. `addr` is relative to `4800000h`.
+    pub fn wifi_write16(&mut self, addr: u32, value: u16) {
+        self.wifi.write16(addr, value);
+    }
+
+    /// Diagnostic escape hatch: reads a Wi-Fi register directly. See
+    /// [`HW::wifi_write16`].
+    pub fn wifi_read16(&mut self, addr: u32) -> u16 {
+        self.wifi.read16(addr)
+    }
+
+    /// Diagnostic escape hatch: sets Wi-Fi hardware power state directly
+    /// (equivalent to a `POWCNT2` bit-1 write) without going through the
+    /// ARM7 IO decoder. See [`HW::wifi_write16`].
+    pub fn wifi_set_power(&mut self, enable: bool) {
+        self.wifi.set_power_cnt(enable, &mut self.scheduler);
+    }
+
+    /// Diagnostic escape hatch: advances the Wi-Fi hardware by `ticks` 8µs
+    /// timer steps directly, without running the CPU or scheduler. See
+    /// [`HW::wifi_write16`].
+    pub fn wifi_debug_tick(&mut self, ticks: u32) {
+        for _ in 0..ticks {
+            self.wifi.tick(&mut self.scheduler, &mut self.interrupts[0].request);
+        }
     }
 
     pub fn set_audio_volume(&mut self, volume_percent: f32) {

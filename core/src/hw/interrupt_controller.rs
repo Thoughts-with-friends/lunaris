@@ -71,6 +71,9 @@ bitflags! {
         const GAME_CARD_TRANSFER_COMPLETION = 1 << 19; // NDS slot ROM block done
         const GAME_CARD_IREQ_MC = 1 << 20;     // NDS slot IREQ_MC line asserted
         const GEOMETRY_COMMAND_FIFO = 1 << 21; // 3-D GXFIFO below half-empty (ARM9 only)
+        const LID_OPEN = 1 << 22;              // Lid/hinge open switch (ARM7 only)
+        const SPI_BUS = 1 << 23;               // SPI bus transfer complete (ARM7 only)
+        const WIFI = 1 << 24;                  // Wi-Fi (ARM7 only). See `docs/design/design_lan.md` §6.4.
     }
 }
 
@@ -114,6 +117,9 @@ bitflags! {
         const GAME_CARD_IREQ_MC = 1 << 20;
         // TODO: bit 21 (GEOMETRY_COMMAND_FIFO) is ARM9-only; ARM7 IF must never set it.
         const GEOMETRY_COMMAND_FIFO = 1 << 21;
+        const LID_OPEN = 1 << 22;
+        const SPI_BUS = 1 << 23;
+        const WIFI = 1 << 24;
     }
 }
 

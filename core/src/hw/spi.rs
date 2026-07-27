@@ -83,6 +83,13 @@ impl SPI {
     pub fn press_screen(&mut self, x: usize, y: usize) {
         self.tsc.press_screen(x, y)
     }
+
+    /// Returns the firmware's Wi-Fi calibration block (offset `02Ch`
+    /// onward), for [`crate::hw::HW::load_wifi_firmware_config`]. See
+    /// `docs/design/design_lan.md` §7.1.
+    pub fn wifi_config_bytes(&self) -> Option<&[u8]> {
+        self.firmware.save_bytes().and_then(|b| b.get(0x2C..))
+    }
     pub fn release_screen(&mut self) {
         self.tsc.release_screen()
     }

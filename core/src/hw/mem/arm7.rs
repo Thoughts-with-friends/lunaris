@@ -84,6 +84,9 @@ impl HW {
         }
     }
 
+    /// - https://mgba-emu.github.io/gbatek/#memory-access-times
+    /// - https://github.com/Thoughts-with-friends/folk-melonDS/blob/master/src/NDS.cpp#L145
+    /// - https://github.com/Thoughts-with-friends/folk-melonDS/blob/master/src/NDS.cpp#L257
     pub fn arm7_get_access_time<T: MemoryValue>(
         &mut self,
         _access_type: AccessType,

@@ -80,6 +80,55 @@ impl Default for VideoConfig {
     }
 }
 
+/// Local multiplayer room settings. See
+/// `docs/design/design_lan.md` §12.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LanConfig {
+    pub player_name: String,
+    pub room_name: String,
+    pub last_host_ip: String,
+    pub control_port: u16,
+    pub mp_port: u16,
+    pub max_players: u8,
+    /// Randomized on first run and persisted, so repeated launches on one
+    /// machine keep a stable (and, across machines, very likely unique)
+    /// Wi-Fi MAC low-3-bytes suffix. See
+    /// `docs/design/design_lan.md` §7.3.
+    pub mac_suffix: [u8; 3],
+    pub link_auto: bool,
+    pub runahead_us: u32,
+    pub recv_timeout_ms: u16,
+}
+
+impl Default for LanConfig {
+    fn default() -> Self {
+        // A random-ish default seeded from the current time so two fresh
+        // installs on a LAN don't collide; `Config::load` doesn't
+        // otherwise touch an RNG dependency for this one field.
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u32)
+            .unwrap_or(0);
+        Self {
+            player_name: "Luna".to_owned(),
+            room_name: "Lunaris Room".to_owned(),
+            last_host_ip: String::new(),
+            control_port: 7064,
+            mp_port: 7065,
+            max_players: 8,
+            mac_suffix: [
+                (seed & 0xFF) as u8,
+                ((seed >> 8) & 0xFF) as u8,
+                ((seed >> 16) & 0xFF) as u8,
+            ],
+            link_auto: true,
+            runahead_us: 1000,
+            recv_timeout_ms: 8,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -94,6 +143,7 @@ pub struct Config {
     pub window: WindowConfig,
     pub audio_volume: f32,
     pub video: VideoConfig,
+    pub lan: LanConfig,
 
     /// Joystick ID for gamepad input.
     pub joystick_id: JoystickId,
@@ -127,6 +177,7 @@ impl Default for Config {
             window: WindowConfig::default(),
             audio_volume: 100.0,
             video: VideoConfig::default(),
+            lan: LanConfig::default(),
             joystick_id: JoystickId::Joystick1,
             input_bindings: default_input_bindings(),
         }
@@ -142,6 +193,9 @@ impl Config {
             Err(_) => Self::default(),
         };
         config.video.upscale_factor = upscale::clamp_factor(config.video.upscale_factor);
+        config.lan.max_players = config.lan.max_players.clamp(1, 16);
+        config.lan.runahead_us = config.lan.runahead_us.clamp(250, 16_000);
+        config.lan.recv_timeout_ms = config.lan.recv_timeout_ms.clamp(2, 40);
         config
     }
 

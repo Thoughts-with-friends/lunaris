@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use crate::arm::ARM;
 use crate::hw::HW;
 
-pub use crate::hw::{Engine, GraphicsType, Key, RomFingerprint};
+pub use crate::hw::{
+    Engine, GraphicsType, Key, LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport,
+    RomFingerprint,
+};
 
 pub const WIDTH: usize = crate::hw::GPU::WIDTH;
 pub const HEIGHT: usize = crate::hw::GPU::HEIGHT;
@@ -73,6 +76,61 @@ impl NDS {
     #[inline]
     pub fn set_audio_volume(&mut self, volume_percent: f32) {
         self.hw.set_audio_volume(volume_percent);
+    }
+
+    /// Installs (or removes, with `None`) the frontend-supplied MP
+    /// transport that carries multiplayer frames to/from other `lunaris`
+    /// instances. See `docs/design/design_lan.md` §8.1.
+    #[inline]
+    pub fn set_mp_transport(&mut self, transport: Option<Box<dyn MpTransport>>) {
+        self.hw.set_mp_transport(transport);
+    }
+
+    /// Loads RF channel calibration from a firmware Wi-Fi config block
+    /// (starting at firmware offset `02Ch`). See
+    /// `docs/design/design_lan.md` §7.
+    #[inline]
+    pub fn load_wifi_firmware_config(&mut self, config: &[u8]) {
+        self.hw.load_wifi_firmware_config(config);
+    }
+
+    /// Returns `true` if the Wi-Fi hardware currently believes it is
+    /// engaged in a multiplayer session (host or client).
+    #[inline]
+    pub fn wifi_mp_active(&self) -> bool {
+        self.hw.wifi_mp_active()
+    }
+
+    /// Current adaptive link parameters in effect. UI display use only.
+    #[inline]
+    pub fn wifi_link_hints(&self) -> LinkHints {
+        self.hw.wifi_link_hints()
+    }
+
+    /// Diagnostic escape hatch: see [`crate::hw::HW::wifi_write16`]. Used by
+    /// `core/examples/mp_loopback.rs` to drive Wi-Fi hardware directly
+    /// without a Wi-Fi-capable test ROM.
+    #[inline]
+    pub fn wifi_write16(&mut self, addr: u32, value: u16) {
+        self.hw.wifi_write16(addr, value);
+    }
+
+    /// Diagnostic escape hatch: see [`crate::hw::HW::wifi_read16`].
+    #[inline]
+    pub fn wifi_read16(&mut self, addr: u32) -> u16 {
+        self.hw.wifi_read16(addr)
+    }
+
+    /// Diagnostic escape hatch: see [`crate::hw::HW::wifi_set_power`].
+    #[inline]
+    pub fn wifi_set_power(&mut self, enable: bool) {
+        self.hw.wifi_set_power(enable);
+    }
+
+    /// Diagnostic escape hatch: see [`crate::hw::HW::wifi_debug_tick`].
+    #[inline]
+    pub fn wifi_debug_tick(&mut self, ticks: u32) {
+        self.hw.wifi_debug_tick(ticks);
     }
 
     /// Imports external cartridge save data (e.g. from another emulator or

@@ -397,7 +397,9 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         }
     }
 
-    // ARM.10: Halfword and Signed Data Transfer (STRH,LDRH,LDRSB,LDRSH)
+    /// ARM.10: Halfword and Signed Data Transfer (STRH,LDRH,LDRSB,LDRSH)
+    ///
+    /// https://mgba-emu.github.io/gbatek/#opcode-format-4
     fn halfword_and_signed_data_transfer<
         const P: bool,
         const U: bool,
@@ -447,7 +449,10 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                         1 => self.read::<u16>(hw, access_type, addr & !0x1) as u32,
                         2 => self.read::<u8>(hw, access_type, addr) as i8 as u32,
                         3 => self.read::<u16>(hw, access_type, addr & !0x1) as i16 as u32,
-                        _ => unreachable!(),
+                        invalid => unreachable!(
+                            "HalfWord invalid op({invalid}) instr={instr:08X} PC={:08X} S={signed} H={halfword}",
+                            self.regs[15],
+                        ),
                     }
                 } else {
                     match opcode {
@@ -456,7 +461,10 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
                         2 => self.read::<u8>(hw, access_type, addr) as i8 as u32,
                         3 if addr & 0x1 == 1 => self.read::<u8>(hw, access_type, addr) as i8 as u32,
                         3 => self.read::<u16>(hw, access_type, addr) as i16 as u32,
-                        _ => unreachable!(),
+                        invalid => unreachable!(
+                            "HalfWord invalid op({invalid}) instr={instr:08X} PC={:08X} S={signed} H={halfword}",
+                            self.regs[15],
+                        ),
                     }
                 };
                 self.internal();

@@ -1,0 +1,308 @@
+//! LAN multiplayer room window: create/join a room, view the player list
+//! and link stats, and install/remove the Wi-Fi MP transport on the
+//! running [`NDS`] instance. See `docs/design/design_lan.md` §11.
+//!
+//! Kept entirely separate from `main.rs` -- the only touch points are one
+//! `mod lan_room;` declaration, one field + menu item, one call in
+//! `update`, and the Load-State-blocking check, per §11.4.
+
+use std::net::IpAddr;
+
+use eframe::egui;
+use lunaris_gui_common::config::Config;
+use lunaris_net::{PlayerView, Room, RoomConfig, RoomHandle};
+use nds_core::nds::NDS;
+
+enum Role {
+    Host,
+    Guest,
+}
+
+/// Owns the room window's UI state and (once in a room) the
+/// [`RoomHandle`] used to read player list/link stats and send control
+/// messages. The [`lunaris_net::NetTransport`] half of [`Room`] is handed
+/// straight to [`NDS::set_mp_transport`] and not kept here.
+pub struct LanRoomState {
+    is_open: bool,
+    host_ip_input: String,
+    role: Option<Role>,
+    handle: Option<RoomHandle>,
+    last_error: Option<String>,
+    /// Cached so `set_mp_ready` is only sent to the room when the computed
+    /// readiness actually changes, not once per repaint.
+    last_ready_sent: Option<bool>,
+    runahead_slider: u32,
+    recv_timeout_slider: u16,
+}
+
+/// What the room window needs `main.rs` to do that it can't do itself.
+pub enum LanUiAction {
+    None,
+    SaveConfig,
+}
+
+impl Default for LanRoomState {
+    fn default() -> Self {
+        LanRoomState {
+            is_open: false,
+            host_ip_input: String::new(),
+            role: None,
+            handle: None,
+            last_error: None,
+            last_ready_sent: None,
+            runahead_slider: 1000,
+            recv_timeout_slider: 8,
+        }
+    }
+}
+
+impl LanRoomState {
+    pub fn menu_item(&mut self, ui: &mut egui::Ui) {
+        if ui.checkbox(&mut self.is_open, "LAN Room").clicked() {
+            ui.close();
+        }
+    }
+
+    /// `true` while this instance is `MpReady` (see
+    /// `docs/design/design_lan.md` §13.3): loading a savestate mid-session
+    /// would desync every other room member, so `main.rs` must refuse
+    /// Load State in both the menu and the Shift+F5-F9 hotkey path while
+    /// this holds.
+    pub fn blocks_state_load(&self) -> bool {
+        self.last_ready_sent == Some(true)
+    }
+
+    /// Publishes the current ROM's fingerprint to the room, if any.
+    /// Call after every `create_nds`/`Reset`/`Import Save` (any point
+    /// `main.rs` rebuilds `self.nds`), per
+    /// `docs/design/design_lan.md` §10.3.
+    pub fn on_rom_changed(&mut self, nds: &NDS) {
+        if let Some(handle) = &self.handle {
+            handle.set_rom_fingerprint(nds.rom_fingerprint().to_bytes());
+        }
+    }
+
+    fn leave(&mut self, nds: &mut NDS) {
+        if let Some(handle) = self.handle.take() {
+            handle.leave();
+        }
+        self.role = None;
+        self.last_ready_sent = None;
+        nds.set_mp_transport(None);
+    }
+
+    fn room_config(config: &Config, nds: &NDS) -> RoomConfig {
+        RoomConfig {
+            player_name: config.lan.player_name.clone(),
+            room_name: config.lan.room_name.clone(),
+            rom_fingerprint: nds.rom_fingerprint().to_bytes(),
+            mac_suffix: config.lan.mac_suffix,
+            max_players: config.lan.max_players,
+            control_port: config.lan.control_port,
+            mp_port: config.lan.mp_port,
+        }
+    }
+
+    fn install_room(&mut self, room: Room, role: Role, nds: &mut NDS) {
+        let Room { handle, transport } = room;
+        nds.set_mp_transport(Some(Box::new(transport)));
+        self.handle = Some(handle);
+        self.role = Some(role);
+        self.last_error = None;
+    }
+
+    /// Draws the window (if open) and returns anything `main.rs` needs to
+    /// do in response. Also updates the room's MP-ready flag once per
+    /// frame based on ROM-fingerprint matching (§10).
+    pub fn show(&mut self, ctx: &egui::Context, config: &mut Config, nds: &mut NDS) -> LanUiAction {
+        let mut action = LanUiAction::None;
+        if !self.is_open {
+            return action;
+        }
+
+        self.update_mp_ready(nds);
+
+        let mut open = self.is_open;
+        egui::Window::new("LAN Room").open(&mut open).default_width(420.0).show(ctx, |ui| {
+            match &self.role {
+                None => self.show_lobby(ui, config, nds, &mut action),
+                Some(_) => self.show_room(ui, config, nds, &mut action),
+            }
+        });
+        self.is_open = open;
+        action
+    }
+
+    fn update_mp_ready(&mut self, nds: &NDS) {
+        let Some(handle) = &self.handle else { return };
+        let our_fp = nds.rom_fingerprint().to_bytes();
+        let host_fp = handle.players().iter().find(|p| p.is_host).map(|p| p.rom_fingerprint);
+        let ready = host_fp == Some(our_fp);
+        if self.last_ready_sent != Some(ready) {
+            handle.set_mp_ready(ready);
+            self.last_ready_sent = Some(ready);
+        }
+    }
+
+    fn show_lobby(
+        &mut self,
+        ui: &mut egui::Ui,
+        config: &mut Config,
+        nds: &mut NDS,
+        action: &mut LanUiAction,
+    ) {
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Player name");
+            changed |= ui.text_edit_singleline(&mut config.lan.player_name).changed();
+        });
+
+        ui.separator();
+        ui.label("Not in a room");
+
+        ui.horizontal(|ui| {
+            ui.label("Room name");
+            changed |= ui.text_edit_singleline(&mut config.lan.room_name).changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label("Max players");
+            changed |= ui.add(egui::Slider::new(&mut config.lan.max_players, 1..=16)).changed();
+        });
+        if ui.button("Create Room (Host)").clicked() {
+            let cfg = Self::room_config(config, nds);
+            match Room::host(&cfg) {
+                Ok(room) => self.install_room(room, Role::Host, nds),
+                Err(e) => self.last_error = Some(format!("failed to host: {e}")),
+            }
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Host IP");
+            ui.text_edit_singleline(&mut self.host_ip_input);
+        });
+        if ui.button("Join Room (Guest)").clicked() {
+            match self.host_ip_input.trim().parse::<IpAddr>() {
+                Ok(ip) => {
+                    config.lan.last_host_ip = self.host_ip_input.clone();
+                    let cfg = Self::room_config(config, nds);
+                    match Room::join(&cfg, ip) {
+                        Ok(room) => self.install_room(room, Role::Guest, nds),
+                        Err(e) => self.last_error = Some(format!("failed to join: {e}")),
+                    }
+                }
+                Err(_) => self.last_error = Some("invalid IP address".to_owned()),
+            }
+        }
+
+        if let Some(err) = &self.last_error {
+            ui.colored_label(egui::Color32::from_rgb(220, 80, 80), format!("\u{26A0} {err}"));
+        }
+
+        if changed {
+            *action = LanUiAction::SaveConfig;
+        }
+    }
+
+    fn show_room(
+        &mut self,
+        ui: &mut egui::Ui,
+        config: &mut Config,
+        nds: &mut NDS,
+        action: &mut LanUiAction,
+    ) {
+        let Some(handle) = &self.handle else { return };
+        if handle.has_left() {
+            self.leave(nds);
+            return;
+        }
+
+        let players = handle.players();
+        let self_id = handle.self_id();
+        let is_host = handle.is_host();
+
+        ui.label(format!(
+            "In a room ({}, {}/{})",
+            handle.room_name(),
+            players.len(),
+            config.lan.max_players
+        ));
+
+        egui::Grid::new("lan_player_grid").striped(true).show(ui, |ui| {
+            ui.strong("ID");
+            ui.strong("Name");
+            ui.strong("Software");
+            ui.strong("FPS");
+            ui.strong("Link");
+            ui.end_row();
+
+            for p in &players {
+                ui.label(format!("{}{}", p.id, if p.id == self_id { " (you)" } else { "" }));
+                ui.label(format!("{}{}", p.name, if p.is_host { " \u{2605}" } else { "" }));
+                ui.label(rom_label(p));
+                ui.label(format!("{:.1}", p.fps_x10 as f32 / 10.0));
+                ui.label(if p.mp_ready { "ready" } else { "\u{2717} diff" });
+                ui.end_row();
+            }
+        });
+
+        ui.separator();
+        let link = handle.link_hints();
+        if is_host {
+            let mut link_params = handle.link_params();
+            let mut changed = false;
+            changed |= ui.checkbox(&mut link_params.auto, "Auto link speed").changed();
+            ui.add_enabled_ui(!link_params.auto, |ui| {
+                self.runahead_slider = link_params.runahead_us;
+                self.recv_timeout_slider = link_params.recv_timeout_ms;
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.runahead_slider, 250..=16_000)
+                            .text("Run-ahead (\u{b5}s)"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.recv_timeout_slider, 2..=40)
+                            .text("Recv timeout (ms)"),
+                    )
+                    .changed();
+                link_params.runahead_us = self.runahead_slider;
+                link_params.recv_timeout_ms = self.recv_timeout_slider;
+            });
+            if changed {
+                handle.set_link_params(link_params);
+            }
+        }
+        ui.weak(format!(
+            "runahead {}\u{b5}s \u{b7} recv timeout {}ms",
+            link.runahead_us,
+            link.recv_timeout.as_millis()
+        ));
+
+        if ui.button("Leave Room").clicked() {
+            self.leave(nds);
+        }
+
+        let _ = action;
+    }
+}
+
+fn rom_label(p: &PlayerView) -> String {
+    // The 16-byte fingerprint's first 4 bytes are the game code
+    // (`RomFingerprint::game_code`, little-endian); decode it back to its
+    // 4-character ASCII form for display, matching how the header itself
+    // stores it. Falls back to a hex dump for an all-zero/placeholder
+    // fingerprint (no ROM loaded yet).
+    let code_bytes = &p.rom_fingerprint[0..4];
+    if code_bytes.iter().all(|&b| b == 0) {
+        return "(none)".to_owned();
+    }
+    match std::str::from_utf8(code_bytes) {
+        Ok(s) if s.chars().all(|c| c.is_ascii_graphic()) => s.to_owned(),
+        _ => format!(
+            "{:02X}{:02X}{:02X}{:02X}",
+            code_bytes[0], code_bytes[1], code_bytes[2], code_bytes[3]
+        ),
+    }
+}

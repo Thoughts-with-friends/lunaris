@@ -2528,6 +2528,7 @@ dependencies = [
  "egui_plot",
  "gilrs",
  "ico",
+ "lunaris-net",
  "lunaris_gui_common",
  "nds-core",
  "pollster",
@@ -2535,6 +2536,13 @@ dependencies = [
  "serde",
  "serde_json",
  "winres",
+]
+
+[[package]]
+name = "lunaris-net"
+version = "0.1.0"
+dependencies = [
+ "nds-core",
 ]
 
 [[package]]

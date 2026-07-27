@@ -164,7 +164,9 @@ impl MemoryValue for u64 {}
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy)]
 pub enum AccessType {
+    /// First Access (Non-sequential)
     N,
+    /// Second Access (Sequential)
     S,
 }
 
@@ -316,6 +318,10 @@ pub struct POWCNT2 {
 impl POWCNT2 {
     pub fn new() -> Self {
         POWCNT2 { enable_sound: true, enable_wifi: false }
+    }
+
+    pub const fn enable_wifi(&self) -> bool {
+        self.enable_wifi
     }
 }
 

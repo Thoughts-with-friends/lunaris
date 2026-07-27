@@ -1,0 +1,17 @@
+# Room hosting/joining and MP frame relay over TCP+UDP. See
+# docs/design/design_lan.md.
+[package]
+name = "lunaris-net"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+description = "LAN room hosting/joining and Wi-Fi MP frame relay for lunaris"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+nds-core = { workspace = true }

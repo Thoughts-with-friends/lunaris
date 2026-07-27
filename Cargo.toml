@@ -19,6 +19,7 @@ members = [
   "gui/common",
   "gui/egui",
   "gui/imgui",
+  "net",
   "xtask",
 ]
 resolver = "3"
@@ -33,6 +34,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 nds-core = { path = "./core" }
 free_bios = { path = "./free_bios" }
 lunaris_gui_common = { path = "./gui/common" }
+lunaris-net = { path = "./net" }
 
 
 [workspace.lints.clippy]

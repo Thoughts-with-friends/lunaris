@@ -52,7 +52,7 @@ fn setup_logging() {
         .set_target_level(LevelFilter::Off)
         .set_location_level(LevelFilter::Off)
         .set_time_level(LevelFilter::Off)
-        .set_max_level(LevelFilter::Off);
+        .set_max_level(LevelFilter::Trace);
 
     if let Ok(file) = arm7 {
         loggers.push(WriteLogger::new(

@@ -98,6 +98,7 @@ This project is a modified/extended version based on NDS-Emulator.
 - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
 - [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator high performance, low memory usage
 - [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
+- [GBATEK-md](https://mgba-emu.github.io/gbatek/#dstechnicaldata): GBA / Nintendo DS / DSi / 3DS - Technical Info
 - [TinyFB.nds](https://imrannazar.com/The-Smallest-NDS-File): The smallest Nintendo DS file
 - [Nintendo DS Architecture](https://www.copetti.org/writings/consoles/nintendo-ds/): An overview of the NDS
 - [BlocksDS](https://blocksds.skylyrac.net/tutorial/): Details on the NDS, focusing on easy-to-understand specifications at the implementation stage

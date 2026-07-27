@@ -215,6 +215,8 @@ pub enum Event {
     StepAudioChannel(spu::ChannelSpec),
     /// SPU: reset an audio channel after its sample finishes.
     ResetAudioChannel(spu::ChannelSpec),
+    /// Wi-Fi: one 8 microsecond hardware tick. See `core/src/hw/wifi/mod.rs`.
+    Wifi,
 }
 
 struct EventWrapper {
