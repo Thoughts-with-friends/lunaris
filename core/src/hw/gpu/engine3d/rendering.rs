@@ -420,7 +420,10 @@ impl Engine3D {
                 if poly_color.a5() <= alpha_test_ref {
                     // Fragment failed the alpha test (or is fully transparent),
                     // so neither color, depth, nor attributes are written.
-                } else if disp3dcnt.alpha_blending && fb_color.a5() != 0 && poly_color.a5() != 0x1F
+                } else if disp3dcnt.alpha_blending
+                    && fb_color.a5() != 0
+                    && poly_color.a5() != 0x1F
+                    && depth_test(pixel.depth, depth_val)
                 {
                     let poly_alpha = poly_color.a5() as u16;
                     let calc = |old, new| (old * (0x1F - poly_alpha) + new * (poly_alpha + 1)) / 32;

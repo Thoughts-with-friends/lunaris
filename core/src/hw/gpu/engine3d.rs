@@ -237,7 +237,8 @@ impl Engine3D {
                 // https://problemkaputt.de/gbatek.htm#ds3diomap:~:text=40004A4h%2029h%201%20%201%20%20%20POLYGON_ATTR%20-%20Set%20Polygon%20Attributes%20(W)
                 // - melonDS: src/GPU3D.cpp (command dispatcher)
                 // https://github.com/Thoughts-with-friends/folk-melonDS/blob/master/src/GPU3D.cpp#L2550
-                unreachable!("Read from write-only POLYGON_ATTR register");
+                warn!("Read from write-only POLYGON_ATTR register");
+                0 // Avoid Pokemon Black2 start crash
             }
             0x600..=0x603 => self.read_gxstat((addr as usize) & 0x3),
             0x604..=0x607 => self.read_ram_count((addr as usize) & 0x3),

@@ -60,7 +60,9 @@ impl Logger {
         let dim = "\x1b[2m";
         let reset = "\x1b[0m";
 
-        let (group_name, target_color) = color::target_group(record.target());
+        let Some((group_name, target_color)) = color::target_group(record.target()) else {
+            return; // skip unregistered name target(to fast emulate)
+        };
         let file = record.file().unwrap_or("<unknown>");
         let line = record.line().unwrap_or(0);
         let level = record.level();
@@ -137,14 +139,15 @@ mod color {
     pub(super) const COLOR_DIM: &str = "\x1b[2m";
 
     #[inline]
-    pub(super) fn target_group(target: &str) -> (&str, &'static str) {
-        match target {
+    pub(super) fn target_group(target: &str) -> Option<(&str, &'static str)> {
+        Some(match target {
+            "nds_core" => ("NDS Any log", COLOR_BLUE),
             t if t.starts_with("nds_core::arm7") => ("ARM7", COLOR_CYAN),
             t if t.starts_with("nds_core::arm9") => ("ARM9", COLOR_MAGENTA),
             t if t.starts_with("nds_core::gpu") => ("GPU", COLOR_GREEN),
             t if t.starts_with("nds_core::dma") => ("DMA", COLOR_BLUE),
             t if t.starts_with("nds_core::savedata") => ("SAVEDATA", COLOR_YELLOW),
-            _ => (target, "\x1b[37m"),
-        }
+            _ => return None,
+        })
     }
 }
