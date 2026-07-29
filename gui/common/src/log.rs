@@ -20,7 +20,10 @@ pub fn setup_logging() -> Result<(), SetLoggerError> {
     };
 
     log::set_boxed_logger(Box::new(logger))?;
-    log::set_max_level(LevelFilter::Trace);
+    // NOTE: `LevelFilter::Trace` causes severe emulator slowdown.
+    // Even when the logger discards messages, log records are generated and
+    // routed through the logger for every trace call.
+    log::set_max_level(LevelFilter::Warn);
 
     Ok(())
 }
