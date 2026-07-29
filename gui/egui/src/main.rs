@@ -771,13 +771,7 @@ impl eframe::App for LunarisApp {
 
 fn main() -> eframe::Result<()> {
     #[cfg(not(feature = "release"))]
-    nds_core::simplelog::TermLogger::init(
-        nds_core::simplelog::LevelFilter::Off,
-        nds_core::simplelog::Config::default(),
-        nds_core::simplelog::TerminalMode::Mixed,
-        nds_core::simplelog::ColorChoice::Auto,
-    )
-    .ok();
+    let _ = lunaris_gui_common::log::setup_logging();
 
     let mut config = lunaris_gui_common::config::Config::load();
     let rom = resolve_rom_path(&config).expect("ROM required");

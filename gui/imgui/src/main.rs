@@ -7,19 +7,13 @@ mod display;
 mod input;
 mod savestate;
 
-use std::{borrow::Borrow as _, collections::HashSet, fs::File, path::PathBuf};
+use std::{borrow::Borrow as _, collections::HashSet, path::PathBuf};
 
 use glfw::Key;
 use imgui::{Condition, MenuItem, Slider, Ui, Window, im_str};
 
 use lunaris_gui_common::loader::load_rom;
-use nds_core::{
-    nds::NDS,
-    simplelog::{
-        ColorChoice, CombinedLogger, Config, ConfigBuilder, LevelFilter, SharedLogger, TermLogger,
-        TerminalMode, WriteLogger,
-    },
-};
+use nds_core::nds::NDS;
 
 use self::{
     debug::{
@@ -28,58 +22,6 @@ use self::{
     },
     display::{Display, StateAction},
 };
-
-// =========================================================
-// Logging
-// =========================================================
-
-fn setup_logging() {
-    let mut loggers: Vec<Box<dyn SharedLogger>> = vec![TermLogger::new(
-        LevelFilter::Off,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )];
-
-    let arm7 = File::create("logs/arm7.log");
-    let arm9 = File::create("logs/arm9.log");
-    let save = File::create("logs/savedata.log");
-
-    let mut config = ConfigBuilder::new();
-    config
-        .set_time_level(LevelFilter::Off)
-        .set_thread_level(LevelFilter::Off)
-        .set_target_level(LevelFilter::Off)
-        .set_location_level(LevelFilter::Off)
-        .set_time_level(LevelFilter::Off)
-        .set_max_level(LevelFilter::Trace);
-
-    if let Ok(file) = arm7 {
-        loggers.push(WriteLogger::new(
-            LevelFilter::Off,
-            config.clone().add_filter_allow_str("nds_core::arm7").build(),
-            file,
-        ));
-    }
-
-    if let Ok(file) = arm9 {
-        loggers.push(WriteLogger::new(
-            LevelFilter::Off,
-            config.clone().add_filter_allow_str("nds_core::arm9").build(),
-            file,
-        ));
-    }
-
-    if let Ok(file) = save {
-        loggers.push(WriteLogger::new(
-            LevelFilter::Off,
-            config.clone().add_filter_allow_str("nds_core::savedata").build(),
-            file,
-        ));
-    }
-
-    CombinedLogger::init(loggers).unwrap();
-}
 
 // =========================================================
 // ROM
@@ -375,7 +317,7 @@ fn render_audio(
 // =========================================================
 
 fn main() {
-    setup_logging();
+    let _ = lunaris_gui_common::log::setup_logging();
 
     let mut config = lunaris_gui_common::config::Config::load();
     let rom = resolve_rom_path(&config).expect("ROM required");

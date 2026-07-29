@@ -8,5 +8,6 @@ pub mod config;
 pub mod framebuffer;
 pub mod input;
 pub mod loader;
+pub mod log;
 pub mod savestate;
 pub mod upscale;
