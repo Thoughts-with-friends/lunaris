@@ -27,6 +27,19 @@ use mp::MpTransport;
 pub use regs::*;
 use rx::RxKind;
 
+/// Diagnostic tracing for the TX/RX/beacon path, independent of the `log`
+/// crate's configured level (which the frontends default to `Off`; see
+/// `gui/egui/src/main.rs`'s `TermLogger::init`). Enabled by setting
+/// `LUNARIS_WIFI_DEBUG=1` before launching, so a real-game connectivity
+/// issue (e.g. a Union Room never showing the peer) can be diagnosed
+/// without rebuilding or reconfiguring logging. Checked once and cached,
+/// since [`Wifi::tick`] runs far too often to re-read the environment
+/// every call.
+pub(super) fn debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("LUNARIS_WIFI_DEBUG").is_some())
+}
+
 /// One hardware TX slot (LOC1-3, CMD, beacon, or MP reply).
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Default)]
@@ -229,6 +242,30 @@ impl Wifi {
         self.com_status = 0;
         self.mp_client_mask = 0;
         self.mp_client_fail = 0;
+
+        // `W_ID` (000h) is a hardware-identification register a driver
+        // reads during Wi-Fi init to confirm a real chip is present before
+        // doing anything else; leaving it at zero looks like "no Wi-Fi
+        // hardware" and can make a driver skip wireless entirely without
+        // ever touching another W_* register. Ported from melonDS
+        // `Wifi::Reset` (`docs/design/melonds/WiFi.cpp:186-197`); `0x1440`
+        // is the plain-DS value, matching this emulator's DS-only scope.
+        self.set_ioport(W_ID, 0x1440);
+
+        // MAC/BSSID reset to all-FF (unprogrammed), not zero -- the driver
+        // itself copies the real MAC out of firmware into `W_MACAddr0..2`
+        // during init (`docs/design/melonds/WiFi.cpp:199`).
+        self.set_ioport(W_MACAddr0, 0xFFFF);
+        self.set_ioport(W_MACAddr1, 0xFFFF);
+        self.set_ioport(W_MACAddr2, 0xFFFF);
+        self.set_ioport(W_BSSID0, 0xFFFF);
+        self.set_ioport(W_BSSID1, 0xFFFF);
+        self.set_ioport(W_BSSID2, 0xFFFF);
+
+        // Hardware resets with power-save (bit 0) already set; the driver
+        // must explicitly clear it before the radio can power on. See
+        // `Wifi::update_power_on` and `docs/design/melonds/WiFi.cpp:203`.
+        self.set_ioport(W_PowerUS, 0x0001);
     }
 
     /// Populates RF channel calibration from a firmware Wi-Fi config block.
@@ -344,21 +381,33 @@ impl Wifi {
         self.transport.as_deref().map(MpTransport::link_hints).unwrap_or_default()
     }
 
-    /// One 8µs hardware tick: advances the MP sync clock, the TX slot phase
-    /// machine, and the RX byte-pump, then reschedules itself. Called from
-    /// [`super::HW::on_wifi_timer`]. Simplified from melonDS `USTimer`
-    /// (`docs/design/melonds/WiFi.cpp:1753-1935`): beacon-interval and
-    /// microsecond-compare IRQ timing (`W_BeaconCount1/2`, `W_USCompareCnt`)
-    /// are not yet ported, since they are not required for MP association
-    /// and frame relay. See `docs/design/design_lan.md` §6.3.
-    #[expect(
-        clippy::cognitive_complexity,
-        reason = "sequential hardware tick steps ported from a single melonDS function; \
-                  splitting further would obscure the ordering that timing correctness depends on"
-    )]
+    /// One 8µs hardware tick: advances the MP sync clock, the millisecond
+    /// beacon-interval counters, the TX slot phase machine, and the RX
+    /// byte-pump, then reschedules itself. Called from
+    /// [`super::HW::on_wifi_timer`]. Ported from melonDS `USTimer`
+    /// (`docs/design/melonds/WiFi.cpp:1753-1935`).
+    ///
+    /// Firing `W_BeaconCount1`'s IRQ (bit 14) turned out to be load-bearing
+    /// even for MP-only play: real Wi-Fi driver code (e.g. Pokémon's Union
+    /// Room) re-arms the beacon TX slot and advances its own scan/connect
+    /// state machine from that interrupt handler. Leaving it un-ported (as
+    /// this method originally did) meant the host's driver silently never
+    /// progressed past its initial wait state -- no beacon was ever put on
+    /// the wire, so a joining peer's scan found nothing, even though the
+    /// room-level TCP/UDP connection underneath was healthy. See
+    /// `docs/design/design_lan.md` §6.3 and §17 (Union-Room symptom).
     pub(super) fn tick(&mut self, scheduler: &mut Scheduler, request: &mut InterruptRequest) {
         self.us_timestamp += Self::TIMER_INTERVAL_US;
-        self.us_counter += Self::TIMER_INTERVAL_US;
+
+        // `USCounter`/the millisecond beacon timer only run while the game
+        // has armed them via `W_USCountCnt`; `USTimestamp` (MP sync) above
+        // is unconditional hardware state and always ticks.
+        if self.ioport(W_USCountCnt) != 0 {
+            self.us_counter += Self::TIMER_INTERVAL_US;
+            if self.us_counter & 0x3FF == 0 {
+                self.ms_timer(request);
+            }
+        }
 
         if self.is_mp_client && self.com_status == 0 {
             if self.rx_timestamp != 0 && self.us_timestamp >= self.rx_timestamp {
@@ -378,7 +427,15 @@ impl Wifi {
             }
         }
 
-        self.cmd_counter = self.cmd_counter.saturating_sub(Self::TIMER_INTERVAL_US as u32);
+        if self.ioport(W_CmdCountCnt) & 0x0001 != 0 {
+            self.cmd_counter = self.cmd_counter.saturating_sub(Self::TIMER_INTERVAL_US as u32);
+        }
+
+        let content_free = self.ioport(W_ContentFree);
+        if content_free != 0 {
+            let interval = Self::TIMER_INTERVAL_US as u16;
+            self.set_ioport(W_ContentFree, content_free.saturating_sub(interval));
+        }
 
         if self.com_status == 0 {
             let busy = self.ioport(W_TXBusy);
@@ -403,6 +460,48 @@ impl Wifi {
             self.schedule_timer(scheduler);
         }
     }
+
+    /// Advances the ~1ms beacon-interval counters. Ported from melonDS
+    /// `Wifi::MSTimer` (`docs/design/melonds/WiFi.cpp:1727-1751`), minus
+    /// the `BlockBeaconIRQ14` gate (a WEP-association-timing nuance out of
+    /// scope here). `W_BeaconCount1` free-runs and re-arms itself from
+    /// `W_BeaconInterval`, giving the driver a steady heartbeat to re-send
+    /// beacons/re-check its state machine on; `W_BeaconCount2` is a
+    /// one-shot countdown the driver arms per-operation (e.g. "wait this
+    /// long for an association response").
+    fn ms_timer(&mut self, request: &mut InterruptRequest) {
+        if self.ioport(W_USCompareCnt) != 0 && (self.us_counter & !0x3FF) == self.us_compare {
+            self.raise_irq(14, request);
+        }
+
+        let count1 = self.ioport(W_BeaconCount1);
+        if count1 != 0 {
+            let count1 = count1 - 1;
+            self.set_ioport(W_BeaconCount1, count1);
+            if count1 == 0 {
+                if debug_enabled() {
+                    eprintln!(
+                        "[wifi] beacon interval elapsed: raising IRQ14, TXBusy=0x{:04X} \
+                         (bit4 set means the driver re-armed the beacon slot last time)",
+                        self.ioport(W_TXBusy)
+                    );
+                }
+                self.raise_irq(14, request);
+            }
+        }
+        if self.ioport(W_BeaconCount1) == 0 {
+            self.set_ioport(W_BeaconCount1, self.ioport(W_BeaconInterval));
+        }
+
+        let count2 = self.ioport(W_BeaconCount2);
+        if count2 != 0 {
+            let count2 = count2 - 1;
+            self.set_ioport(W_BeaconCount2, count2);
+            if count2 == 0 {
+                self.raise_irq(13, request);
+            }
+        }
+    }
 }
 
 impl Default for Wifi {
@@ -420,7 +519,7 @@ mod tests {
         let mut wifi = Wifi::new();
         wifi.set_ioport(W_RXBufReadAddr, 0x100);
         wifi.set_ioport(W_RXCnt, 0x8000);
-        let active = wifi.read16(0x0000 + W_RXBufDataRead as u32);
+        let active = wifi.read16(W_RXBufDataRead as u32);
         let passive = wifi.read16(0x1000 + W_RXBufDataRead as u32);
         // The active-region read must have advanced the read cursor; the
         // mirrored (1000h-1FFFh) read must not have advanced it again.
@@ -431,7 +530,8 @@ mod tests {
     #[test]
     fn ram_round_trips_16_bit() {
         let mut wifi = Wifi::new();
-        wifi.write16(0x4000, 0xBEEF);
+        let mut scheduler = Scheduler::new();
+        wifi.write16(0x4000, 0xBEEF, &mut scheduler);
         assert_eq!(wifi.read16(0x4000), 0xBEEF);
         // Mirror at 4800h..5FFFh maps into the same 8KiB RAM.
         assert_eq!(wifi.read16(0x5000), wifi.ram[0x1000] as u16 | (wifi.ram[0x1001] as u16) << 8);
@@ -440,7 +540,8 @@ mod tests {
     #[test]
     fn eight_bit_write_is_ignored() {
         let mut wifi = Wifi::new();
-        wifi.write16(W_TXStatCnt as u32, 0x1234);
+        let mut scheduler = Scheduler::new();
+        wifi.write16(W_TXStatCnt as u32, 0x1234, &mut scheduler);
         wifi.write8(W_TXStatCnt as u32, 0xFF);
         assert_eq!(wifi.read16(W_TXStatCnt as u32), 0x1234);
     }
@@ -465,5 +566,74 @@ mod tests {
         wifi.rf_regs[1] = 0x41 + 6;
         wifi.change_channel();
         assert_eq!(wifi.cur_channel, 7);
+    }
+
+    /// Regression test for the Union Room symptom (design doc §17, fixed
+    /// here): with the beacon-interval counter never advancing, `W_IF`
+    /// bit 14 never fired, so a real game's driver never re-armed its
+    /// beacon TX slot or advanced its scan state machine past initial
+    /// setup -- the room-level TCP/UDP link was healthy, but no beacon
+    /// ever reached the wire. `Wifi::tick`'s millisecond timer must
+    /// decrement `W_BeaconCount1`, reload it from `W_BeaconInterval`, and
+    /// raise the Wi-Fi IRQ on every interval elapsed.
+    #[test]
+    fn beacon_interval_reload_fires_irq14_periodically() {
+        let mut wifi = Wifi::new();
+        let mut scheduler = Scheduler::new();
+        let mut request = InterruptRequest::empty();
+
+        wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_IE, 1 << 14);
+        wifi.set_ioport(W_BeaconInterval, 5);
+
+        // `ms_timer` (and thus the beacon countdown) only runs once per
+        // ~1024µs of `USCounter`, which itself only advances 8µs per
+        // `tick()` call while `W_USCountCnt` is enabled.
+        let ticks_per_ms_boundary = 1024 / Wifi::TIMER_INTERVAL_US as usize;
+        for _ in 0..(ticks_per_ms_boundary * 6) {
+            wifi.tick(&mut scheduler, &mut request);
+        }
+
+        assert!(
+            request.contains(InterruptRequest::WIFI),
+            "W_BeaconCount1 reaching zero must raise the ARM7 Wi-Fi interrupt request"
+        );
+        assert_ne!(
+            wifi.ioport(W_IF) & (1 << 14),
+            0,
+            "W_IF bit 14 (beacon interval elapsed) must be set"
+        );
+        assert_ne!(
+            wifi.ioport(W_BeaconCount1),
+            0,
+            "W_BeaconCount1 must self-reload from W_BeaconInterval, not stay at zero"
+        );
+    }
+
+    /// Regression test for a second Union-Room symptom fix, found while
+    /// diagnosing the first with `LUNARIS_WIFI_DEBUG=1`: a real driver
+    /// commonly enables `POWCNT2`'s Wi-Fi bit during general system init
+    /// *while `W_PowerUS` bit 0 (power-save) is still set*, then later
+    /// clears that bit right before actually using the radio. Only the
+    /// `POWCNT2` write path re-evaluated `power_on`; a subsequent
+    /// `W_PowerUS` write that flips the *other* half of the "should the
+    /// radio be on" condition was silently ignored, leaving `Wifi::tick`
+    /// (and therefore beacons, channel resolution, RX polling -- the
+    /// entire rest of this module) dead for the remainder of the session,
+    /// even though the driver believed it had powered up.
+    #[test]
+    fn power_us_write_after_powcnt2_enable_still_powers_on() {
+        let mut wifi = Wifi::new();
+        let mut scheduler = Scheduler::new();
+
+        wifi.write16(W_PowerUS as u32, 1, &mut scheduler); // Power-save requested before POWCNT2 is even enabled.
+        wifi.set_power_cnt(true, &mut scheduler); // POWCNT2 enabled, but power-save still holds the radio off.
+        assert!(!wifi.power_on, "power-save bit must keep the radio off despite POWCNT2 enable");
+
+        wifi.write16(W_PowerUS as u32, 0, &mut scheduler); // Driver clears power-save to actually use the radio.
+        assert!(
+            wifi.power_on,
+            "clearing W_PowerUS bit 0 after POWCNT2 was already enabled must power on the radio"
+        );
     }
 }

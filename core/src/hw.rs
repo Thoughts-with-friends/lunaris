@@ -361,7 +361,7 @@ impl HW {
     /// mirroring `NDS::offset_cycles_for_test`'s role for cycle-counter
     /// testing. `addr` is relative to `4800000h`.
     pub fn wifi_write16(&mut self, addr: u32, value: u16) {
-        self.wifi.write16(addr, value);
+        self.wifi.write16(addr, value, &mut self.scheduler);
     }
 
     /// Diagnostic escape hatch: reads a Wi-Fi register directly. See

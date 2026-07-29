@@ -5,10 +5,21 @@
 //! `docs/design/design_lan.md` §6.7 for the four-branch sync table this
 //! implements.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use super::Wifi;
 use super::mp::{MpFrameKind, MpRecv};
 use super::regs::*;
 use crate::hw::interrupt_controller::InterruptRequest;
+
+/// One-shot latch so the "RX not armed" diagnostic (checked every 8µs
+/// tick while `LUNARIS_WIFI_DEBUG` is set) prints once instead of
+/// flooding the terminal for as long as the driver leaves `W_RXCnt`
+/// disabled.
+fn rx_gate_warn_latch() -> bool {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    !WARNED.swap(true, Ordering::Relaxed)
+}
 
 /// Which RX source to poll.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,6 +39,13 @@ impl Wifi {
             return false;
         }
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
+            if super::debug_enabled() && rx_gate_warn_latch() {
+                eprintln!(
+                    "[wifi] check_rx: W_RXCnt bit15 (RX enable) is clear -- driver has not \
+                     armed reception yet, so no inbound frame can be delivered regardless of \
+                     what's on the wire"
+                );
+            }
             return false;
         }
 
@@ -63,6 +81,14 @@ impl Wifi {
         }
         let channel = buf[9];
         if channel as i32 != self.cur_channel || self.cur_channel == 0 {
+            if super::debug_enabled() {
+                eprintln!(
+                    "[wifi] RX dropped: channel mismatch (frame channel={channel}, our \
+                     cur_channel={}) -- both peers must resolve the same channel from their \
+                     (possibly independently-generated) firmware RF calibration table",
+                    self.cur_channel
+                );
+            }
             return false;
         }
 
@@ -71,6 +97,14 @@ impl Wifi {
         let frame_type = frame_ctl & 0x00FF;
         let mac_good = self.rx_buffer[16] & 0x01 != 0 || self.mac_matches(&self.rx_buffer[16..22]);
         let is_packet = frame_kind == MpFrameKind::Packet;
+
+        if super::debug_enabled() {
+            eprintln!(
+                "[wifi] RX accepted: kind={frame_kind:?} frame_type=0x{frame_type:04X} \
+                 mac_good={mac_good} channel={channel} is_mp_client={} len={len}",
+                self.is_mp_client
+            );
+        }
 
         // Extend the post-beacon window on auth/assoc/data frames so a
         // laggy handshake still completes instead of timing out.

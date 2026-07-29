@@ -24,12 +24,19 @@ impl Wifi {
         let val1 = self.rf_regs[self.rf_channel_index[0] as usize % self.rf_regs.len()];
         let val2 = self.rf_regs[self.rf_channel_index[1] as usize % self.rf_regs.len()];
 
+        let previous = self.cur_channel;
         self.cur_channel = 0;
         for (i, &[c1, c2]) in self.rf_channel_data.iter().enumerate() {
             if val1 == c1 && val2 == c2 {
                 self.cur_channel = i as i32 + 1;
                 break;
             }
+        }
+        if super::debug_enabled() && self.cur_channel != previous {
+            eprintln!(
+                "[wifi] channel resolved: {previous} -> {} (rf_regs[idx0]=0x{val1:X} rf_regs[idx1]=0x{val2:X})",
+                self.cur_channel
+            );
         }
     }
 

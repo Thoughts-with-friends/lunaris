@@ -53,15 +53,24 @@ pub fn load_rom(config: &Config) -> NDS {
         .unwrap_or_else(|| free_bios::arm9::BIOS_ARM9_BIN.to_vec());
 
     let resolved_firmware_path = if let Some(path) = config.firmware_path.as_ref() {
+        // A user-configured path may hold a real firmware dump they placed
+        // there intentionally (touch calibration, console id, a real Wi-Fi
+        // config block); only fill it in if it's missing, never overwrite.
         if !path.exists() {
             fs::write(path, free_bios::firmware::FIRMWARE_DS).unwrap();
         }
         path.to_path_buf()
     } else {
+        // The default synthetic firmware is regenerated unconditionally,
+        // every launch -- it's a pure, instant `const fn` of the embedded
+        // `free_bios` crate, so there is nothing to gain by caching it
+        // across runs, and caching it is actively harmful: a `free_bios`
+        // update (e.g. a Wi-Fi calibration fix) would otherwise sit
+        // silently unused behind a stale temp-dir copy from a previous
+        // build, exactly as happened while diagnosing
+        // `docs/design/design_lan.md`'s Union-Room symptom.
         let default_path = std::env::temp_dir().join("freebios_firmware.bin");
-        if !default_path.exists() {
-            fs::write(&default_path, free_bios::firmware::FIRMWARE_DS).unwrap();
-        }
+        fs::write(&default_path, free_bios::firmware::FIRMWARE_DS).unwrap();
         default_path
     };
 

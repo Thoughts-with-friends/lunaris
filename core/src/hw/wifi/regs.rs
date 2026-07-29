@@ -16,6 +16,7 @@
 #![allow(non_upper_case_globals, dead_code)]
 
 use super::Wifi;
+use crate::hw::Scheduler;
 use crate::hw::interrupt_controller::InterruptRequest;
 
 pub mod names {
@@ -144,7 +145,11 @@ impl Wifi {
         // that must not trigger auto-increment side effects.
         let active = addr < 0x1000;
         let reg = (addr & 0x0FFE) as usize;
-        self.read_register(reg, active)
+        let value = self.read_register(reg, active);
+        if super::debug_enabled() {
+            eprintln!("[wifi] reg read  0x{reg:03X} -> 0x{value:04X}");
+        }
+        value
     }
 
     fn read_register(&mut self, reg: usize, active: bool) -> u16 {
@@ -192,8 +197,11 @@ impl Wifi {
         ret
     }
 
-    /// 16-bit write to Wi-Fi address space.
-    pub fn write16(&mut self, addr: u32, value: u16) {
+    /// 16-bit write to Wi-Fi address space. Takes the scheduler because a
+    /// `W_PowerUS`/`W_PowerForce` write can transition the hardware's
+    /// power-on state, which must (re-)schedule or cancel
+    /// [`super::scheduler::Event::Wifi`] -- see [`Wifi::update_power_on`].
+    pub fn write16(&mut self, addr: u32, value: u16, scheduler: &mut Scheduler) {
         if addr >= 0x0001_0000 {
             return;
         }
@@ -210,10 +218,17 @@ impl Wifi {
         }
 
         let reg = (addr & 0x0FFE) as usize;
-        self.write_register(reg, value);
+        if super::debug_enabled() {
+            eprintln!("[wifi] reg write 0x{reg:03X} <- 0x{value:04X}");
+        }
+        self.write_register(reg, value, scheduler);
     }
 
-    fn write_register(&mut self, reg: usize, value: u16) {
+    fn write_register(&mut self, reg: usize, value: u16, scheduler: &mut Scheduler) {
+        // if super::debug_enabled() {
+        //     println!("[wifi write] reg={:#05X} value={:#06X}", reg, value);
+        // }
+
         match reg {
             W_IF => self.set_ioport(W_IF, self.ioport(W_IF) & !value),
             W_TXBufDataWrite => self.tx_buf_data_write(value),
@@ -230,19 +245,56 @@ impl Wifi {
             W_TXReqSet => {
                 let busy = self.ioport(W_TXBusy) | value;
                 self.set_ioport(W_TXBusy, busy);
+
+                println!("try_start_tx value={:04X}", value);
                 self.try_start_tx(value);
             }
             W_TXReqReset => {
                 self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !value);
             }
+            // `Wifi::tick` (and everything downstream of it -- beacons,
+            // channel resolution, RX polling) only runs while `power_on`
+            // is true, which is derived from *both* `POWCNT2` (handled in
+            // `set_power_cnt`) and this register's bit 0 (power-save).
+            // Real drivers commonly enable `POWCNT2` early during general
+            // system init and only clear `W_PowerUS` bit 0 later, once
+            // they're actually about to use the radio (e.g. entering a
+            // Union Room) -- missing the re-check here left the hardware
+            // silently stuck "off" for the rest of the session even though
+            // the driver believed it had powered up. See
+            // `docs/design/design_lan.md` §6.5 and the Union-Room-never-
+            // sees-a-peer symptom this fixes.
             W_PowerUS => {
                 self.set_ioport(W_PowerUS, value);
+                self.update_power_on(scheduler);
             }
             W_PowerForce => {
                 self.set_ioport(W_PowerForce, value);
+                self.update_power_on(scheduler);
             }
             W_RXBufReadAddr | W_TXBufWriteAddr => {
                 self.set_ioport(reg, value & 0x1FFE);
+            }
+            // `W_USCompare0..3` back the `us_compare` field the beacon
+            // timer's `W_USCompareCnt` IRQ compares against (see
+            // `Wifi::ms_timer`); the generic fallback below only updates
+            // the raw register mirror, not that field, so writes here
+            // would otherwise never take effect.
+            W_USCompare0 => {
+                self.set_ioport(reg, value);
+                self.us_compare = (self.us_compare & !0xFFFF) | value as u64;
+            }
+            W_USCompare1 => {
+                self.set_ioport(reg, value);
+                self.us_compare = (self.us_compare & !0xFFFF_0000) | (value as u64) << 16;
+            }
+            W_USCompare2 => {
+                self.set_ioport(reg, value);
+                self.us_compare = (self.us_compare & !0xFFFF_0000_0000) | (value as u64) << 32;
+            }
+            W_USCompare3 => {
+                self.set_ioport(reg, value);
+                self.us_compare = (self.us_compare & 0xFFFF_FFFF_FFFF) | (value as u64) << 48;
             }
             _ => self.set_ioport(reg, value),
         }
@@ -276,6 +328,9 @@ impl Wifi {
     /// to `W_*` registers; composing two 8-bit writes into one 16-bit access
     /// would double-fire side effects (`docs/design/design_lan.md` §6.2).
     pub fn write8(&mut self, addr: u32, value: u8) {
+        if super::debug_enabled() {
+            eprintln!("[wifi] IGNORED 8-bit write addr=0x{addr:08X} value=0x{value:02X}");
+        }
         warn!("Ignoring 8-bit Wi-Fi register write at 0x{addr:08X} = 0x{value:02X}");
     }
 

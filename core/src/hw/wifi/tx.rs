@@ -52,6 +52,14 @@ impl Wifi {
             self.tx_slots[slot].phase = 0;
             self.tx_slots[slot].phase_time = preamble_len(rate);
 
+            if super::debug_enabled() {
+                eprintln!(
+                    "[wifi] W_TXReqSet armed slot={slot} addr=0x{addr:04X} length={length} \
+                     rate={rate} channel={}",
+                    self.cur_channel
+                );
+            }
+
             if slot == 1 {
                 // Host CMD: latch the client mask this command targets,
                 // clearing any clients already marked failed.
@@ -191,6 +199,17 @@ impl Wifi {
         self.tx_buffer[10] = frame_len_bytes as u8;
         self.tx_buffer[11] = (frame_len_bytes >> 8) as u8;
 
+        if super::debug_enabled() {
+            let frame_ctl = self.tx_buffer.get(12).copied().unwrap_or(0) as u16
+                | (self.tx_buffer.get(13).copied().unwrap_or(0) as u16) << 8;
+            eprintln!(
+                "[wifi] TX slot={slot} channel={} len={copy_len} frame_ctl=0x{frame_ctl:04X} \
+                 transport_installed={}",
+                self.cur_channel,
+                self.transport.is_some()
+            );
+        }
+
         let Some(mut transport) = self.transport.take() else { return };
         match slot {
             1 => {
@@ -212,6 +231,9 @@ impl Wifi {
         self.tx_buffer[9] = self.cur_channel as u8;
         self.tx_buffer[10] = 28;
         self.tx_buffer[11] = 0;
+        if super::debug_enabled() {
+            eprintln!("[wifi] TX mp_reply aid={aid} channel={}", self.cur_channel);
+        }
         let Some(mut transport) = self.transport.take() else { return };
         transport.send_reply(&self.tx_buffer[..40], self.us_timestamp, aid);
         let _ = hints;

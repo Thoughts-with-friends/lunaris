@@ -39,17 +39,26 @@ pub static FIRMWARE_DSI: [u8; 0x20000] = default_firmware::<0x20000>(DSType::Dsi
 /// DS firmware for iQue DS (512KB)
 pub static FIRMWARE_DS_IQUE: [u8; 0x80000] = default_firmware::<0x80000>(DSType::Ique);
 
-// CRC16 calculation using while loop, const compatible
+// CRC16 calculation using while loop, const compatible. User-settings CRC
+// starts from seed 0xFFFF (melonDS `UserData::UpdateChecksum` ->
+// `CRC16(Bytes, 0x70, 0xFFFF)`).
 const fn crc16(user: [u8; 0x70]) -> u16 {
-    crc16_slice(&user)
+    crc16_seeded(&user, 0xFFFF)
 }
 
 /// Same CRC16 (poly 0xA001, the standard "CRC-16/ARC" used throughout DS
-/// firmware) over an arbitrary-length slice, const-compatible. Used for the
-/// Wi-Fi config block's checksum, whose length (`0x108` bytes) doesn't
-/// match the 0x70-byte user-settings checksum above.
-const fn crc16_slice(data: &[u8]) -> u16 {
-    let mut crc: u16 = 0xFFFF;
+/// firmware) over an arbitrary-length slice with an explicit start value,
+/// const-compatible. melonDS's `Firmware::CRC16(data, len, start)` takes
+/// the seed as a parameter because different firmware sections use
+/// different ones -- the Wi-Fi config block seeds from `0x0000`
+/// (`FirmwareHeader::UpdateChecksum` -> `CRC16(&Bytes[0x2C],
+/// WifiConfigLength, 0x0000)`), not the `0xFFFF` user-settings use. Getting
+/// this wrong produces a checksum a real driver's firmware validation
+/// rejects as corrupt, silently disabling Wi-Fi for the rest of the
+/// session with no register activity at all -- exactly the symptom this
+/// fixes. See `docs/design/design_lan.md` §7.2.
+const fn crc16_seeded(data: &[u8], seed: u16) -> u16 {
+    let mut crc: u16 = seed;
     let mut i = 0;
     while i < data.len() {
         crc ^= data[i] as u16;
@@ -68,10 +77,15 @@ const fn crc16_slice(data: &[u8]) -> u16 {
 }
 
 /// Length of the synthetic Wi-Fi config block, in bytes, starting at
-/// firmware offset `02Ch`. Must cover through the last synthesized byte
-/// (`RFData2[13]` at absolute offset `0133h`); see
+/// firmware offset `02Ch`. melonDS's generated-firmware fallback (used
+/// when no real firmware dump is supplied) declares `0x138`; matching that
+/// exactly -- rather than the smaller `0x108` that only covers through the
+/// last byte this module actually synthesizes -- means the checksummed
+/// region matches what real driver code expects to validate. The extra
+/// bytes (Type-3 `Unused0`, `WifiBoard`, `WifiFlash`, reserved) are left
+/// zeroed, matching a factory-fresh firmware. See
 /// `docs/design/design_lan.md` §7.1-§7.2.
-const WIFI_CONFIG_LEN: usize = 0x108;
+const WIFI_CONFIG_LEN: usize = 0x138;
 
 /// Fills a synthetic **Type-3** Wi-Fi RF/channel calibration block at
 /// firmware offset `02Ch`, so [`crate::hw::wifi::Wifi::load_firmware_config`]
@@ -101,10 +115,12 @@ const fn write_wifi_config<const N: usize>(firmware: &mut [u8; N]) {
     firmware[0x03D] = 0x3F;
     // 040h: RF chip type = Type-3.
     firmware[0x040] = 3;
-    // 041h: RF bits per entry.
-    firmware[0x041] = 24;
-    // 042h: RF entry count.
-    firmware[0x042] = 41;
+    // 041h-042h: RF bits-per-entry / entry count. Matched to melonDS's
+    // generated-firmware fallback values (0x94, 0x29) for fidelity; unlike
+    // the CRC seed above, real driver code doesn't appear to gate Wi-Fi
+    // activation on these specifically, but there's no reason to diverge.
+    firmware[0x041] = 0x94;
+    firmware[0x042] = 0x29;
 
     // Type-3 channel table (absolute offsets, see
     // `docs/design/design_lan.md` §7.1): RFIndex1=116h, RFData1[14]
@@ -130,7 +146,7 @@ const fn write_wifi_config<const N: usize>(firmware: &mut [u8; N]) {
         buf[i] = firmware[0x02C + i];
         i += 1;
     }
-    let crc = crc16_slice(&buf);
+    let crc = crc16_seeded(&buf, 0x0000);
     firmware[0x02A] = (crc & 0xFF) as u8;
     firmware[0x02B] = (crc >> 8) as u8;
 }
@@ -224,4 +240,30 @@ const fn default_firmware<const N: usize>(model: DSType) -> [u8; N] {
     }
 
     firmware
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for a real Union-Room-never-sees-a-peer bug: the
+    /// Wi-Fi config checksum at `02Ah` was computed with the wrong CRC16
+    /// seed (`0xFFFF`, copy-pasted from the user-settings checksum,
+    /// instead of the `0x0000` melonDS's `FirmwareHeader::UpdateChecksum`
+    /// actually uses). A driver's firmware validation would see this as a
+    /// corrupt Wi-Fi config and silently disable wireless for the whole
+    /// session -- with zero further `W_*` register activity, which is
+    /// exactly what was observed. See `docs/design/design_lan.md` §7.2.
+    #[test]
+    fn wifi_config_checksum_uses_the_zero_seed_not_the_user_settings_seed() {
+        let stored = FIRMWARE_DS[0x02A] as u16 | (FIRMWARE_DS[0x02B] as u16) << 8;
+        let recomputed = crc16_seeded(&FIRMWARE_DS[0x02C..0x02C + WIFI_CONFIG_LEN], 0x0000);
+        assert_eq!(stored, recomputed, "Wi-Fi config CRC must use seed 0x0000, not 0xFFFF");
+    }
+
+    #[test]
+    fn wifi_config_length_matches_melonds_generated_firmware() {
+        let len = FIRMWARE_DS[0x02C] as u16 | (FIRMWARE_DS[0x02D] as u16) << 8;
+        assert_eq!(len, 0x138);
+    }
 }
