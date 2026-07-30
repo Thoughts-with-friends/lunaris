@@ -237,6 +237,10 @@ impl SPU {
         self.audio.set_volume(volume_percent / 100.0);
     }
 
+    pub fn set_audio_sync(&mut self, sync: bool) {
+        self.audio.set_blocking(sync);
+    }
+
     pub fn capture_addr(&mut self, num: usize) -> Option<(u32, usize, bool)> {
         let capture_i = match num {
             1 => 0,

@@ -134,7 +134,16 @@ fn create_nds(config: &Config, cheat_editor_state: &mut CheatEditorState) -> NDS
     nds.set_cheat_map(cheat_map);
     nds.set_enable_cheats(config.enable_cheats);
 
+    // Re-applied on every (re)creation so a non-native speed survives Reset /
+    // Open ROM / Import Save.
+    nds.set_audio_sync(is_native_speed(config.emu_speed));
+
     nds
+}
+
+/// Whether `speed` is close enough to 1.0x to keep audio-clock pacing on.
+fn is_native_speed(speed: f32) -> bool {
+    (speed - 1.0).abs() < f32::EPSILON
 }
 
 fn save_state_to_slot(nds: &mut NDS, config: &Config, slot: usize) {
@@ -184,6 +193,12 @@ struct LunarisApp {
     cheat_editor_state: CheatEditorState,
     show_video_window: bool,
     show_audio_window: bool,
+    show_emu_window: bool,
+    /// Fractional frame budget for [`Config::emu_speed`], in NDS frames. See
+    /// [`LunarisApp::emulate_batch`].
+    frame_accum: f32,
+    /// Wall-clock timestamp the current `frame_accum` was last advanced from.
+    last_tick: std::time::Instant,
     debug: DebugState,
     lan_room: crate::lan_room::LanRoomState,
     /// Set whenever the displayed screens need to be re-converted/re-uploaded:
@@ -203,6 +218,17 @@ struct LunarisApp {
 }
 
 impl LunarisApp {
+    /// Native NDS refresh rate (355 dots * 263 lines * 6 cycles, at 33.513982
+    /// MHz). GBATEK "DS Video".
+    const NDS_FPS: f32 = 59.8261;
+
+    /// Longest wall-clock gap a single repaint is allowed to bill for.
+    const MAX_DT: f32 = 0.25;
+
+    /// Upper bound on frames emulated per repaint, so a slow host stays
+    /// responsive to input and window events.
+    const MAX_BATCH: u32 = 8;
+
     fn new(
         ctx: &egui::Context,
         nds: NDS,
@@ -222,6 +248,9 @@ impl LunarisApp {
             cheat_editor_state,
             show_video_window: false,
             show_audio_window: false,
+            show_emu_window: false,
+            frame_accum: 0.0,
+            last_tick: std::time::Instant::now(),
             debug: DebugState::new(),
             lan_room: crate::lan_room::LanRoomState::default(),
             screens_dirty: true,
@@ -409,6 +438,10 @@ impl LunarisApp {
                 });
 
                 ui.menu_button("Config", |ui| {
+                    if ui.button("Emu Settings").clicked() {
+                        self.show_emu_window = true;
+                        ui.close();
+                    }
                     if ui.button("Audio").clicked() {
                         self.show_audio_window = true;
                         ui.close();
@@ -439,6 +472,103 @@ impl LunarisApp {
                 });
             });
         });
+    }
+
+    /// Emulates however many NDS frames the elapsed wall-clock time is worth
+    /// at the configured speed multiplier.
+    ///
+    /// Pacing is anchored to real time rather than to the repaint rate so that
+    /// "1.0x" means native NDS speed on any display. (Previously one frame was
+    /// emulated per repaint, which ran the emulator at ~1.75x on a high-refresh
+    /// monitor.)
+    fn emulate_batch(&mut self) {
+        // A large `dt` — first frame, window drag, breakpoint — must not turn
+        // into a burst of catch-up frames.
+        let dt = self.last_tick.elapsed().as_secs_f32().min(Self::MAX_DT);
+        self.last_tick = std::time::Instant::now();
+
+        // A room member has to stay on the timeline its peers assume. The
+        // slider is also disabled in-room, but that alone wouldn't stop
+        // someone setting 4x *before* joining.
+        let speed = if self.lan_room.blocks_state_load() { 1.0 } else { self.config.emu_speed };
+
+        self.frame_accum += dt * Self::NDS_FPS * speed;
+
+        let mut emulated = 0;
+        while self.frame_accum >= 1.0 && emulated < Self::MAX_BATCH {
+            self.frame_accum -= 1.0;
+            self.nds.emulate_frame();
+            self.emulated_frames += 1;
+            self.debug.stats.frame_completed();
+            emulated += 1;
+        }
+
+        // Only the last frame of a batch is ever displayed, so the texture
+        // upload happens once per repaint rather than once per emulated frame.
+        if emulated > 0 {
+            self.screens_dirty = true;
+        }
+
+        // Budget left over means the host couldn't keep up. Drop it instead of
+        // accruing unpayable debt, which would otherwise pin every later
+        // repaint to `MAX_BATCH` and inflate input latency.
+        if self.frame_accum > 1.0 {
+            self.frame_accum = 0.0;
+        }
+    }
+
+    /// Emulation speed control. See `Config::emu_speed`.
+    fn emu_window(&mut self, ctx: &egui::Context) {
+        if !self.show_emu_window {
+            return;
+        }
+        let mut open = self.show_emu_window;
+        egui::Window::new("Emu Settings").open(&mut open).default_size([320.0, 110.0]).show(
+            ctx,
+            |ui| {
+                // Altering the speed desynchronizes a LAN room for the same
+                // reason a savestate load does: the peers assume a shared
+                // ~60fps timeline (`LanConfig::runahead_us`).
+                let blocks = self.lan_room.blocks_state_load();
+                ui.add_enabled_ui(!blocks, |ui| {
+                    let slider = egui::Slider::new(
+                        &mut self.config.emu_speed,
+                        lunaris_gui_common::config::MIN_EMU_SPEED
+                            ..=lunaris_gui_common::config::MAX_EMU_SPEED,
+                    )
+                    .step_by(0.25)
+                    .suffix("x")
+                    .text("Speed");
+
+                    if ui
+                        .add(slider)
+                        .on_disabled_hover_text(
+                            "Disabled while this instance is MP-ready in a LAN room: running off \
+                             native speed would desync the other room members.",
+                        )
+                        .changed()
+                    {
+                        self.nds.set_audio_sync(is_native_speed(self.config.emu_speed));
+                        self.config.save();
+                    }
+
+                    if ui.button("Reset to 1.0x").clicked() {
+                        self.config.emu_speed = 1.0;
+                        self.nds.set_audio_sync(true);
+                        self.config.save();
+                    }
+                });
+
+                if !is_native_speed(self.config.emu_speed) {
+                    ui.weak(
+                        "Audio-clock pacing is off at non-native speed, so sound is choppy. The \
+                         speed actually reached is bounded by how many frames this host can \
+                         emulate per second.",
+                    );
+                }
+            },
+        );
+        self.show_video_window_close_guard(open, |s| &mut s.show_emu_window);
     }
 
     fn audio_window(&mut self, ctx: &egui::Context) {
@@ -666,23 +796,29 @@ impl LunarisApp {
         origin: egui::Pos2,
         bottom_rect: PlacementRect,
     ) {
-        let pressed = response.is_pointer_button_down_on();
-        if !pressed {
+        // egui clears `is_pointer_button_down_on` as soon as it sees the
+        // release event, so a tap whose press and release both land inside a
+        // single frame reports "not pressed" and would never reach the
+        // emulator. `clicked()` reports exactly that case, and egui keeps
+        // `interact_pointer_pos` valid for it.
+        let pressed = response.is_pointer_button_down_on() || response.clicked();
+        let touch = pressed.then(|| response.interact_pointer_pos()).flatten().and_then(|pos| {
+            let local = pos - origin;
+            point_to_touch_coords(local.x, local.y, bottom_rect)
+        });
+
+        // Dragging off the digitizer is a release on hardware; leaving the
+        // press latched instead would keep the NDS holding a stale touch, so
+        // no later tap produces a press edge.
+        let Some((x, y)) = touch else {
             if self.stylus_down {
                 self.nds.release_screen();
                 self.stylus_down = false;
             }
             return;
-        }
-
-        let Some(pos) = response.interact_pointer_pos() else {
-            return;
         };
-        let local = pos - origin;
-        if let Some((x, y)) = point_to_touch_coords(local.x, local.y, bottom_rect) {
-            self.nds.press_screen(x, y);
-            self.stylus_down = true;
-        }
+        self.nds.press_screen(x, y);
+        self.stylus_down = true;
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
@@ -704,11 +840,12 @@ impl eframe::App for LunarisApp {
         ctx.request_repaint();
         self.update_window_info(ctx);
 
-        if !self.paused {
-            self.nds.emulate_frame();
-            self.emulated_frames += 1;
-            self.debug.stats.frame_completed();
-            self.screens_dirty = true;
+        if self.paused {
+            // Don't let a pause bank up a burst of frames on resume.
+            self.frame_accum = 0.0;
+            self.last_tick = std::time::Instant::now();
+        } else {
+            self.emulate_batch();
         }
 
         if !ctx.wants_keyboard_input() {
@@ -744,6 +881,7 @@ impl eframe::App for LunarisApp {
         self.menu_bar(ctx);
         self.central_panel(ctx);
         self.debug.render(ctx, &mut self.nds);
+        self.emu_window(ctx);
         self.audio_window(ctx);
         self.video_window(ctx);
         self.update_title(ctx);

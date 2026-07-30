@@ -8,6 +8,13 @@ pub struct Audio {
     fraction: f32,
     history: VecDeque<[f32; 2]>, // history buffer for sinc
     volume: f32,
+    /// When set, [`Self::push_sample`] spins until the output ring buffer has
+    /// room, which paces emulation to the host audio clock. Cleared while the
+    /// frontend runs at a speed other than 1.0x — otherwise the spin would
+    /// hard-cap emulation at real time and the speed multiplier would do
+    /// nothing above 1x. Samples are dropped instead, so fast-forward audio is
+    /// choppy by design.
+    blocking: bool,
 }
 
 impl Audio {
@@ -67,6 +74,7 @@ impl Audio {
             fraction: 0.0,
             history: VecDeque::with_capacity(Self::SINC_WINDOW * 4),
             volume: 1.0,
+            blocking: true,
         }
     }
 
@@ -122,13 +130,17 @@ impl Audio {
             self.fraction -= 1.0;
 
             // wait if output buffer full
-            let mut attempts = 0;
-            while self.prod.is_full() {
-                attempts += 1;
-                if attempts > 1000 {
-                    std::thread::yield_now();
-                    attempts = 0;
+            if self.blocking {
+                let mut attempts = 0;
+                while self.prod.is_full() {
+                    attempts += 1;
+                    if attempts > 1000 {
+                        std::thread::yield_now();
+                        attempts = 0;
+                    }
                 }
+            } else if self.prod.is_full() {
+                continue;
             }
 
             let pos = (self.history.len().saturating_sub(1)) as f32 - self.fraction;
@@ -141,6 +153,11 @@ impl Audio {
     #[inline]
     pub fn sample_rate(&self) -> usize {
         self.config.sample_rate.0 as usize // 48kHz
+    }
+
+    #[inline]
+    pub fn set_blocking(&mut self, blocking: bool) {
+        self.blocking = blocking;
     }
 
     #[inline]

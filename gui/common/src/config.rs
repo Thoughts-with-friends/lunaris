@@ -142,6 +142,9 @@ pub struct Config {
     pub cheat_dir: PathBuf,
     pub window: WindowConfig,
     pub audio_volume: f32,
+    /// Emulation speed multiplier in [`MIN_EMU_SPEED`]..=[`MAX_EMU_SPEED`],
+    /// clamped on load since this file is hand-editable. 1.0 is native speed.
+    pub emu_speed: f32,
     pub video: VideoConfig,
     pub lan: LanConfig,
 
@@ -176,6 +179,7 @@ impl Default for Config {
             cheat_dir: PathBuf::from("./cheats"),
             window: WindowConfig::default(),
             audio_volume: 100.0,
+            emu_speed: 1.0,
             video: VideoConfig::default(),
             lan: LanConfig::default(),
             joystick_id: JoystickId::Joystick1,
@@ -183,6 +187,13 @@ impl Default for Config {
         }
     }
 }
+
+/// Slowest selectable emulation speed (half of native).
+pub const MIN_EMU_SPEED: f32 = 0.5;
+
+/// Fastest selectable emulation speed. Actual throughput is still bounded by
+/// how many frames the host can emulate per repaint.
+pub const MAX_EMU_SPEED: f32 = 10.0;
 
 impl Config {
     const PATH: &'static str = "./config.json";
@@ -193,6 +204,11 @@ impl Config {
             Err(_) => Self::default(),
         };
         config.video.upscale_factor = upscale::clamp_factor(config.video.upscale_factor);
+        config.emu_speed = if config.emu_speed.is_finite() {
+            config.emu_speed.clamp(MIN_EMU_SPEED, MAX_EMU_SPEED)
+        } else {
+            1.0
+        };
         config.lan.max_players = config.lan.max_players.clamp(1, 16);
         config.lan.runahead_us = config.lan.runahead_us.clamp(250, 16_000);
         config.lan.recv_timeout_ms = config.lan.recv_timeout_ms.clamp(2, 40);

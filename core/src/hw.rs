@@ -390,6 +390,10 @@ impl HW {
         self.spu.set_audio_volume(volume_percent);
     }
 
+    pub fn set_audio_sync(&mut self, sync: bool) {
+        self.spu.set_audio_sync(sync);
+    }
+
     pub fn render_palettes(
         &self,
         extended: bool,

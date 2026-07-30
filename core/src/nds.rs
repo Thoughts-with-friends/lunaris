@@ -78,6 +78,16 @@ impl NDS {
         self.hw.set_audio_volume(volume_percent);
     }
 
+    /// Enables/disables pacing emulation to the host audio clock.
+    ///
+    /// Must be disabled whenever the frontend drives emulation at a speed
+    /// other than 1.0x, otherwise the SPU blocks on a full output ring buffer
+    /// and pins the emulator to real time. See `Audio::blocking`.
+    #[inline]
+    pub fn set_audio_sync(&mut self, sync: bool) {
+        self.hw.set_audio_sync(sync);
+    }
+
     /// Installs (or removes, with `None`) the frontend-supplied MP
     /// transport that carries multiplayer frames to/from other `lunaris`
     /// instances. See `docs/design/design_lan.md` §8.1.
