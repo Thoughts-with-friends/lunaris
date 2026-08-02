@@ -23,12 +23,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::Header;
-
 use eeprom::{EEPROM, EEPROMLarge, EEPROMNormal, EEPROMSmall};
 pub use flash::Flash;
 use ir::IrBackup;
 use no_backup::NoBackup;
+
+use super::Header;
 
 pub trait Backup {
     fn read(&self) -> u8;

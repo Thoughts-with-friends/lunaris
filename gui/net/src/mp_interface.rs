@@ -19,9 +19,11 @@
 
 use std::sync::Arc;
 
-use nds_core::NDS;
-use nds_core::nds::MpTransport;
-use nds_core::net::{LocalMp, LocalMpHub, MpInterfaceTransport, MpInterfaceType};
+use nds_core::{
+    NDS,
+    nds::MpTransport,
+    net::{LocalMp, LocalMpHub, MpInterfaceTransport, MpInterfaceType},
+};
 
 use crate::room::{Room, RoomHandle};
 

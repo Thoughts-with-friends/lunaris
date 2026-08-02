@@ -2,8 +2,7 @@
 //! the imgui front end's `gui/src/debug/windows.rs` (same fields, same
 //! `NDS` render calls) onto egui widgets.
 
-use std::collections::VecDeque;
-use std::time::Instant;
+use std::{collections::VecDeque, time::Instant};
 
 use egui_plot::{Line, Plot, PlotPoints};
 

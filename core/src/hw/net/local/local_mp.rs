@@ -29,8 +29,10 @@
 //!   buffer, while still consuming the whole frame from the FIFO, so a
 //!   short buffer desynchronises nothing.
 
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
+};
 
 use super::semaphore::Semaphore;
 use crate::hw::net::mp_interface::{

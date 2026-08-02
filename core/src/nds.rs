@@ -1,13 +1,10 @@
-use crate::{CheatMap, likely};
 use std::path::PathBuf;
-
-use crate::arm::ARM;
-use crate::hw::HW;
 
 pub use crate::hw::{
     Engine, GraphicsType, Key, LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport,
     RomFingerprint,
 };
+use crate::{CheatMap, arm::ARM, hw::HW, likely};
 
 pub const WIDTH: usize = crate::hw::GPU::WIDTH;
 pub const HEIGHT: usize = crate::hw::GPU::HEIGHT;
@@ -288,11 +285,12 @@ impl NDS {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
     use std::{
         collections::hash_map::DefaultHasher,
         hash::{Hash, Hasher},
     };
+
+    use super::*;
 
     fn hash_screens(nds: &NDS) -> u64 {
         let mut hasher = DefaultHasher::new();

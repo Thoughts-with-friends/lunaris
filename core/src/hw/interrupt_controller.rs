@@ -9,8 +9,9 @@
 //! GBATEK "DS Interrupts" (IME/IE/IF, full bit table):
 //! <https://problemkaputt.de/gbatek.htm#dsinterrupts>
 
-use super::{Scheduler, mem::IORegister};
 use bitflags::*;
+
+use super::{Scheduler, mem::IORegister};
 
 #[derive(emu_utils::Savestate)]
 pub struct InterruptController {

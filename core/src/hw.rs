@@ -25,12 +25,9 @@ mod scheduler;
 mod spi;
 mod spu;
 mod timers;
-mod wifi;
 
-use std::convert::TryInto;
-use std::path::PathBuf;
+use std::{convert::TryInto, path::PathBuf};
 
-use crate::{CheatMap, unlikely};
 use cartridge::Cartridge;
 /// Re-exported for [`crate::nds::NDS::load_rom`]'s `.dsv` discovery, which
 /// runs before any [`HW`]/[`Cartridge`] instance exists. See
@@ -43,13 +40,15 @@ use keypad::Keypad;
 use math::{Div, Sqrt};
 pub use mem::{AccessType, MemoryValue};
 use mem::{CP15, EXMEM, HALTCNT, POWCNT2, WRAMCNT};
+use net::wifi::Wifi;
+pub use net::wifi::mp::{LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport};
 use rtc::RTC;
 use scheduler::{Event, EventHandler, Scheduler};
 use spi::SPI;
 use spu::SPU;
 use timers::Timers;
-use wifi::Wifi;
-pub use wifi::mp::{LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport};
+
+use crate::{CheatMap, unlikely};
 
 /// Aggregated hardware state of the Nintendo DS.
 ///

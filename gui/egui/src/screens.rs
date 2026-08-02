@@ -32,8 +32,10 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use egui::{ColorImage, Context, TextureHandle, TextureOptions};
-use lunaris_gui_common::framebuffer::{SCREEN_HEIGHT, SCREEN_WIDTH, abgr1555_to_rgba8};
-use lunaris_gui_common::upscale::{self, UpscaleMethod};
+use lunaris_gui_common::{
+    framebuffer::{SCREEN_HEIGHT, SCREEN_WIDTH, abgr1555_to_rgba8},
+    upscale::{self, UpscaleMethod},
+};
 use nds_core::nds::NDS;
 
 /// One request to convert and upscale a single screen's raw pixels. Builds

@@ -34,11 +34,12 @@ pub mod arm7;
 pub mod arm9;
 pub mod cp15;
 
+use std::{mem::size_of, ops::BitOrAssign};
+
+pub use cp15::CP15;
+
 use super::{HW, Scheduler};
 use crate::num::{self, NumCast, PrimInt, Unsigned, cast::FromPrimitive};
-pub use cp15::CP15;
-use std::mem::size_of;
-use std::ops::BitOrAssign;
 
 impl HW {
     const IWRAM_MASK: u32 = HW::IWRAM_SIZE as u32 - 1;

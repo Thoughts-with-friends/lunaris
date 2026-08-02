@@ -38,11 +38,13 @@
 //!   [`Host::service`] is non-blocking, so [`Lan::service_for`] polls to a
 //!   deadline instead.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, HashMap, VecDeque},
+    io,
+    net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
+    sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant},
+};
 
 use nds_core::net::mp_interface::{
     DEFAULT_RECV_TIMEOUT, MAX_INSTANCES, MP_PACKET_MAGIC, MpFrameCategory, MpFrameType,
@@ -606,7 +608,7 @@ impl Lan {
         let peer_id = host
             .connect(target, 2, 0)
             .map(|peer| peer.id())
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "no ENet peer slot available"))?;
+            .map_err(|_| io::Error::other("no ENet peer slot available"))?;
 
         self.my_player = Player {
             id: 0,
@@ -1037,9 +1039,7 @@ impl Lan {
             if mode == ProcessMode::WaitForMpFrame { self.mp_recv_timeout } else { Duration::ZERO };
         time_last = self.ms_count();
 
-        loop {
-            let Some(event) = self.service_for(remaining) else { break };
-
+        while let Some(event) = self.service_for(remaining) {
             match event {
                 OwnedEvent::Receive { peer, channel_id, ref data, .. }
                     if channel_id == Channel::Mp as u8 =>
@@ -1102,7 +1102,7 @@ impl Lan {
     /// emulated by polling to a deadline. A zero budget performs exactly
     /// one service call, matching `enet_host_service(host, &ev, 0)`.
     fn service_for(&mut self, budget: Duration) -> Option<OwnedEvent> {
-        let Some(SendHost(host)) = self.host.as_mut() else { return None };
+        let SendHost(host) = self.host.as_mut()?;
         if budget.is_zero() {
             return host.service().ok().flatten().map(OwnedEvent::from_event);
         }
@@ -1239,7 +1239,7 @@ fn peer_ipv4(address: Option<SocketAddr>) -> Ipv4Addr {
 fn new_enet_host(socket: UdpSocket) -> io::Result<Host<UdpSocket>> {
     // 16 peers, 2 channels: melonDS's `enet_host_create(&addr, 16, 2, 0, 0)`.
     Host::new(socket, HostSettings { peer_limit: 16, channel_limit: 2, ..HostSettings::default() })
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ENet host setup failed: {e}")))
+        .map_err(|e| io::Error::other(format!("ENet host setup failed: {e}")))
 }
 
 /// Polls `host` until it yields an event or `deadline` passes.

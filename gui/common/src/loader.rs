@@ -1,7 +1,8 @@
-use crate::config::Config;
+use std::{fs, path::PathBuf};
+
 use nds_core::{NDS, normalize_foreign_save};
-use std::fs;
-use std::path::PathBuf;
+
+use crate::config::Config;
 
 /// Convenience constructor: loads BIOS / firmware / ROM from the filesystem
 /// and returns a ready-to-run [`NDS`].

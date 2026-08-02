@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
 use gilrs::Button;
-use nds_core::log::warn;
-use nds_core::nds::{self, NDS};
-
 use lunaris_gui_common::input::enums::{
     AxisDirection, BindKey, GamepadAxis, GamepadButton, InputBinding, InputSource, JoystickId,
     KeyboardKey,
+};
+use nds_core::{
+    log::warn,
+    nds::{self, NDS},
 };
 
 const DEAD_ZONE: f32 = 0.3;

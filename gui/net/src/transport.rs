@@ -10,11 +10,15 @@
 //! [`NetTransport::recv_replies`]). Splitting them avoids the two callers
 //! racing to read the same frame off one channel.
 
-use std::net::{SocketAddr, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    net::{SocketAddr, UdpSocket},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+        mpsc::{Receiver, Sender, TryRecvError},
+    },
+    time::Duration,
+};
 
 use nds_core::nds::{LinkHints, MpFrameKind, MpRecv, MpTransport};
 

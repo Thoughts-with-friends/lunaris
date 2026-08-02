@@ -4,9 +4,7 @@ pub mod firmware;
 
 #[cfg(test)]
 mod tests {
-    use super::arm7::BIOS_ARM7_BIN;
-    use super::arm9::BIOS_ARM9_BIN;
-    use super::firmware::FIRMWARE_DS;
+    use super::{arm7::BIOS_ARM7_BIN, arm9::BIOS_ARM9_BIN, firmware::FIRMWARE_DS};
 
     fn create_dir_all() -> std::io::Result<&'static std::path::Path> {
         let dir_name: &std::path::Path = std::path::Path::new("bios");

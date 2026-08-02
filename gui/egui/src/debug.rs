@@ -8,13 +8,12 @@
 
 mod windows;
 
-pub use windows::{
-    MapsWindowState, PalettesWindowState, StatsWindow, TilesWindowState, VRAMWindowState,
-};
-
 use egui::{ColorImage, TextureHandle, TextureOptions};
 use lunaris_gui_common::framebuffer::abgr1555_to_rgba8;
 use nds_core::nds::{Engine, GraphicsType, NDS};
+pub use windows::{
+    MapsWindowState, PalettesWindowState, StatsWindow, TilesWindowState, VRAMWindowState,
+};
 
 /// Per-window state: what to render and the controls that configure it.
 ///

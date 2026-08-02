@@ -21,11 +21,11 @@ use likely_stable::{likely, unlikely};
 #[macro_use]
 pub extern crate log;
 
-use num_traits as num;
 // Re-exported so downstream crates can name the error types returned by
 // `NDS::save_state`/`NDS::load_state` without taking their own dependency
 // on this git crate (and risking a version/rev mismatch).
 pub use emu_utils;
+use num_traits as num;
 
 mod arm;
 mod hw;

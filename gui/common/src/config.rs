@@ -8,11 +8,16 @@
 
 use std::path::PathBuf;
 
-use crate::framebuffer::ScreenLayout;
-use crate::input::enums::{InputBinding, JoystickId};
-use crate::input::input_default::default_input_bindings;
-use crate::upscale::{self, UpscaleMethod};
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    framebuffer::ScreenLayout,
+    input::{
+        enums::{InputBinding, JoystickId},
+        input_default::default_input_bindings,
+    },
+    upscale::{self, UpscaleMethod},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

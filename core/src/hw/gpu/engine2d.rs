@@ -11,11 +11,11 @@
 
 mod registers;
 
+use registers::*;
 pub use registers::{BGMode, DisplayMode};
 
 use super::{Engine3D, EngineType, GPU, VRAM};
 use crate::hw::{Scheduler, mem::IORegister};
-use registers::*;
 
 #[derive(emu_utils::Savestate)]
 #[load(in_place_only)]

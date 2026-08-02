@@ -12,8 +12,10 @@
 
 use std::sync::Arc;
 
-use super::net_driver::{NetDriver, RxCallback};
-use super::packet_dispatcher::{DispatchedPacket, EXTERNAL_SENDER, PacketDispatcher};
+use super::{
+    net_driver::{NetDriver, RxCallback},
+    packet_dispatcher::{DispatchedPacket, EXTERNAL_SENDER, PacketDispatcher},
+};
 
 /// Receive mask meaning "every registered instance".
 const ALL_INSTANCES: u16 = 0xFFFF;
@@ -116,8 +118,10 @@ impl Net {
 
 #[cfg(test)]
 mod tests {
-    use super::super::net_driver::{LoopbackNetDriver, NullNetDriver};
-    use super::*;
+    use super::{
+        super::net_driver::{LoopbackNetDriver, NullNetDriver},
+        *,
+    };
 
     #[test]
     fn without_a_driver_nothing_moves() {

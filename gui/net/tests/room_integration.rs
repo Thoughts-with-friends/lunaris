@@ -5,8 +5,10 @@
 //! `mp_loopback` harness, but for the actual network transport rather
 //! than the in-process `LoopbackTransport`).
 
-use std::net::{IpAddr, Ipv4Addr};
-use std::time::{Duration, Instant};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::{Duration, Instant},
+};
 
 use lunaris_net::{Room, RoomConfig};
 use nds_core::nds::MpTransport;

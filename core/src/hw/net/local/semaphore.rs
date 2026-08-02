@@ -9,8 +9,10 @@
 //! integer inside the mutex, because a `Mutex<u32>` trips
 //! `clippy::mutex_integer` (denied workspace-wide).
 
-use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Condvar, Mutex},
+    time::{Duration, Instant},
+};
 
 /// Permit count, guarded by [`Semaphore`]'s mutex.
 #[derive(Debug, Default)]

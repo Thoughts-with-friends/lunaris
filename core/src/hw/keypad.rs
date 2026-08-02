@@ -9,8 +9,9 @@
 //! - DS Keypad (EXTKEYIN): <https://problemkaputt.de/gbatek.htm#dskeypad>
 //! - GBA keypad base (KEYINPUT/KEYCNT): <https://problemkaputt.de/gbatek.htm#gbakeypadinput>
 
-use super::{Scheduler, mem::IORegister};
 use bitflags::*;
+
+use super::{Scheduler, mem::IORegister};
 
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, PartialEq)]

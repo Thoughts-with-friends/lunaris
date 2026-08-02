@@ -11,7 +11,6 @@ use std::{borrow::Borrow as _, collections::HashSet, path::PathBuf};
 
 use glfw::Key;
 use imgui::{Condition, MenuItem, Slider, Ui, Window, im_str};
-
 use lunaris_gui_common::loader::load_rom;
 use nds_core::nds::NDS;
 

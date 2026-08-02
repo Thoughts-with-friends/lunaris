@@ -12,19 +12,17 @@ mod window;
 
 use std::path::{Path, PathBuf};
 
-use eframe::egui;
-use lunaris_gui_common::config::{Config, ScreenFilter};
-use lunaris_gui_common::framebuffer::{
-    PlacementRect, ScreenLayout, layout_screens, point_to_touch_coords,
-};
-use lunaris_gui_common::loader::create_save_path;
-use nds_core::CheatMap;
-use nds_core::nds::NDS;
-
 use debug::{
     DebugWindow, MapsWindowState, PalettesWindowState, StatsWindow, TilesWindowState,
     VRAMWindowState,
 };
+use eframe::egui;
+use lunaris_gui_common::{
+    config::{Config, ScreenFilter},
+    framebuffer::{PlacementRect, ScreenLayout, layout_screens, point_to_touch_coords},
+    loader::create_save_path,
+};
+use nds_core::{CheatMap, nds::NDS};
 use screens::ScreenTextures;
 
 use crate::cheat_editor::CheatEditorState;

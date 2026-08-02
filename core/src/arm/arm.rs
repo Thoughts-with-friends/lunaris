@@ -1,7 +1,5 @@
 use super::{ARM, HW, instructions::InstructionHandler, registers::Mode};
-
-use crate::hw::AccessType;
-use crate::likely;
+use crate::{hw::AccessType, likely};
 
 impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     pub(super) fn fill_arm_instr_buffer(&mut self, hw: &mut HW) {

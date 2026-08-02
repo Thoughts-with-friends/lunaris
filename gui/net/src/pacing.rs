@@ -7,8 +7,9 @@
 //! [`Controller::evaluate`] takes a snapshot of measurements and returns
 //! the (possibly unchanged) parameters for the next evaluation window.
 
-use nds_core::nds::LinkHints;
 use std::time::Duration;
+
+use nds_core::nds::LinkHints;
 
 pub const RUNAHEAD_MIN_US: u32 = 250;
 pub const RUNAHEAD_MAX_US: u32 = 16_000;

@@ -6,8 +6,9 @@
   "homepage": "https://github.com/Thoughts-with-friends/lunaris",
   "license": "GPL-3.0",
   "scripts": {
-    "fmt": "cargo fmt --all",
-    "lint": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
+    "fmt": "cargo +nightly fmt --all",
+    "lint": "cargo clippy --workspace -- -D warnings",
+    "lint:fix": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
     "build:imgui": "cargo build --release --features release --package lunaris_imgui",
     "build:egui": "cargo build --release --features release --package lunaris",
     "imgui": "cargo run --release --features release --package lunaris_imgui",
