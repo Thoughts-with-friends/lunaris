@@ -19,6 +19,7 @@ mod ipc;
 mod keypad;
 mod math;
 pub mod mem;
+pub mod net;
 mod rtc;
 mod scheduler;
 mod spi;

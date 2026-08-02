@@ -33,6 +33,10 @@ mod hw;
 pub mod nds;
 pub use nds::NDS;
 
+/// DS networking: local wireless play, internet play, and the MP backend
+/// abstraction they share. See [`hw::net`](crate::hw::net).
+pub use crate::hw::net;
+
 mod macros;
 
 pub type CheatMap = Vec<ArCode>;

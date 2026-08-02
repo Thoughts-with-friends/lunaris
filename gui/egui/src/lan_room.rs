@@ -10,7 +10,7 @@ use std::net::IpAddr;
 
 use eframe::egui;
 use lunaris_gui_common::config::Config;
-use lunaris_net::{PlayerView, Room, RoomConfig, RoomHandle};
+use lunaris_net::{MpInterfaceSelector, PlayerView, Room, RoomConfig, RoomHandle};
 use nds_core::nds::NDS;
 
 enum Role {
@@ -21,12 +21,18 @@ enum Role {
 /// Owns the room window's UI state and (once in a room) the
 /// [`RoomHandle`] used to read player list/link stats and send control
 /// messages. The [`lunaris_net::NetTransport`] half of [`Room`] is handed
-/// straight to [`NDS::set_mp_transport`] and not kept here.
+/// to [`MpInterfaceSelector`], which installs it on the emulator; it is
+/// not kept here.
 pub struct LanRoomState {
     is_open: bool,
     host_ip_input: String,
     role: Option<Role>,
     handle: Option<RoomHandle>,
+    /// Which MP backend is installed on the emulator. Every
+    /// install/uninstall goes through here rather than calling
+    /// [`NDS::set_mp_transport`] directly, so the selected backend and the
+    /// emulator's transport can never disagree.
+    mp: MpInterfaceSelector,
     last_error: Option<String>,
     /// Cached so `set_mp_ready` is only sent to the room when the computed
     /// readiness actually changes, not once per repaint.
@@ -48,6 +54,7 @@ impl Default for LanRoomState {
             host_ip_input: String::new(),
             role: None,
             handle: None,
+            mp: MpInterfaceSelector::new(),
             last_error: None,
             last_ready_sent: None,
             runahead_slider: 1000,
@@ -88,7 +95,9 @@ impl LanRoomState {
         }
         self.role = None;
         self.last_ready_sent = None;
-        nds.set_mp_transport(None);
+        // Falls back to the dummy backend, which is what removes the
+        // transport from the emulator.
+        self.mp.set_dummy(nds);
     }
 
     fn room_config(config: &Config, nds: &NDS) -> RoomConfig {
@@ -104,9 +113,7 @@ impl LanRoomState {
     }
 
     fn install_room(&mut self, room: Room, role: Role, nds: &mut NDS) {
-        let Room { handle, transport } = room;
-        nds.set_mp_transport(Some(Box::new(transport)));
-        self.handle = Some(handle);
+        self.handle = Some(self.mp.set_lan(nds, room));
         self.role = Some(role);
         self.last_error = None;
     }
@@ -158,7 +165,7 @@ impl LanRoomState {
         });
 
         ui.separator();
-        ui.label("Not in a room");
+        ui.label(format!("Not in a room (MP backend: {})", self.mp.label()));
 
         ui.horizontal(|ui| {
             ui.label("Room name");
@@ -222,10 +229,11 @@ impl LanRoomState {
         let is_host = handle.is_host();
 
         ui.label(format!(
-            "In a room ({}, {}/{})",
+            "In a room ({}, {}/{}) \u{b7} MP backend: {}",
             handle.room_name(),
             players.len(),
-            config.lan.max_players
+            config.lan.max_players,
+            self.mp.label()
         ));
 
         egui::Grid::new("lan_player_grid").striped(true).show(ui, |ui| {
