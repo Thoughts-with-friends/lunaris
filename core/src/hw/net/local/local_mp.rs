@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: (C) 2016-2026 melonDS team
+// SPDX-License-Identifier: GPL-3.0
+//
+// ref: https://github.com/Thoughts-with-friends/folk-melonDS/blob/master/src/net/LocalMP.cpp
 //! Local multiplayer: MP frames exchanged between emulator instances
 //! sharing one process, through two in-memory ring FIFOs.
 //!
@@ -29,10 +33,8 @@
 //!   buffer, while still consuming the whole frame from the FIFO, so a
 //!   short buffer desynchronises nothing.
 
-use std::{
-    sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use super::semaphore::Semaphore;
 use crate::hw::net::mp_interface::{
@@ -237,10 +239,9 @@ impl LocalMpHub {
         let mut queues = self.lock();
         queues.packet_read_offset[index] = queues.status.packet_write_offset;
         queues.reply_read_offset[index] = queues.status.reply_write_offset;
-        queues.status.connected_bitmask |= 1 << index;
-        drop(queues);
         self.sem_pool[index].reset();
         self.sem_pool[REPLY_SEM_BASE + index].reset();
+        queues.status.connected_bitmask |= 1 << index;
     }
 
     /// Deregisters `inst`. Port of `LocalMP::End`.
@@ -265,9 +266,18 @@ impl LocalMpHub {
         let Some(index) = instance_index(inst) else { return 0 };
         let len = packet.len();
         if len > MAX_FRAME_SIZE {
-            log::warn!("wifi: attempting to send frame too big (len={len} max={MAX_FRAME_SIZE})");
+            log::warn!(target: "nds_core", "wifi: attempting to send frame too big (len={len} max={MAX_FRAME_SIZE})");
             return 0;
         }
+
+        log::info!(
+            target: "nds_core",
+            "MP SEND type={:?} inst={} len={} ts={}",
+            frame_type.category(),
+            inst,
+            len,
+            timestamp
+        );
 
         let category = frame_type.category();
         let fifo =
@@ -349,6 +359,16 @@ impl LocalMpHub {
                 self.sem_pool[index].reset();
                 return MpRecvResult::None;
             };
+
+            log::info!(
+                target: "nds_core",
+                "MP RECV inst={} sender={} type={:?} len={} ts={}",
+                index,
+                header.sender_id,
+                header.frame_type.category(),
+                header.length,
+                header.timestamp
+            );
 
             if header.sender_id == index as u32 {
                 // Our own broadcast came back around; drop it.

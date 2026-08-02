@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: (C) 2016-2026 melonDS team
+// SPDX-License-Identifier: GPL-3.0
 //! Local wireless play: MP frames exchanged between emulator instances
 //! without leaving the machine.
 //!
