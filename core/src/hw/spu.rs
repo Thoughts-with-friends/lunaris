@@ -28,14 +28,14 @@
 mod audio;
 mod registers;
 
+use audio::Audio;
+use registers::*;
+
 use super::{
     HW,
     mem::IORegister,
     scheduler::{Event, Scheduler},
 };
-
-use audio::Audio;
-use registers::*;
 
 /// NDS SPU state.
 ///

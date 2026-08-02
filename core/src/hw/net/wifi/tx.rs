@@ -15,8 +15,7 @@
 //! | 4    | `0x0010`       | `W_TXSlotBeacon`   | beacon                   |
 //! | 5    | `0x0080`       | `W_TXSlotReply1`   | client MP reply (auto)   |
 
-use super::Wifi;
-use super::regs::*;
+use super::{Wifi, regs::*};
 use crate::hw::interrupt_controller::InterruptRequest;
 
 const SLOT_BUSY_BITS: [u16; 6] = [0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0080];

@@ -2543,6 +2543,7 @@ name = "lunaris-net"
 version = "0.1.0"
 dependencies = [
  "nds-core",
+ "rusty_enet",
 ]
 
 [[package]]
@@ -4046,6 +4047,15 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "rusty_enet"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1c0b43e27d8d86bb3a15b9eac232b6d78a06afee258a9861deb5a0d15b65c33"
+dependencies = [
+ "js-sys",
+]
 
 [[package]]
 name = "same-file"

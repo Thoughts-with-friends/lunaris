@@ -27,19 +27,18 @@ mod engine3d;
 mod registers;
 mod vram;
 
+use engine2d::DisplayMode;
+pub use engine2d::Engine2D;
+pub use engine3d::Engine3D;
+use registers::CaptureSource;
+pub use registers::{DISPCAPCNT, DISPSTAT, DISPSTATFlags, POWCNT1};
+pub use vram::VRAM;
+
 use crate::hw::{
     HW, dma,
     interrupt_controller::{InterruptController, InterruptRequest},
     scheduler::{Event, Scheduler},
 };
-
-pub use engine2d::Engine2D;
-pub use engine3d::Engine3D;
-pub use registers::{DISPCAPCNT, DISPSTAT, DISPSTATFlags, POWCNT1};
-pub use vram::VRAM;
-
-use engine2d::DisplayMode;
-use registers::CaptureSource;
 
 #[derive(emu_utils::Savestate)]
 pub struct GPU {

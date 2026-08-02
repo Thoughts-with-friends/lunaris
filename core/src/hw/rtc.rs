@@ -10,9 +10,9 @@
 //! status registers, alarms):
 //! <https://problemkaputt.de/gbatek.htm#dsrealtimeclockrtc>
 
-use super::{mem::IORegister, scheduler::Scheduler};
-
 use chrono::{Datelike, Timelike, offset::Local};
+
+use super::{mem::IORegister, scheduler::Scheduler};
 
 /// Serial-protocol state machine for the S-35180 RTC chip.
 ///

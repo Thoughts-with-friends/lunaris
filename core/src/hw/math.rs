@@ -4,8 +4,9 @@
 //! GBATEK "DS Maths" (register layout, division modes, div-by-zero and
 //! overflow results): <https://problemkaputt.de/gbatek.htm#dsmaths>
 
-use super::{HW, mem::IORegister, scheduler::Scheduler};
 use num_integer::Roots;
+
+use super::{HW, mem::IORegister, scheduler::Scheduler};
 
 /// Hardware divider: NUMER/DENOM in, QUOT/REM out, mode in DIVCNT.
 ///

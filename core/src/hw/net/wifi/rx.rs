@@ -7,9 +7,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::Wifi;
-use super::mp::{MpFrameKind, MpRecv};
-use super::regs::*;
+use super::{
+    Wifi,
+    mp::{MpFrameKind, MpRecv},
+    regs::*,
+};
 use crate::hw::interrupt_controller::InterruptRequest;
 
 /// One-shot latch so the "RX not armed" diagnostic (checked every 8µs

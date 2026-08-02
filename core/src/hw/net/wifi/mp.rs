@@ -9,8 +9,10 @@
 //!
 //! See `docs/design/design_lan.md` §8.1.
 
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::time::Duration;
+use std::{
+    sync::mpsc::{Receiver, Sender, TryRecvError},
+    time::Duration,
+};
 
 /// Which of the four MP frame categories a received frame belongs to. The
 /// wire protocol tags this explicitly (`docs/design/design_lan.md` §5.4's

@@ -1,5 +1,6 @@
-use nds_core::{ArCode, CheatMap};
 use std::fmt::{self, Write};
+
+use nds_core::{ArCode, CheatMap};
 
 /// Parses a sequence of Action Replay style cheat codes.
 ///

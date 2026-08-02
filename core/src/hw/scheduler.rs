@@ -5,8 +5,10 @@
 //! at which they should fire.  Each tick the CPU advances to a target cycle and
 //! [`HW::handle_events`] drains any events that are due.
 
-use std::cmp::{Eq, PartialEq, Reverse};
-use std::hash::Hash;
+use std::{
+    cmp::{Eq, PartialEq, Reverse},
+    hash::Hash,
+};
 
 use priority_queue::PriorityQueue;
 

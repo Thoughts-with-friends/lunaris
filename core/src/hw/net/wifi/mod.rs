@@ -1,3 +1,26 @@
+//! Internet play: emulated Ethernet frames between the DS's
+//! Wi-Fi adapter and a real network.
+//!
+//! Corresponds to melonDS's `src/net/Net.{h,cpp}`, `NetDriver.h` and
+//! `PacketDispatcher.{h,cpp}`.
+//!
+//! # Not ported
+//! melonDS's two concrete drivers are deliberately absent:
+//!
+//! * `Net_PCap.cpp` — dynamically loads libpcap and bridges onto a
+//!   physical adapter. It is almost entirely FFI plumbing plus adapter
+//!   enumeration.
+//! * `Net_Slirp.cpp` — a complete user-mode TCP/IP stack supplied by
+//!   libslirp, plus DNS frame rewriting.
+//!
+//! Both would pull a C library into `nds-core`. The [`NetDriver`] trait is
+//! the seam where a frontend can add either one; [`NullNetDriver`] and
+//! [`LoopbackNetDriver`] cover the "no internet" and "test" cases.
+//!
+//! Note that this module is about the *internet* path. The DS Wi-Fi
+//! **hardware** registers live in `crate::hw::wifi`, a separate and
+//! unrelated module.
+//!
 //! DS Wi-Fi hardware ("W_" registers at `4800000h`-`4808FFFh`) — enough of
 //! it to support **local multiplayer (MP) mode** between two `lunaris`
 //! instances. Internet play (WFC), WEP/WPA association with a real access
@@ -16,16 +39,24 @@
 
 mod bb_rf;
 pub mod mp;
+mod net;
+mod net_driver;
+mod packet_dispatcher;
 mod regs;
 mod rx;
 mod tx;
 
-use super::Scheduler;
-use super::interrupt_controller::InterruptRequest;
 pub use mp::LinkHints;
 use mp::MpTransport;
+pub use net::Net;
+pub use net_driver::{LoopbackNetDriver, NetDriver, NullNetDriver, RxCallback};
+pub use packet_dispatcher::{
+    DispatchedPacket, EXTERNAL_SENDER, PACKET_QUEUE_SIZE, PacketDispatcher,
+};
 pub use regs::*;
 use rx::RxKind;
+
+use crate::hw::{HW, Scheduler, interrupt_controller::InterruptRequest, scheduler::Event};
 
 /// Diagnostic tracing for the TX/RX/beacon path, independent of the `log`
 /// crate's configured level (which the frontends default to `Off`; see
@@ -174,7 +205,7 @@ impl Wifi {
         self.transport = transport;
     }
 
-    pub(super) fn post_load(&mut self) {
+    pub(crate) fn post_load(&mut self) {
         // A loaded savestate cannot resume mid-MP-session: the peer's
         // timeline was just rewound, which desyncs every other room member.
         // Force a clean re-association instead of silently corrupting the
@@ -328,7 +359,7 @@ impl Wifi {
 
     /// Handles `POWCNT2` bit-1 and `W_PowerUS` bit-0 changes.
     /// `docs/design/design_lan.md` §6.5.
-    pub(super) fn set_power_cnt(&mut self, enable: bool, scheduler: &mut Scheduler) {
+    pub(crate) fn set_power_cnt(&mut self, enable: bool, scheduler: &mut Scheduler) {
         self.enabled = enable;
         self.update_power_on(scheduler);
     }
@@ -346,7 +377,7 @@ impl Wifi {
                 t.begin();
             }
         } else {
-            scheduler.remove(super::scheduler::Event::Wifi);
+            scheduler.remove(Event::Wifi);
             if let Some(t) = self.transport.as_mut() {
                 t.end();
             }
@@ -362,11 +393,7 @@ impl Wifi {
         let cycles = cycles - self.timer_error;
         let delay = (cycles + 999_999) / 1_000_000;
         self.timer_error = delay * 1_000_000 - cycles;
-        scheduler.schedule(
-            super::scheduler::Event::Wifi,
-            super::HW::on_wifi_timer,
-            delay.max(1) as usize,
-        );
+        scheduler.schedule(Event::Wifi, HW::on_wifi_timer, delay.max(1) as usize);
     }
 
     /// Returns `true` if this instance currently believes it is engaged in
@@ -396,7 +423,7 @@ impl Wifi {
     /// the wire, so a joining peer's scan found nothing, even though the
     /// room-level TCP/UDP connection underneath was healthy. See
     /// `docs/design/design_lan.md` §6.3 and §17 (Union-Room symptom).
-    pub(super) fn tick(&mut self, scheduler: &mut Scheduler, request: &mut InterruptRequest) {
+    pub(crate) fn tick(&mut self, scheduler: &mut Scheduler, request: &mut InterruptRequest) {
         self.us_timestamp += Self::TIMER_INTERVAL_US;
 
         // `USCounter`/the millisecond beacon timer only run while the game

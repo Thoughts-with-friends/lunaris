@@ -1,5 +1,4 @@
-use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::{marker::PhantomData, path::PathBuf};
 
 use super::{Backup, SaveMem};
 

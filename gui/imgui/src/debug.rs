@@ -4,7 +4,6 @@ use std::collections::HashSet;
 
 use glfw::Key;
 use imgui::*;
-
 use nds_core::nds::{Engine, GraphicsType, NDS};
 pub use windows::*;
 

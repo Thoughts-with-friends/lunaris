@@ -1,6 +1,4 @@
-use std::borrow::Cow;
-use std::collections::VecDeque;
-use std::time::Instant;
+use std::{borrow::Cow, collections::VecDeque, time::Instant};
 
 use imgui::*;
 

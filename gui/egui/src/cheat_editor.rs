@@ -1,7 +1,6 @@
 use egui::Context;
-use nds_core::CheatMap;
-
 use lunaris_gui_common::config::Config;
+use nds_core::CheatMap;
 
 /// State manager for the Action Replay (AR) cheat code editor UI.
 ///

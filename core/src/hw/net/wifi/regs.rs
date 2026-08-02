@@ -16,8 +16,7 @@
 #![allow(non_upper_case_globals, dead_code)]
 
 use super::Wifi;
-use crate::hw::Scheduler;
-use crate::hw::interrupt_controller::InterruptRequest;
+use crate::hw::{Scheduler, interrupt_controller::InterruptRequest};
 
 pub mod names {
     pub const W_ID: usize = 0x000;

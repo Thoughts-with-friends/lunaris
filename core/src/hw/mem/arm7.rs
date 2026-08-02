@@ -1,8 +1,9 @@
 mod io;
 
+use std::mem::size_of;
+
 use super::{AccessType, HW, IORegister, MemoryValue};
 use crate::{num, unlikely};
-use std::mem::size_of;
 
 type MemoryRegion = ARM7MemoryRegion;
 

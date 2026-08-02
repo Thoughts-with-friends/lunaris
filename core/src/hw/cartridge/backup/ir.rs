@@ -141,8 +141,9 @@ pub(crate) enum IrPhase {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use super::*;
 
     fn temp_flash(name: &str) -> Flash {
         let path =

@@ -9,18 +9,24 @@
 //! [`RoomHandle::set_rom_fingerprint`] just publishes a value other peers
 //! compare, it doesn't enforce anything itself.
 
-use std::io;
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    io,
+    net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::Sender,
+    },
+    time::Duration,
+};
 
 use nds_core::nds::LinkHints;
 
-use crate::pacing::{Controller, Measurements};
-use crate::transport::{NetTransport, PeerTable, SharedHints};
-use crate::wire::{self, ControlMessage, LinkParams, PlayerRecord, RejectReason};
+use crate::{
+    pacing::{Controller, Measurements},
+    transport::{NetTransport, PeerTable, SharedHints},
+    wire::{self, ControlMessage, LinkParams, PlayerRecord, RejectReason},
+};
 
 /// Caller-supplied identity/room parameters, shared by both
 /// [`Room::host`] and [`Room::join`].

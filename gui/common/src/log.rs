@@ -10,6 +10,14 @@ use std::{
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use nds_core::log;
 
+/// # Examples
+///
+/// ```ignore
+/// # use nds_core::log;
+/// log::warn!(target: "nds_core::arm7", "hello {world}");
+/// log::warn!(target: "nds_core::savedata", "hello {world}");
+/// log::warn!(target: "nds_core", "hello {world}");
+/// ```
 pub fn setup_logging() -> Result<(), SetLoggerError> {
     create_dir_all("logs").ok();
 
@@ -23,7 +31,8 @@ pub fn setup_logging() -> Result<(), SetLoggerError> {
     // NOTE: `LevelFilter::Trace` causes severe emulator slowdown.
     // Even when the logger discards messages, log records are generated and
     // routed through the logger for every trace call.
-    log::set_max_level(LevelFilter::Warn);
+    // log::set_max_level(LevelFilter::Warn);
+    log::set_max_level(LevelFilter::Info);
 
     Ok(())
 }

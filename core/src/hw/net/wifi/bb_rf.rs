@@ -14,8 +14,7 @@
 //! zeroed/uninitialized RF resolves to channel 0 (`change_channel_rejects_zero`
 //! unit test in `mod.rs`).
 
-use super::Wifi;
-use super::regs::*;
+use super::{Wifi, regs::*};
 
 impl Wifi {
     /// Compares the two channel-index RF registers against the firmware

@@ -1,5 +1,6 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 pub struct Audio {
     config: cpal::StreamConfig,

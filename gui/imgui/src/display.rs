@@ -1,10 +1,9 @@
 extern crate glfw;
 extern crate imgui_opengl_renderer;
 
-use glfw::{Action, Context, Glfw, Window};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
-use std::collections::HashSet;
-use std::{path::PathBuf, time::Instant};
+use glfw::{Action, Context, Glfw, Window};
 
 pub enum StateAction {
     Save(usize),

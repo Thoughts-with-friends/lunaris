@@ -1,7 +1,10 @@
+use std::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+};
+
 use bitfield::bitfield;
 use bitflags::*;
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
 
 use super::EngineType;
 use crate::hw::{mem::IORegister, scheduler::Scheduler};

@@ -13,9 +13,10 @@ mod tsc;
 
 use std::path::PathBuf;
 
+use tsc::TSC;
+
 use super::{GPU, HW, Scheduler, mem::IORegister};
 use crate::hw::cartridge::{Backup, BackupProtocolState, Flash, SaveMem};
-use tsc::TSC;
 
 #[derive(emu_utils::Savestate)]
 #[load(in_place_only)]

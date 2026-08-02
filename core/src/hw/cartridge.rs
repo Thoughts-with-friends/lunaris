@@ -35,22 +35,18 @@ mod backup;
 mod header;
 mod key1_encryption;
 
-use std::collections::VecDeque;
-use std::convert::TryInto;
-use std::ops::Range;
-use std::path::PathBuf;
+use std::{collections::VecDeque, convert::TryInto, ops::Range, path::PathBuf};
+
+pub(crate) use backup::normalize_foreign_save;
+pub(super) use backup::{Backup, BackupProtocolState, Flash, SaveMem};
+use header::Header;
+use key1_encryption::Key1Encryption;
 
 use super::{
     HW, dma,
     interrupt_controller::InterruptRequest,
     scheduler::{Event, Scheduler},
-};
-
-use header::Header;
-use key1_encryption::Key1Encryption;
-
-pub(crate) use backup::normalize_foreign_save;
-pub(super) use backup::{Backup, BackupProtocolState, Flash, SaveMem}; // For Firmware
+}; // For Firmware
 
 /// NDS cartridge slot state.
 #[derive(emu_utils::Savestate)]

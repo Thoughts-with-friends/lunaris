@@ -20,10 +20,14 @@ mod arm;
 mod registers;
 mod thumb;
 
-use crate::hw::{AccessType, HW, MemoryValue};
-use crate::{likely, num, unlikely};
-use registers::{Mode, RegValues};
 use std::sync::OnceLock;
+
+use registers::{Mode, RegValues};
+
+use crate::{
+    hw::{AccessType, HW, MemoryValue},
+    likely, num, unlikely,
+};
 
 /// 4096-entry ARM instruction dispatch table (bits [27:20] + [7:4] of opcode).
 type ArmLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u32, IS_ARM9>; 4096];

@@ -1,5 +1,4 @@
 use super::{ARM, HW, instructions::InstructionHandler, registers::Mode};
-
 use crate::hw::AccessType;
 
 impl<const IS_ARM9: bool> ARM<IS_ARM9> {

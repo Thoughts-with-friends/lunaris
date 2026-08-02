@@ -21,9 +21,11 @@ fn main() {
             .set_language(0x0409) // English	0x0009 / English (US)	0x0409
             .set_icon("../../docs/icons/icon.ico");
 
+        // A missing resource compiler must not fail the build: the icon and
+        // version metadata are cosmetic, and `rc.exe` is only present when
+        // the Windows SDK is installed and registered. Warn and carry on.
         if let Err(e) = res.compile() {
-            println!("{e}");
-            std::process::exit(1);
+            println!("cargo:warning=skipping Windows resources (icon/version info): {e}");
         }
     }
 }
