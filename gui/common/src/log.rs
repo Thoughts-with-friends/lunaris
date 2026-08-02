@@ -56,10 +56,6 @@ impl Logger {
 
     #[inline(always)]
     fn stderr(record: &Record) {
-        if record.level() > Level::Warn {
-            return;
-        }
-
         // tracing like
         let level_color = match record.level() {
             Level::Error => color::COLOR_RED,
@@ -101,9 +97,9 @@ impl Log for Logger {
 
         match record.target() {
             "nds_core::arm7" => {
-                if let Some(writer) = &self.arm7 {
-                    Self::write(writer, record);
-                }
+                // if let Some(writer) = &self.arm7 {
+                //     Self::write(writer, record);
+                // }
             }
             "nds_core::arm9" => {
                 if let Some(writer) = &self.arm9 {
