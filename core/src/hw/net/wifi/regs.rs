@@ -200,7 +200,17 @@ impl Wifi {
     /// `W_PowerUS`/`W_PowerForce` write can transition the hardware's
     /// power-on state, which must (re-)schedule or cancel
     /// [`super::scheduler::Event::Wifi`] -- see [`Wifi::update_power_on`].
-    pub fn write16(&mut self, addr: u32, value: u16, scheduler: &mut Scheduler) {
+    /// Takes `request` because `W_IE`/`W_IFSet` writes must re-evaluate the
+    /// pending-interrupt edge synchronously (`Wifi::check_irq_edge`), and a
+    /// `W_TXReqSet`/`W_RXCnt` write can immediately start a TX slot whose
+    /// completion later raises an interrupt.
+    pub fn write16(
+        &mut self,
+        addr: u32,
+        value: u16,
+        scheduler: &mut Scheduler,
+        request: &mut InterruptRequest,
+    ) {
         if addr >= 0x0001_0000 {
             return;
         }
@@ -220,17 +230,34 @@ impl Wifi {
         if super::debug_enabled() {
             eprintln!("[wifi] reg write 0x{reg:03X} <- 0x{value:04X}");
         }
-        self.write_register(reg, value, scheduler);
+        self.write_register(reg, value, scheduler, request);
     }
 
-    fn write_register(&mut self, reg: usize, value: u16, scheduler: &mut Scheduler) {
-        // if super::debug_enabled() {
-        //     println!("[wifi write] reg={:#05X} value={:#06X}", reg, value);
-        // }
-
+    fn write_register(
+        &mut self,
+        reg: usize,
+        value: u16,
+        scheduler: &mut Scheduler,
+        request: &mut InterruptRequest,
+    ) {
         match reg {
             W_IF => self.set_ioport(W_IF, self.ioport(W_IF) & !value),
-            W_TXBufDataWrite => self.tx_buf_data_write(value),
+            // Enabling an already-pending flag must re-raise the ARM7
+            // request on this write, not wait for the next `SetIRQ` call.
+            // `Wifi.cpp:2204-2210`.
+            W_IE => {
+                let old_flags = self.ioport(W_IF) & self.ioport(W_IE);
+                self.set_ioport(W_IE, value);
+                self.check_irq_edge(old_flags, request);
+            }
+            W_IFSet => {
+                let old_flags = self.ioport(W_IF) & self.ioport(W_IE);
+                self.set_ioport(W_IF, self.ioport(W_IF) | (value & 0xFBFF));
+                self.check_irq_edge(old_flags, request);
+            }
+            W_AIDLow => self.set_ioport(W_AIDLow, value & 0x000F),
+            W_AIDFull => self.set_ioport(W_AIDFull, value & 0x07FF),
+            W_TXBufDataWrite => self.tx_buf_data_write(value, request),
             W_BBWrite => self.bb_write(value),
             W_BBCnt => {
                 self.set_ioport(W_BBCnt, value);
@@ -241,38 +268,122 @@ impl Wifi {
                     self.rf_transfer();
                 }
             }
+            // `W_TXReqRead` (not `W_TXBusy`, which is read-only to the CPU)
+            // records which slots the driver has asked to start; `fire_tx`
+            // decides whether any of them can actually begin now. See
+            // `docs/design/local-mp-melonds-parity.md` Gap 1.2.
             W_TXReqSet => {
-                let busy = self.ioport(W_TXBusy) | value;
-                self.set_ioport(W_TXBusy, busy);
-
-                println!("try_start_tx value={:04X}", value);
-                self.try_start_tx(value);
+                self.set_ioport(W_TXReqRead, self.ioport(W_TXReqRead) | value);
+                self.fire_tx();
             }
             W_TXReqReset => {
-                self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !value);
+                self.set_ioport(W_TXReqRead, self.ioport(W_TXReqRead) & !value);
             }
-            // `Wifi::tick` (and everything downstream of it -- beacons,
-            // channel resolution, RX polling) only runs while `power_on`
-            // is true, which is derived from *both* `POWCNT2` (handled in
-            // `set_power_cnt`) and this register's bit 0 (power-save).
-            // Real drivers commonly enable `POWCNT2` early during general
-            // system init and only clear `W_PowerUS` bit 0 later, once
-            // they're actually about to use the radio (e.g. entering a
-            // Union Room) -- missing the re-check here left the hardware
-            // silently stuck "off" for the rest of the session even though
-            // the driver believed it had powered up. See
-            // `docs/design/design_lan.md` §6.5 and the Union-Room-never-
-            // sees-a-peer symptom this fixes.
+            W_TXSlotReset => {
+                if value & 0x0001 != 0 {
+                    self.set_ioport(W_TXSlotLoc1, self.ioport(W_TXSlotLoc1) & 0x7FFF);
+                }
+                if value & 0x0002 != 0 {
+                    self.set_ioport(W_TXSlotCmd, self.ioport(W_TXSlotCmd) & 0x7FFF);
+                }
+                if value & 0x0004 != 0 {
+                    self.set_ioport(W_TXSlotLoc2, self.ioport(W_TXSlotLoc2) & 0x7FFF);
+                }
+                if value & 0x0008 != 0 {
+                    self.set_ioport(W_TXSlotLoc3, self.ioport(W_TXSlotLoc3) & 0x7FFF);
+                }
+                if value & 0x0040 != 0 {
+                    self.set_ioport(W_TXSlotReply2, self.ioport(W_TXSlotReply2) & 0x7FFF);
+                }
+                if value & 0x0080 != 0 {
+                    self.set_ioport(W_TXSlotReply1, self.ioport(W_TXSlotReply1) & 0x7FFF);
+                }
+                // Write-only port; melonDS stores 0 back regardless of `value`.
+            }
+            // Slot address registers: latching the value (with `W_TXSlotCmd`'s
+            // "keep bit 15 if `CmdCounter` is still zero" quirk) then calling
+            // `fire_tx` is what actually starts a transmission -- a plain
+            // register write with no side effect (the previous behaviour)
+            // never transmits anything. `Wifi.cpp:2425-2436`.
+            W_TXSlotCmd => {
+                let value = if self.cmd_counter == 0 {
+                    (value & 0x7FFF) | (self.ioport(W_TXSlotCmd) & 0x8000)
+                } else {
+                    value
+                };
+                self.set_ioport(W_TXSlotCmd, value);
+                self.fire_tx();
+            }
+            W_TXSlotLoc1 | W_TXSlotLoc2 | W_TXSlotLoc3 => {
+                self.set_ioport(reg, value);
+                self.fire_tx();
+            }
+            // `Wifi.cpp:2421-2423`: this is the only place `is_mp` is set on
+            // the host side. Without it the host never believes it is
+            // engaged in an MP session at all. See Gap 1.3.
+            W_TXSlotBeacon => {
+                self.is_mp = (value & 0x8000) != 0;
+                self.set_ioport(W_TXSlotBeacon, value);
+            }
+            // `Wifi.cpp:2329-2345`. Bit 0 resets the write cursor to the
+            // current write address; bit 7 hands the staged reply slot off
+            // to the "in flight" reply-2 register; bit 15 kicks `fire_tx`.
+            W_RXCnt => {
+                if value & 0x0001 != 0 {
+                    self.set_ioport(W_RXBufWriteCursor, self.ioport(W_RXBufWriteAddr));
+                }
+                if value & 0x0080 != 0 {
+                    self.set_ioport(W_TXSlotReply2, self.ioport(W_TXSlotReply1));
+                    self.set_ioport(W_TXSlotReply1, 0);
+                }
+                self.set_ioport(W_RXCnt, value & 0xFF0E);
+                if value & 0x8000 != 0 {
+                    self.fire_tx();
+                }
+            }
+            W_RXBufDataRead => {
+                let count = self.ioport(W_RXBufCount);
+                if count > 0 {
+                    let count = count - 1;
+                    self.set_ioport(W_RXBufCount, count);
+                    if count == 0 {
+                        self.raise_irq(9, request);
+                    }
+                }
+            }
+            W_RXBufReadAddr | W_TXBufWriteAddr | W_RXBufGapAddr => {
+                self.set_ioport(reg, value & 0x1FFE);
+            }
+            W_RXBufGapSize | W_RXBufCount | W_RXBufWriteAddr | W_RXBufReadCursor
+            | W_TXBufGapSize | W_TXBufCount => {
+                self.set_ioport(reg, value & 0x0FFF);
+            }
+            // Writes to `W_CmdCount` set the countdown timer directly
+            // (reads recompute the driver-visible value from it via
+            // `div_ceil`); the register mirror itself is never stored.
+            // `Wifi.cpp:2307`.
+            W_CmdCount => self.cmd_counter = u32::from(value) * 10,
+            // `Wifi.cpp:2230-2233`.
             W_PowerUS => {
-                self.set_ioport(W_PowerUS, value);
+                self.set_ioport(W_PowerUS, value & 0x0003);
                 self.update_power_on(scheduler);
             }
             W_PowerForce => {
-                self.set_ioport(W_PowerForce, value);
+                self.set_ioport(W_PowerForce, value & 0x8001);
                 self.update_power_on(scheduler);
             }
-            W_RXBufReadAddr | W_TXBufWriteAddr => {
-                self.set_ioport(reg, value & 0x1FFE);
+            // `W_USCount0..3` back the `us_counter` field directly, mirroring
+            // melonDS's `Wifi.cpp:2294-2297`; without this the CPU cannot
+            // ever set the MP sync clock's millisecond half.
+            W_USCount0 => self.us_counter = (self.us_counter & !0xFFFF) | u64::from(value),
+            W_USCount1 => {
+                self.us_counter = (self.us_counter & !0xFFFF_0000) | (u64::from(value) << 16);
+            }
+            W_USCount2 => {
+                self.us_counter = (self.us_counter & !0xFFFF_0000_0000) | (u64::from(value) << 32);
+            }
+            W_USCount3 => {
+                self.us_counter = (self.us_counter & 0xFFFF_FFFF_FFFF) | (u64::from(value) << 48);
             }
             // `W_USCompare0..3` back the `us_compare` field the beacon
             // timer's `W_USCompareCnt` IRQ compares against (see
@@ -280,31 +391,44 @@ impl Wifi {
             // the raw register mirror, not that field, so writes here
             // would otherwise never take effect.
             W_USCompare0 => {
-                self.set_ioport(reg, value);
-                self.us_compare = (self.us_compare & !0xFFFF) | value as u64;
+                self.set_ioport(reg, value & 0xFC00);
+                self.us_compare = (self.us_compare & !0xFFFF) | u64::from(value & 0xFC00);
             }
             W_USCompare1 => {
                 self.set_ioport(reg, value);
-                self.us_compare = (self.us_compare & !0xFFFF_0000) | (value as u64) << 16;
+                self.us_compare = (self.us_compare & !0xFFFF_0000) | (u64::from(value) << 16);
             }
             W_USCompare2 => {
                 self.set_ioport(reg, value);
-                self.us_compare = (self.us_compare & !0xFFFF_0000_0000) | (value as u64) << 32;
+                self.us_compare = (self.us_compare & !0xFFFF_0000_0000) | (u64::from(value) << 32);
             }
             W_USCompare3 => {
                 self.set_ioport(reg, value);
-                self.us_compare = (self.us_compare & 0xFFFF_FFFF_FFFF) | (value as u64) << 48;
+                self.us_compare = (self.us_compare & 0xFFFF_FFFF_FFFF) | (u64::from(value) << 48);
             }
+            // Read-only ports: the CPU cannot write these. `Wifi.cpp:2443-2462`.
+            W_ID | W_TRXPower | W_Random | W_RXBufWriteCursor | W_TXSlotReply2 | W_TXReqRead
+            | W_TXBusy | W_TXStat | W_BBRead | W_BBBusy | W_RFBusy | W_RFPins | W_RXStatIncIF
+            | W_RXStatHalfIF | W_RXCount | W_TXSeqNo | W_RFStatus | W_RXTXAddr => {}
             _ => self.set_ioport(reg, value),
         }
     }
 
-    fn tx_buf_data_write(&mut self, value: u16) {
+    fn tx_buf_data_write(&mut self, value: u16, request: &mut InterruptRequest) {
         let mut addr = self.ioport(W_TXBufWriteAddr) as u32 & 0x1FFE;
         self.ram[addr as usize] = value as u8;
         self.ram[addr as usize + 1] = (value >> 8) as u8;
         addr += 2;
         self.set_ioport(W_TXBufWriteAddr, addr as u16 & 0x1FFE);
+
+        let count = self.ioport(W_TXBufCount);
+        if count > 0 {
+            let count = count - 1;
+            self.set_ioport(W_TXBufCount, count);
+            if count == 0 {
+                self.raise_irq(8, request);
+            }
+        }
     }
 
     fn bb_write(&mut self, value: u16) {

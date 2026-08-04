@@ -133,11 +133,23 @@ pub trait MpTransport: Send {
 /// Frames placed on the wire are tagged with the sending peer's id so the
 /// receiver can apply the same host/guest filtering rules a real transport
 /// would (`docs/design/design_lan.md` §5.6).
+///
+/// Reply frames travel on a channel separate from every other frame kind,
+/// mirroring [`super::super::wifi`]'s `NetTransport` (`gui/net`'s socket
+/// transport also keeps a `regular_rx`/`reply_rx` split for the same
+/// reason). Without this, [`LoopbackTransport::recv_packet`]/
+/// [`LoopbackTransport::recv_host_packet`] (driven every regular tick by
+/// `Wifi::check_rx`) can steal a reply meant for
+/// [`LoopbackTransport::recv_replies`] (driven once per CMD round by
+/// `Wifi::tx_phase_transmit_done`) clean off the wire, permanently losing
+/// it -- `recv_replies` never retries.
 pub struct LoopbackTransport {
     peer_id: u8,
     host_id: u8,
     tx: Sender<LoopbackFrame>,
     rx: Receiver<LoopbackFrame>,
+    reply_tx: Sender<LoopbackFrame>,
+    reply_rx: Receiver<LoopbackFrame>,
     hints: LinkHints,
 }
 
@@ -156,11 +168,15 @@ impl LoopbackTransport {
     pub fn new_pair() -> (LoopbackTransport, LoopbackTransport) {
         let (tx_a, rx_a) = std::sync::mpsc::channel();
         let (tx_b, rx_b) = std::sync::mpsc::channel();
+        let (reply_tx_a, reply_rx_a) = std::sync::mpsc::channel();
+        let (reply_tx_b, reply_rx_b) = std::sync::mpsc::channel();
         let host = LoopbackTransport {
             peer_id: 0,
             host_id: 0,
             tx: tx_b,
             rx: rx_a,
+            reply_tx: reply_tx_b,
+            reply_rx: reply_rx_a,
             hints: LinkHints::default(),
         };
         let client = LoopbackTransport {
@@ -168,6 +184,8 @@ impl LoopbackTransport {
             host_id: 0,
             tx: tx_a,
             rx: rx_b,
+            reply_tx: reply_tx_a,
+            reply_rx: reply_rx_b,
             hints: LinkHints::default(),
         };
         (host, client)
@@ -244,7 +262,7 @@ impl MpTransport for LoopbackTransport {
             runahead_us: 0,
         };
         let len = data.len();
-        let _ = self.tx.send(frame);
+        let _ = self.reply_tx.send(frame);
         len
     }
 
@@ -290,8 +308,8 @@ impl MpTransport for LoopbackTransport {
         let mut answered = 0u16;
         let mut offset = 0usize;
         loop {
-            match self.rx.try_recv() {
-                Ok(frame) if frame.kind == MpFrameKind::Reply => {
+            match self.reply_rx.try_recv() {
+                Ok(frame) => {
                     if aid_mask & (1 << frame.aid) == 0 {
                         continue;
                     }
@@ -311,7 +329,6 @@ impl MpTransport for LoopbackTransport {
                         break;
                     }
                 }
-                Ok(_) => continue,
                 Err(_) => break,
             }
         }

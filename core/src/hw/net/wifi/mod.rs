@@ -54,7 +54,7 @@ pub use packet_dispatcher::{
     DispatchedPacket, EXTERNAL_SENDER, PACKET_QUEUE_SIZE, PacketDispatcher,
 };
 pub use regs::*;
-use rx::RxKind;
+use rx::{DeferredRxParams, PendingRxHeader, RxKind};
 
 use crate::hw::{HW, Scheduler, interrupt_controller::InterruptRequest, scheduler::Event};
 
@@ -138,6 +138,17 @@ pub struct Wifi {
     next_sync: u64,
     rx_timestamp: u64,
 
+    /// Sequence number of the last MP CMD frame delivered, or `0xFFFF`
+    /// (matching melonDS's `MPLastSeqno` reset value) before any has been
+    /// seen. Used to suppress delivering the exact same CMD frame twice.
+    mp_last_seqno: u16,
+    /// Classification awaiting the simulated clock to reach a delayed
+    /// frame's timestamp. See [`rx::DeferredRxParams`].
+    rx_deferred: DeferredRxParams,
+    /// RX-ring header build awaiting the simulated transfer time to
+    /// elapse. See [`rx::PendingRxHeader`].
+    rx_pending: PendingRxHeader,
+
     us_until_power_on: i32,
     cmd_counter: u32,
 
@@ -190,6 +201,9 @@ impl Wifi {
             us_compare: 0,
             next_sync: 0,
             rx_timestamp: 0,
+            mp_last_seqno: 0xFFFF,
+            rx_deferred: DeferredRxParams::default(),
+            rx_pending: PendingRxHeader::default(),
             us_until_power_on: 0,
             cmd_counter: 0,
             transport: None,
@@ -273,6 +287,9 @@ impl Wifi {
         self.com_status = 0;
         self.mp_client_mask = 0;
         self.mp_client_fail = 0;
+        self.mp_last_seqno = 0xFFFF;
+        self.rx_deferred = DeferredRxParams::default();
+        self.rx_pending = PendingRxHeader::default();
 
         // `W_ID` (000h) is a hardware-identification register a driver
         // reads during Wi-Fi init to confirm a real chip is present before
@@ -351,6 +368,16 @@ impl Wifi {
     fn set_irq(&mut self, irq: u32, request: &mut InterruptRequest) {
         let old_flags = self.ioport(W_IF) & self.ioport(W_IE);
         self.set_ioport(W_IF, self.ioport(W_IF) | (1 << irq));
+        self.check_irq_edge(old_flags, request);
+    }
+
+    /// Re-evaluates the pending-interrupt edge against a previously
+    /// captured `old_flags` snapshot, raising the ARM7 Wi-Fi request if the
+    /// masked flags went from all-zero to non-zero. Shared by [`Wifi::set_irq`]
+    /// and the `W_IE`/`W_IFSet` register writes
+    /// (`docs/design/melonds/WiFi.cpp:376-382`), both of which can create
+    /// this edge without themselves setting a new `W_IF` bit.
+    pub(super) fn check_irq_edge(&mut self, old_flags: u16, request: &mut InterruptRequest) {
         let new_flags = self.ioport(W_IF) & self.ioport(W_IE);
         if old_flags == 0 && new_flags != 0 {
             *request |= InterruptRequest::WIFI;
@@ -439,7 +466,11 @@ impl Wifi {
         if self.is_mp_client && self.com_status == 0 {
             if self.rx_timestamp != 0 && self.us_timestamp >= self.rx_timestamp {
                 self.rx_timestamp = 0;
-                self.start_rx(request);
+                if self.rx_deferred.armed {
+                    let d = self.rx_deferred;
+                    self.rx_deferred = DeferredRxParams::default();
+                    self.start_rx(request, d.keep, d.cmd_dupe, d.rxflags, d.tx_rate, d.framelen);
+                }
             }
             if self.us_timestamp >= self.next_sync {
                 self.check_rx(RxKind::HostFrames, request);
@@ -498,7 +529,7 @@ impl Wifi {
     /// long for an association response").
     fn ms_timer(&mut self, request: &mut InterruptRequest) {
         if self.ioport(W_USCompareCnt) != 0 && (self.us_counter & !0x3FF) == self.us_compare {
-            self.raise_irq(14, request);
+            self.set_irq14(0, request);
         }
 
         let count1 = self.ioport(W_BeaconCount1);
@@ -513,9 +544,14 @@ impl Wifi {
                         self.ioport(W_TXBusy)
                     );
                 }
-                self.raise_irq(14, request);
+                self.set_irq14(1, request);
             }
         }
+        // `W_BeaconCount1` starts at its register default (0), never having
+        // had a chance to count down at all; without this, the very first
+        // beacon interval never begins. `set_irq14`'s own reload only fires
+        // once the countdown has already reached zero *from* a nonzero
+        // value, which doesn't cover this initial case.
         if self.ioport(W_BeaconCount1) == 0 {
             self.set_ioport(W_BeaconCount1, self.ioport(W_BeaconInterval));
         }
@@ -528,6 +564,36 @@ impl Wifi {
                 self.raise_irq(13, request);
             }
         }
+    }
+
+    /// Reloads `W_BeaconCount1`, raises IRQ 14, and -- this is what
+    /// actually puts a beacon on the wire -- starts the beacon TX slot if
+    /// the driver has armed it. Ported from `SetIRQ14`
+    /// (`Wifi.cpp:411-439`); `source`: `0` = USCOMPARE, `1` = BEACONCOUNT
+    /// (this port never calls it with melonDS's `2` = forced).
+    ///
+    /// Deliberately not ported: the `W_USCompareCnt` bit 0 gate melonDS
+    /// applies before doing *any* of this (including raising IRQ 14 at
+    /// all). Adding it would re-introduce the exact "beacon interval elapsed
+    /// but IRQ 14 never fires" Union Room symptom this module's existing
+    /// `beacon_interval_reload_fires_irq14_periodically` regression test
+    /// protects against, for real games that never touch
+    /// `W_USCompareCnt`. Also not ported: `BlockBeaconIRQ14` (a WEP-specific
+    /// nuance).
+    fn set_irq14(&mut self, source: u8, request: &mut InterruptRequest) {
+        if source != 2 {
+            self.set_ioport(W_BeaconCount1, self.ioport(W_BeaconInterval));
+        }
+        self.raise_irq(14, request);
+        self.set_ioport(W_BeaconCount2, 0xFFFF);
+        self.set_ioport(W_TXReqRead, self.ioport(W_TXReqRead) & 0xFFF2);
+        if self.ioport(W_TXSlotBeacon) & 0x8000 != 0 {
+            self.start_tx_beacon();
+        }
+        if self.ioport(W_ListenCount) == 0 {
+            self.set_ioport(W_ListenCount, self.ioport(W_ListenInterval));
+        }
+        self.set_ioport(W_ListenCount, self.ioport(W_ListenCount).wrapping_sub(1));
     }
 }
 
@@ -558,7 +624,8 @@ mod tests {
     fn ram_round_trips_16_bit() {
         let mut wifi = Wifi::new();
         let mut scheduler = Scheduler::new();
-        wifi.write16(0x4000, 0xBEEF, &mut scheduler);
+        let mut request = InterruptRequest::empty();
+        wifi.write16(0x4000, 0xBEEF, &mut scheduler, &mut request);
         assert_eq!(wifi.read16(0x4000), 0xBEEF);
         // Mirror at 4800h..5FFFh maps into the same 8KiB RAM.
         assert_eq!(wifi.read16(0x5000), wifi.ram[0x1000] as u16 | (wifi.ram[0x1001] as u16) << 8);
@@ -568,7 +635,8 @@ mod tests {
     fn eight_bit_write_is_ignored() {
         let mut wifi = Wifi::new();
         let mut scheduler = Scheduler::new();
-        wifi.write16(W_TXStatCnt as u32, 0x1234, &mut scheduler);
+        let mut request = InterruptRequest::empty();
+        wifi.write16(W_TXStatCnt as u32, 0x1234, &mut scheduler, &mut request);
         wifi.write8(W_TXStatCnt as u32, 0xFF);
         assert_eq!(wifi.read16(W_TXStatCnt as u32), 0x1234);
     }
@@ -652,12 +720,13 @@ mod tests {
     fn power_us_write_after_powcnt2_enable_still_powers_on() {
         let mut wifi = Wifi::new();
         let mut scheduler = Scheduler::new();
+        let mut request = InterruptRequest::empty();
 
-        wifi.write16(W_PowerUS as u32, 1, &mut scheduler); // Power-save requested before POWCNT2 is even enabled.
+        wifi.write16(W_PowerUS as u32, 1, &mut scheduler, &mut request); // Power-save requested before POWCNT2 is even enabled.
         wifi.set_power_cnt(true, &mut scheduler); // POWCNT2 enabled, but power-save still holds the radio off.
         assert!(!wifi.power_on, "power-save bit must keep the radio off despite POWCNT2 enable");
 
-        wifi.write16(W_PowerUS as u32, 0, &mut scheduler); // Driver clears power-save to actually use the radio.
+        wifi.write16(W_PowerUS as u32, 0, &mut scheduler, &mut request); // Driver clears power-save to actually use the radio.
         assert!(
             wifi.power_on,
             "clearing W_PowerUS bit 0 after POWCNT2 was already enabled must power on the radio"
