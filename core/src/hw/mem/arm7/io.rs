@@ -252,12 +252,12 @@ impl HW {
 
     pub(super) fn arm7_write_io16(&mut self, addr: u32, value: u16) {
         if let 0x0480_0000..=0x0480_FFFF = addr {
-            if !self.powcnt2.enable_wifi {
-                return;
-            }
-
-            // info!(target:"nds_core::arm7", "called wifi write_16");
-            self.wifi.write16(addr - 0x0480_0000, value, &mut self.scheduler);
+            self.wifi.write16(
+                addr - 0x0480_0000,
+                value,
+                &mut self.scheduler,
+                &mut self.interrupts[0].request,
+            );
             return;
         }
         self.arm7_write_io8(addr, value as u8);
@@ -268,16 +268,17 @@ impl HW {
         match addr {
             0x0400_0188 => self.ipc_fifo_send(true, value),
             0x0480_0000..=0x0480_FFFF => {
-                if !self.powcnt2.enable_wifi {
-                    return;
-                }
-
-                // info!(target:"nds_core::arm7", "called wifi write_32");
-                self.wifi.write16(addr - 0x0480_0000, value as u16, &mut self.scheduler);
+                self.wifi.write16(
+                    addr - 0x0480_0000,
+                    value as u16,
+                    &mut self.scheduler,
+                    &mut self.interrupts[0].request,
+                );
                 self.wifi.write16(
                     addr + 2 - 0x0480_0000,
                     (value >> 16) as u16,
                     &mut self.scheduler,
+                    &mut self.interrupts[0].request,
                 );
             }
             _ => {

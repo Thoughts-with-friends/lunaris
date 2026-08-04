@@ -19,9 +19,25 @@ impl Engine3D {
         self.frame_buffer[index].color.as_u16()
     }
 
-    pub fn copy_line(&self, vcount: u16, line: &mut [u16; GPU::WIDTH]) {
-        for (i, pixel) in line.iter_mut().enumerate() {
-            *pixel = self.frame_buffer[vcount as usize * GPU::WIDTH + i].color.as_u16()
+    /// Copies one rendered scanline into the 2D engine's BG0 line buffer.
+    ///
+    /// `alphas` receives the matching 5-bit per-pixel polygon alpha, which the
+    /// 2D compositor needs because the 3D layer blends with its own alpha
+    /// instead of BLDALPHA. A pixel with alpha 0 is transparent, so its
+    /// opacity bit is cleared rather than left set from the colour alone.
+    ///
+    /// GBATEK "DS 3D Final 2D Output":
+    /// <https://problemkaputt.de/gbatek.htm#ds3dfinal2doutput>
+    pub fn copy_line(
+        &self,
+        vcount: u16,
+        line: &mut [u16; GPU::WIDTH],
+        alphas: &mut [u8; GPU::WIDTH],
+    ) {
+        for (i, (pixel, alpha)) in line.iter_mut().zip(alphas.iter_mut()).enumerate() {
+            let fb = &self.frame_buffer[vcount as usize * GPU::WIDTH + i].color;
+            *alpha = fb.a5();
+            *pixel = fb.as_u16();
         }
     }
 
