@@ -72,7 +72,14 @@ impl HW {
             // bypass this path entirely (see `arm7_read_io16`/`32` below)
             // so a side-effecting register (e.g. `W_RXBufDataRead`'s
             // auto-increment) never fires twice for one CPU access.
-            0x0480_0000..=0x0480_FFFF => self.wifi.read8(addr - 0x0480_0000),
+            0x0480_0000..=0x0480_FFFF => {
+                if !self.powcnt2.enable_wifi {
+                    return 0;
+                }
+
+                // info!(target:"nds_core::arm7", "called wifi read_8");
+                self.wifi.read8(addr)
+            }
             _ => {
                 warn!("Ignoring ARM7 IO Register Read at 0x{:08X}", addr);
                 0
@@ -82,7 +89,12 @@ impl HW {
 
     pub(super) fn arm7_read_io16(&mut self, addr: u32) -> u16 {
         if let 0x0480_0000..=0x0480_FFFF = addr {
-            return self.wifi.read16(addr - 0x0480_0000);
+            if !self.powcnt2.enable_wifi {
+                return 0;
+            }
+
+            // info!(target:"nds_core::arm7", "called wifi read_16");
+            self.wifi.read16(addr - 0x0480_0000);
         }
         (self.arm7_read_io8(addr) as u16) | (self.arm7_read_io8(addr + 1) as u16) << 8
     }
@@ -92,6 +104,11 @@ impl HW {
             0x0410_0000 => self.ipc_fifo_recv(false),
             0x0410_0010 => self.read_game_card(false),
             0x0480_0000..=0x0480_FFFF => {
+                if !self.powcnt2.enable_wifi {
+                    return 0;
+                }
+
+                // info!(target:"nds_core::arm7", "called wifi read_32");
                 (self.wifi.read16(addr - 0x0480_0000) as u32)
                     | (self.wifi.read16(addr + 2 - 0x0480_0000) as u32) << 16
             }
@@ -222,7 +239,13 @@ impl HW {
             // hardware and games never issue them, and composing two
             // 8-bit writes into a 16-bit register access would
             // double-fire side effects.
-            0x0480_0000..=0x0480_FFFF => self.wifi.write8(addr - 0x0480_0000, value),
+            0x0480_0000..=0x0480_FFFF => {
+                if !self.powcnt2.enable_wifi {
+                    return;
+                }
+                // info!(target:"nds_core::arm7", "called wifi write_8");
+                self.wifi.write8(addr - 0x0480_0000, value)
+            }
             _ => warn!("Ignoring ARM7 IO Register Write 0x{:08X} = {:02X}", addr, value),
         }
     }
