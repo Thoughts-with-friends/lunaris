@@ -1,7 +1,9 @@
 //! Persisted configuration for the egui front end (`config.json`).
 //!
-//! Key/gamepad bindings are fixed (not user-remappable) in this first egui
-//! implementation — see `docs/design/egui-migration-design.md` §8.2 for the
+//! Key/gamepad bindings live in [`Config::input_bindings`] and are editable
+//! from the front end's "Input Settings" window (one keyboard key and one
+//! gamepad button per NDS button); analog-axis and chord bindings remain
+//! hand-edited here — see `docs/design/egui-migration-design.md` §8.2 for the
 //! full backend-neutral chord-binding design this intentionally simplifies.
 //! Everything else (window geometry, paths, audio, video options) matches
 //! the imgui front end's `config.json` shape where applicable.

@@ -11,7 +11,7 @@ node_modules/
 *.log
 logs/
 
-/config.json
+*config.json*
 .continue/
 .claude/
 .serena/

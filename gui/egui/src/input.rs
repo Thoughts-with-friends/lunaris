@@ -228,7 +228,9 @@ fn get_gamepad_by_joystick_id(
     gilrs.gamepads().nth(index).map(|pad| pad.1) // Option<(pad.0: GamePadId, pad.1: Gamepad<'_>)>
 }
 
-fn egui_to_config_keyboard_key(key: egui::Key) -> lunaris_gui_common::input::enums::KeyboardKey {
+pub fn egui_to_config_keyboard_key(
+    key: egui::Key,
+) -> lunaris_gui_common::input::enums::KeyboardKey {
     use lunaris_gui_common::input::enums::KeyboardKey as Key;
 
     match key {
@@ -343,7 +345,7 @@ fn egui_to_config_keyboard_key(key: egui::Key) -> lunaris_gui_common::input::enu
     }
 }
 
-fn egui_to_config_gamepad_button(button: Button) -> GamepadButton {
+pub fn egui_to_config_gamepad_button(button: Button) -> GamepadButton {
     match button {
         Button::South => GamepadButton::ButtonA,
         Button::East => GamepadButton::ButtonB,

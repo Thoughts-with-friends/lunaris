@@ -6,6 +6,7 @@ mod cheat_editor;
 mod debug;
 mod fonts;
 mod input;
+mod input_settings;
 mod lan_room;
 mod screens;
 mod window;
@@ -20,12 +21,13 @@ use eframe::egui;
 use lunaris_gui_common::{
     config::{Config, ScreenFilter},
     framebuffer::{PlacementRect, ScreenLayout, layout_screens, point_to_touch_coords},
+    input::stylus::StylusQueue,
     loader::create_save_path,
 };
 use nds_core::{CheatMap, nds::NDS};
 use screens::ScreenTextures;
 
-use crate::cheat_editor::CheatEditorState;
+use crate::{cheat_editor::CheatEditorState, input_settings::InputSettingsState};
 
 const fn texture_options(screen: ScreenFilter) -> egui::TextureOptions {
     match screen {
@@ -187,8 +189,20 @@ struct LunarisApp {
     screens: ScreenTextures,
     gilrs: gilrs::Gilrs,
     input_state: crate::input::InputState,
-    stylus_down: bool,
+    /// Stylus states sampled from the host pointer, drained one per emulated
+    /// frame by [`LunarisApp::emulate_batch`]. See [`Self::sample_stylus`].
+    stylus: StylusQueue,
+    /// Whether the pointer was pressing the emulated screen area as of the
+    /// previous repaint. egui's own hit-testing decides this (so menus and
+    /// floating windows keep their clicks), which is why it is one repaint
+    /// old; only the press/release edges lag, never the position.
+    stylus_gate: bool,
+    /// Window-local origin and bottom-screen rectangle recorded by the
+    /// previous [`Self::central_panel`], in egui points. Needed to map
+    /// pointer positions before the panel of the current repaint is laid out.
+    stylus_placement: Option<(egui::Pos2, PlacementRect)>,
     cheat_editor_state: CheatEditorState,
+    input_settings: InputSettingsState,
     show_video_window: bool,
     show_audio_window: bool,
     show_emu_window: bool,
@@ -242,8 +256,11 @@ impl LunarisApp {
             screens: ScreenTextures::new(ctx),
             gilrs: gilrs::Gilrs::new().expect("failed to initialize gamepad backend"),
             input_state: crate::input::InputState::default(),
-            stylus_down: false,
+            stylus: StylusQueue::default(),
+            stylus_gate: false,
+            stylus_placement: None,
             cheat_editor_state,
+            input_settings: InputSettingsState::default(),
             show_video_window: false,
             show_audio_window: false,
             show_emu_window: false,
@@ -440,6 +457,9 @@ impl LunarisApp {
                         self.show_emu_window = true;
                         ui.close();
                     }
+                    // The input settings window
+                    self.input_settings.menu_item(ui, &self.config);
+
                     if ui.button("Audio").clicked() {
                         self.show_audio_window = true;
                         ui.close();
@@ -492,13 +512,23 @@ impl LunarisApp {
 
         self.frame_accum += dt * Self::NDS_FPS * speed;
 
-        let mut emulated = 0;
-        while self.frame_accum >= 1.0 && emulated < Self::MAX_BATCH {
+        let emulated = (self.frame_accum.max(0.0) as u32).min(Self::MAX_BATCH);
+        for frame in 0..emulated {
             self.frame_accum -= 1.0;
+
+            // Applied per frame, not per repaint: a batch that has fallen
+            // behind still walks the stylus along the sampled path instead of
+            // running every one of its frames on the same stale position.
+            if let Some(sample) = self.stylus.next_sample((emulated - frame) as usize) {
+                match sample {
+                    Some((x, y)) => self.nds.press_screen(x, y),
+                    None => self.nds.release_screen(),
+                }
+            }
+
             self.nds.emulate_frame();
             self.emulated_frames += 1;
             self.debug.stats.frame_completed();
-            emulated += 1;
         }
 
         // Only the last frame of a batch is ever displayed, so the texture
@@ -567,6 +597,24 @@ impl LunarisApp {
             },
         );
         self.show_video_window_close_guard(open, |s| &mut s.show_emu_window);
+    }
+
+    /// Button remapping. See [`crate::input_settings`].
+    fn input_settings_window(&mut self, ctx: &egui::Context) {
+        if self.input_settings.show(ctx, &mut self.config)
+            != crate::input_settings::InputSettingsAction::Applied
+        {
+            return;
+        }
+
+        // Both caches are derived from the old bindings: `keyboard_keys` is
+        // the list of egui keys polled every frame (a new binding does
+        // nothing until it is rebuilt), and `input_state` can still hold a key
+        // that the new bindings no longer mention, which would leave that NDS
+        // button stuck down.
+        self.keyboard_keys = input::keyboard_keys(&self.config.input_bindings);
+        self.input_state = crate::input::InputState::default();
+        self.config.save();
     }
 
     fn audio_window(&mut self, ctx: &egui::Context) {
@@ -779,44 +827,122 @@ impl LunarisApp {
                     );
                 }
 
-                self.handle_stylus(&response, origin, bottom_rect);
+                self.record_stylus_placement(&response, origin, bottom_rect);
             },
         );
     }
 
-    /// Maps pointer interaction on the bottom screen to NDS touch input.
+    /// Records where the emulated screens ended up and whether the pointer is
+    /// pressing them, for the next repaint's [`Self::sample_stylus`].
+    ///
+    /// The panel is only laid out here, after emulation has already run for
+    /// this repaint, so nothing is applied to the emulator from this point —
+    /// doing so is what used to cost a full repaint of stylus latency.
     ///
     /// GBATEK "DS Touch Screen Controller (TSC)": the digitizer only covers
     /// the bottom LCD. See `docs/design/egui-migration-design.md` §8.5.
-    fn handle_stylus(
+    fn record_stylus_placement(
         &mut self,
         response: &egui::Response,
         origin: egui::Pos2,
         bottom_rect: PlacementRect,
     ) {
+        self.stylus_gate = response.is_pointer_button_down_on();
+        self.stylus_placement = Some((origin, bottom_rect));
+
         // egui clears `is_pointer_button_down_on` as soon as it sees the
         // release event, so a tap whose press and release both land inside a
-        // single frame reports "not pressed" and would never reach the
-        // emulator. `clicked()` reports exactly that case, and egui keeps
-        // `interact_pointer_pos` valid for it.
-        let pressed = response.is_pointer_button_down_on() || response.clicked();
-        let touch = pressed.then(|| response.interact_pointer_pos()).flatten().and_then(|pos| {
+        // single repaint reports "not pressed" throughout and would never
+        // reach the emulator. `clicked()` reports exactly that case, and the
+        // tap is already over, so both of its edges are queued here rather
+        // than inferred from pointer state a repaint later.
+        if response.clicked() {
+            let touch = response.interact_pointer_pos().and_then(|pos| {
+                let local = pos - origin;
+                point_to_touch_coords(local.x, local.y, bottom_rect)
+            });
+            if touch.is_some() {
+                self.stylus.push(touch);
+                self.stylus.push(None);
+            }
+        }
+    }
+
+    /// Queues this repaint's stylus states, before any frame is emulated.
+    ///
+    /// Every pointer motion egui received since the last repaint is turned
+    /// into a sample, so a fast drag reaches the emulator as the path the
+    /// pointer actually took rather than as a single endpoint one repaint
+    /// late. [`StylusQueue`] decides how many of them a given batch consumes.
+    fn sample_stylus(&mut self, ctx: &egui::Context) {
+        let Some((origin, bottom_rect)) = self.stylus_placement else { return };
+
+        // Only pointer positions are read here; whether the press counts as a
+        // stylus press is `stylus_gate`, i.e. egui's own hit-testing from the
+        // previous repaint. That keeps clicks on the menu bar and on floating
+        // windows out of the emulator without re-implementing hit-testing.
+        if !self.stylus_gate {
+            self.stylus.push(None);
+            return;
+        }
+
+        let to_touch = |pos: egui::Pos2| {
             let local = pos - origin;
             point_to_touch_coords(local.x, local.y, bottom_rect)
+        };
+
+        let samples = ctx.input(|i| {
+            let mut samples = Vec::new();
+
+            // The gate means the pointer was pressing the screen as of the
+            // previous repaint, so the pen starts this repaint down; the
+            // button events below are what lift it. Tracking this matters for
+            // a release followed by more motion inside one repaint, which
+            // must not be queued as a continued press.
+            let mut down = true;
+
+            for event in &i.raw.events {
+                match event {
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        ..
+                    } => {
+                        down = *pressed;
+                        samples.push(if down { to_touch(*pos) } else { None });
+                    }
+                    // Dragging off the digitizer is a release on hardware;
+                    // leaving the press latched instead would keep the NDS
+                    // holding a stale touch, so no later tap produces a press
+                    // edge. `to_touch` returns `None` off-rect, which is that
+                    // release.
+                    egui::Event::PointerMoved(pos) => {
+                        samples.push(if down { to_touch(*pos) } else { None });
+                    }
+                    egui::Event::PointerGone => {
+                        down = false;
+                        samples.push(None);
+                    }
+                    _ => {}
+                }
+            }
+
+            // A held, motionless pointer emits no events at all; re-sampling
+            // its last position keeps a press that began on an earlier
+            // repaint alive. `StylusQueue::push` coalesces the repeats.
+            if samples.is_empty() {
+                samples.push(match i.pointer.primary_down() {
+                    true => i.pointer.latest_pos().and_then(to_touch),
+                    false => None,
+                });
+            }
+            samples
         });
 
-        // Dragging off the digitizer is a release on hardware; leaving the
-        // press latched instead would keep the NDS holding a stale touch, so
-        // no later tap produces a press edge.
-        let Some((x, y)) = touch else {
-            if self.stylus_down {
-                self.nds.release_screen();
-                self.stylus_down = false;
-            }
-            return;
-        };
-        self.nds.press_screen(x, y);
-        self.stylus_down = true;
+        for sample in samples {
+            self.stylus.push(sample);
+        }
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
@@ -839,14 +965,21 @@ impl eframe::App for LunarisApp {
         self.update_window_info(ctx);
 
         if self.paused {
-            // Don't let a pause bank up a burst of frames on resume.
+            // Don't let a pause bank up a burst of frames — or a backlog of
+            // stylus samples nothing is draining — on resume.
             self.frame_accum = 0.0;
+            self.stylus.clear();
             self.last_tick = std::time::Instant::now();
         } else {
+            // Sampled before emulating, so the frames emulated below act on
+            // this repaint's pointer position rather than the previous one's.
+            self.sample_stylus(ctx);
             self.emulate_batch();
         }
 
-        if !ctx.wants_keyboard_input() {
+        self.input_settings.poll_capture(ctx, &mut self.gilrs);
+
+        if !ctx.wants_keyboard_input() && !self.input_settings.is_capturing() {
             ctx.input(|i| {
                 for (_, egui_key) in &self.keyboard_keys {
                     let egui_key = *egui_key;
@@ -882,6 +1015,7 @@ impl eframe::App for LunarisApp {
         self.emu_window(ctx);
         self.audio_window(ctx);
         self.video_window(ctx);
+        self.input_settings_window(ctx);
         self.update_title(ctx);
 
         if let Some(cheat_map) = self.cheat_editor_state.show_cheats(ctx, &self.config) {
