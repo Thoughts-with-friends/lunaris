@@ -65,6 +65,11 @@ pub struct Engine2D<E: EngineType> {
 
     // #[serde(with = "array2d")]
     bg_lines: [[u16; GPU::WIDTH]; 4],
+    /// Per-dot 5-bit alpha of the 3D layer for the scanline currently in
+    /// `bg_lines[0]`, valid only while engine A has BG0 in 3D mode. The 2D
+    /// compositor needs it because the 3D layer blends with its own polygon
+    /// alpha rather than with BLDALPHA. See [`Engine2D::process_lines`].
+    bg0_3d_alphas: [u8; GPU::WIDTH],
     // #[serde(with = "serde_big_array::BigArray")]
     objs_line: [OBJPixel; GPU::WIDTH],
     // #[serde(with = "array2d")]
@@ -110,6 +115,7 @@ impl<E: EngineType> Engine2D<E> {
             // Important Rendering Variables
             pixels: vec![0; GPU::WIDTH * GPU::HEIGHT],
             bg_lines: [[0; GPU::WIDTH]; 4],
+            bg0_3d_alphas: [0; GPU::WIDTH],
             objs_line: [OBJPixel::none(); GPU::WIDTH],
             windows_lines: [[false; GPU::WIDTH]; 3],
         }
@@ -292,6 +298,13 @@ impl<E: EngineType> Engine2D<E> {
             self.dispcnt.contains(DISPCNTFlags::DISPLAY_BG3),
             self.dispcnt.contains(DISPCNTFlags::DISPLAY_OBJ),
         ];
+        // Diagnostic `blend`: one line per scanline describing the colour
+        // special-effect state, which distinguishes "sprites are washed out
+        // because BLDY is armed" from "sprites are alpha-blended on purpose".
+        let is_3d = E::is_a() && self.dispcnt.contains(DISPCNTFlags::IS_3D);
+        let mut trans_obj_dots = 0usize;
+        let mut obj_top_dots = 0usize;
+        let mut sample: Option<(usize, u16, u16, u16, u8, u8)> = None;
         for dot_x in 0..GPU::WIDTH {
             let window_control = if self.windows_lines[0][dot_x] {
                 self.win_0_cnt
@@ -351,17 +364,52 @@ impl<E: EngineType> Engine2D<E> {
             }
 
             let trans_obj = layers[0] == Layer::OBJ && self.objs_line[dot_x].semitransparent;
-            let target1_enabled =
-                self.bldcnt.target_pixel1.enabled[layers[0] as usize] || trans_obj;
+            let is_3d_layer0 = is_3d && layers[0] == Layer::BG0;
+            trans_obj_dots += trans_obj as usize;
             let target2_enabled = self.bldcnt.target_pixel2.enabled[layers[1] as usize];
+            // A semi-transparent OBJ is only forced into alpha blending when the
+            // pixel underneath it is a 2nd target. Without a 2nd target it falls
+            // back to the regular BLDCNT effect, which still requires OBJ to be
+            // selected as 1st target; forcing 1st-target here would fade every
+            // semi-transparent sprite with whatever brightness value BLDY happens
+            // to hold. Matches melonDS `GPU2D_Soft::ApplyColorEffect`, which
+            // remaps the sprite flag back to the OBJ target bit before testing
+            // BLDCNT.
+            let force_alpha = trans_obj && target2_enabled;
+            // The 3D layer carries its own per-pixel alpha. A translucent 3D
+            // pixel sitting on a 2nd target always blends with that alpha
+            // instead of BLDALPHA, and regardless of whether BG0 is selected as
+            // a BLDCNT 1st target; an opaque one is never blended at all.
+            // Treating the 3D layer as an ordinary BLDCNT target washed 3D
+            // models out to white whenever a game left EVA/EVB at 16/16, since
+            // the two layers were then added at full weight and saturated.
+            // Matches melonDS `GPU2D_Soft::ColorBlend5`.
+            let alpha_3d = if is_3d_layer0 { self.bg0_3d_alphas[dot_x] } else { 0x1F };
+            let blend_3d = is_3d_layer0 && alpha_3d < 0x1F && target2_enabled;
+            let target1_enabled =
+                self.bldcnt.target_pixel1.enabled[layers[0] as usize] || force_alpha || blend_3d;
             let final_color = if window_control.color_special_enable() && target1_enabled {
-                let effect = if trans_obj && target2_enabled {
-                    ColorSFX::AlphaBlend
-                } else {
-                    self.bldcnt.effect
-                };
+                let effect =
+                    if force_alpha || blend_3d { ColorSFX::AlphaBlend } else { self.bldcnt.effect };
                 match effect {
                     ColorSFX::None => colors[0],
+                    ColorSFX::AlphaBlend if is_3d_layer0 => {
+                        if blend_3d {
+                            // EVA = alpha + 1, EVB = 32 - EVA, in 1/32 units.
+                            let eva = alpha_3d as u16 + 1;
+                            let evb = 0x20 - eva;
+                            let mut new_color = 0;
+                            for i in (0..3).rev() {
+                                let val1 = colors[0] >> (5 * i) & 0x1F;
+                                let val2 = colors[1] >> (5 * i) & 0x1F;
+                                let new_val = std::cmp::min(0x1F, (val1 * eva + val2 * evb) >> 5);
+                                new_color = new_color << 5 | new_val;
+                            }
+                            0x8000 | new_color
+                        } else {
+                            colors[0]
+                        }
+                    }
                     ColorSFX::AlphaBlend => {
                         if target2_enabled {
                             let mut new_color = 0;
@@ -401,7 +449,37 @@ impl<E: EngineType> Engine2D<E> {
             } else {
                 colors[0]
             };
+            if final_color != colors[0] {
+                obj_top_dots += 1;
+                if sample.is_none() {
+                    sample = Some((
+                        dot_x,
+                        colors[0],
+                        colors[1],
+                        final_color,
+                        layers[0] as u8,
+                        layers[1] as u8,
+                    ));
+                }
+            }
             self.set_pixel(vcount, dot_x, final_color);
+        }
+        if obj_top_dots != 0 && vcount.is_multiple_of(32) && crate::hw::diag::probe("blend") {
+            crate::diag!(
+                "blend",
+                "engine{} y={vcount} sfx_dots={obj_top_dots} trans_obj={trans_obj_dots} \
+                 sample(x,c0,c1,fin,l0,l1)={sample:?} bright={:?}/{} effect={:?} \
+                 t1={:?} t2={:?} eva={} evb={} evy={}",
+                if E::is_a() { "A" } else { "B" },
+                self.master_bright.mode(),
+                self.master_bright.factor(),
+                self.bldcnt.effect,
+                self.bldcnt.target_pixel1.enabled,
+                self.bldcnt.target_pixel2.enabled,
+                self.bldalpha.eva,
+                self.bldalpha.evb,
+                self.bldy.evy,
+            );
         }
     }
 
@@ -443,7 +521,7 @@ impl<E: EngineType> Engine2D<E> {
     /// <https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol>
     fn render_bg0(&mut self, engine3d: &Engine3D, vram: &VRAM, vcount: u16) {
         if E::is_a() && self.dispcnt.contains(DISPCNTFlags::IS_3D) {
-            engine3d.copy_line(vcount, &mut self.bg_lines[0])
+            engine3d.copy_line(vcount, &mut self.bg_lines[0], &mut self.bg0_3d_alphas)
         } else if self.dispcnt.contains(DISPCNTFlags::DISPLAY_BG0) {
             self.render_text_line(vram, vcount, 0)
         }
@@ -650,12 +728,22 @@ impl<E: EngineType> Engine2D<E> {
                         break;
                     } // Continue to look for color pixels
                 } else if !set_color {
-                    let color =
-                        if bpp8 && self.dispcnt.contains(DISPCNTFlags::OBJ_EXTENDED_PALETTES) {
-                            vram.get_obj_ext_pal::<E>(original_palette_num * 256 + color_num)
-                        } else {
-                            self.obj_palettes[palette_num * 16 + color_num]
-                        } | 0x8000;
+                    let ext_pal =
+                        bpp8 && self.dispcnt.contains(DISPCNTFlags::OBJ_EXTENDED_PALETTES);
+                    let color = if ext_pal {
+                        vram.get_obj_ext_pal::<E>(original_palette_num * 256 + color_num)
+                    } else {
+                        self.obj_palettes[palette_num * 16 + color_num]
+                    } | 0x8000;
+                    if dot_x == 128 && vcount.is_multiple_of(64) {
+                        crate::diag!(
+                            "objpal",
+                            "engine{} y={vcount} bpp8={bpp8} ext_pal={ext_pal} \
+                             opal={original_palette_num} pal={palette_num} \
+                             cnum={color_num} color={color:#06X} mode={mode}",
+                            if E::is_a() { "A" } else { "B" },
+                        );
+                    }
                     self.objs_line[dot_x] =
                         OBJPixel { color, priority, semitransparent: mode == 1 };
                     set_color = true;

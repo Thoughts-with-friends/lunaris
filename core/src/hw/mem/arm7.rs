@@ -33,7 +33,11 @@ impl HW {
                 MemoryRegion::IO => self.arm7_read_io(addr),
                 MemoryRegion::VRAM => self.gpu.vram.arm7_read(addr),
                 MemoryRegion::GBAROM => self.read_gba_rom(false, addr),
-                MemoryRegion::GBARAM => todo!(),
+                // No GBA cartridge is emulated, so the slot-2 bus floats.
+                MemoryRegion::GBARAM | MemoryRegion::Unknown => {
+                    warn!("Reading from unmapped ARM7 address: 0x{:08X}", addr);
+                    num::zero()
+                }
             }
         }
     }
@@ -62,7 +66,9 @@ impl HW {
                 MemoryRegion::IO => self.arm7_write_io(addr, value),
                 MemoryRegion::VRAM => self.gpu.vram.arm7_write(addr, value),
                 MemoryRegion::GBAROM => (),
-                MemoryRegion::GBARAM => todo!(),
+                MemoryRegion::GBARAM | MemoryRegion::Unknown => {
+                    warn!("Writing to unmapped ARM7 address: 0x{:08X} = 0x{:X}", addr, value)
+                }
             }
         }
     }
@@ -141,9 +147,20 @@ pub enum ARM7MemoryRegion {
     VRAM,
     GBAROM,
     GBARAM,
+    /// Address space with nothing behind it on the ARM7 bus: 0x01, 0x05
+    /// (palette) and 0x07 (OAM) are ARM9-only, and 0x0B..=0x0F is reserved.
+    Unknown,
 }
 
 impl ARM7MemoryRegion {
+    /// Classifies an ARM7 address by its top byte.
+    ///
+    /// Only the regions the ARM7 can actually reach are listed in GBATEK's
+    /// "ARM7 Memory Map"; everything else is unmapped and must not fault, since
+    /// games do stray into it (Pokémon Ranger writes to 0x01/0x05/0x07 during
+    /// boot) and real hardware silently drops those accesses.
+    ///
+    /// <https://problemkaputt.de/gbatek.htm#dsmemorymaps>
     pub fn from_addr(addr: u32) -> Self {
         use ARM7MemoryRegion::*;
         match addr >> 24 {
@@ -152,7 +169,7 @@ impl ARM7MemoryRegion {
             0x6 => VRAM,
             0x8 | 0x9 => GBAROM,
             0xA => GBARAM,
-            _ => todo!(),
+            _ => Unknown,
         }
     }
 }

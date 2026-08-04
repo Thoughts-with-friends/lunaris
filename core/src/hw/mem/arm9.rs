@@ -48,7 +48,11 @@ impl HW {
                     HW::read_mem(&self.gpu.engine_b.oam, addr & GPU::OAM_MASK as u32)
                 }
                 MemoryRegion::GBAROM => self.read_gba_rom(true, addr),
-                MemoryRegion::GBARAM => todo!(),
+                // No GBA cartridge is emulated, so the slot-2 bus floats.
+                MemoryRegion::GBARAM => {
+                    warn!("Reading from unmapped ARM9 GBA RAM: 0x{:08X}", addr);
+                    num::zero()
+                }
                 MemoryRegion::Unknown => {
                     warn!("Reading from Unknown 0x{:08X}", addr);
                     num::zero()
@@ -99,7 +103,9 @@ impl HW {
                     HW::write_mem(&mut self.gpu.engine_b.oam, addr & GPU::OAM_MASK as u32, value)
                 }
                 MemoryRegion::GBAROM => (),
-                MemoryRegion::GBARAM => todo!(),
+                MemoryRegion::GBARAM => {
+                    warn!("Writing to unmapped ARM9 GBA RAM: 0x{:08X} = 0x{:X}", addr, value)
+                }
                 MemoryRegion::Unknown => warn!("Writing to Unknown 0x{:08X} = 0x{:X}", addr, value),
             }
         }

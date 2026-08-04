@@ -307,29 +307,28 @@ impl MpTransport for LoopbackTransport {
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16 {
         let mut answered = 0u16;
         let mut offset = 0usize;
-        loop {
-            match self.reply_rx.try_recv() {
-                Ok(frame) => {
-                    if aid_mask & (1 << frame.aid) == 0 {
-                        continue;
-                    }
-                    // Tolerate replies from the same logical exchange
-                    // (within a coarse window), mirroring melonDS's ±32ms
-                    // reply-collection tolerance.
-                    if frame.timestamp_us.abs_diff(timestamp_us) > 32_000 {
-                        continue;
-                    }
-                    let end = (offset + frame.data.len()).min(buf.len());
-                    if end > offset {
-                        buf[offset..end].copy_from_slice(&frame.data[..end - offset]);
-                        offset = end;
-                    }
-                    answered |= 1 << frame.aid;
-                    if answered & aid_mask == aid_mask {
-                        break;
-                    }
-                }
-                Err(_) => break,
+
+        while let Ok(frame) = self.reply_rx.try_recv() {
+            if aid_mask & (1 << frame.aid) == 0 {
+                continue;
+            }
+
+            // Tolerate replies from the same logical exchange
+            // (within a coarse window), mirroring melonDS's ±32ms
+            // reply-collection tolerance.
+            if frame.timestamp_us.abs_diff(timestamp_us) > 32_000 {
+                continue;
+            }
+
+            let end = (offset + frame.data.len()).min(buf.len());
+            if end > offset {
+                buf[offset..end].copy_from_slice(&frame.data[..end - offset]);
+                offset = end;
+            }
+
+            answered |= 1 << frame.aid;
+            if answered & aid_mask == aid_mask {
+                break;
             }
         }
         answered
