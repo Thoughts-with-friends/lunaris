@@ -393,19 +393,38 @@ impl VRAM {
         if self.lcdc_enabled[bank as usize] { Some(&self.banks[bank as usize]) } else { None }
     }
 
+    /// Reads BG memory of engine A (512 KiB) or engine B (128 KiB).
+    ///
+    /// The mapping index is masked with the same per-region mask
+    /// [`VRAM::arm9_read`] applies: `BGCNT.tile_block` is 4 bits wide, so a
+    /// tile base of up to 0x3_C000 (plus `DISPCNT.char_base` on engine A) can
+    /// address past the end of the region. Such a read mirrors within the
+    /// region on real hardware, so it must not panic.
     pub fn get_bg<E: EngineType, T: MemoryValue>(&self, addr: usize) -> T {
+        let index = addr / VRAM::MAPPING_LEN;
         if E::is_a() {
-            VRAM::read_mapping(&self.banks, &self.engine_a_bg[addr / VRAM::MAPPING_LEN], addr)
+            VRAM::read_mapping(&self.banks, &self.engine_a_bg[index & VRAM::ENGINE_A_BG_MASK], addr)
         } else {
-            VRAM::read_mapping(&self.banks, &self.engine_b_bg[addr / VRAM::MAPPING_LEN], addr)
+            VRAM::read_mapping(&self.banks, &self.engine_b_bg[index & VRAM::ENGINE_B_BG_MASK], addr)
         }
     }
 
+    /// Reads OBJ memory of engine A (256 KiB) or engine B (128 KiB).
+    /// Index masking as in [`VRAM::get_bg`].
     pub fn get_obj<E: EngineType, T: MemoryValue>(&self, addr: usize) -> T {
+        let index = addr / VRAM::MAPPING_LEN;
         if E::is_a() {
-            VRAM::read_mapping(&self.banks, &self.engine_a_obj[addr / VRAM::MAPPING_LEN], addr)
+            VRAM::read_mapping(
+                &self.banks,
+                &self.engine_a_obj[index & VRAM::ENGINE_A_OBJ_MASK],
+                addr,
+            )
         } else {
-            VRAM::read_mapping(&self.banks, &self.engine_b_obj[addr / VRAM::MAPPING_LEN], addr)
+            VRAM::read_mapping(
+                &self.banks,
+                &self.engine_b_obj[index & VRAM::ENGINE_B_OBJ_MASK],
+                addr,
+            )
         }
     }
 
