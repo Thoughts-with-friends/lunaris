@@ -70,17 +70,21 @@ cargo run --release --features release --package lunaris-egui
 ## Todo List
 
 - [x] **Phase 0 (100%)**: FreeBIOS Development
-- [ ] **Phase 1 (0%)**: Optimization / Debugging
+- [ ] **Phase 1 (20%)**: Optimization / Debugging
   - [x] **Phase 1-1 (100%)**: Support Controller Input
-  - [ ] **Phase 1-2 (0%)**: Save Data System (.sav)
-  - [ ] **Phase 1-3 (0%)**: 2D Graphics
-  - [ ] **Phase 1-4 (0%)**: 3D Graphics
-  - [ ] **Phase 1-5 (0%)**: Loading Any ROM
-- [ ] **Phase 2 (0%)**: WiFi / Networking
-- [ ] **Phase 3 (0%)**: VPN Network support
+  - [ ] **Phase 1-2 (30%)**: Save Data System (.sav)
+  - [ ] **Phase 1-3 (20%)**: 2D Graphics
+  - [ ] **Phase 1-4 (10%)**: 3D Graphics
+  - [ ] **Phase 1-5 (10%)**: Loading Any ROM
+- [ ] **Phase 2 (30%)**: WiFi / Networking
+- [ ] **Phase 3 (10%)**: VPN Network support
 - [ ] **Phase 4 (0%)**: JIT Compile
 
+
+
+
 <p align="center">
+  <img src="./docs/img/ui_kh365.png" alt="Lunaris GUI" width="600"/>
   <img src="./docs/img/ui_sora.png" alt="Lunaris GUI" width="600"/>
 </p>
 
@@ -92,13 +96,16 @@ Our CI tests are run using [GitHub Actions](https://github.com/Thoughts-with-fri
 
 This project is a modified/extended version based on NDS-Emulator.
 
-- [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528): Base on the original NDS Emulator
-- [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
-- [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
-- [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
-- [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator high performance, low memory usage
-- [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
-- [GBATEK-md](https://mgba-emu.github.io/gbatek/#dstechnicaldata): GBA / Nintendo DS / DSi / 3DS - Technical Info
-- [TinyFB.nds](https://imrannazar.com/The-Smallest-NDS-File): The smallest Nintendo DS file
-- [Nintendo DS Architecture](https://www.copetti.org/writings/consoles/nintendo-ds/): An overview of the NDS
-- [BlocksDS](https://blocksds.skylyrac.net/tutorial/): Details on the NDS, focusing on easy-to-understand specifications at the implementation stage
+- Emulators
+  - [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528): Base on the original NDS Emulator
+  - [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
+  - [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
+  - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
+  - [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator high performance, low memory usage
+
+- Technical Information
+  - [Nintendo DS Architecture](https://www.copetti.org/writings/consoles/nintendo-ds/): An overview of the NDS
+  - [GBATEK](https://problemkaputt.de/gbatek.htm): GBA / Nintendo DS / DSi / 3DS - Technical Info
+  - [GBATEK-md](https://mgba-emu.github.io/gbatek/#dstechnicaldata): GBA / Nintendo DS / DSi / 3DS - Technical Info
+  - [BlocksDS](https://blocksds.skylyrac.net/tutorial/): Details on the NDS, focusing on easy-to-understand specifications at the implementation stage
+  - [TinyFB.nds](https://imrannazar.com/The-Smallest-NDS-File): The smallest Nintendo DS file
