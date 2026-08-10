@@ -34,7 +34,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 nds-core = { path = "./core" }
 free_bios = { path = "./free_bios" }
 lunaris_gui_common = { path = "./gui/common" }
-lunaris-net = { path = "./gui/net" }
+lunaris_net = { path = "./gui/net" }
 
 
 [workspace.lints.clippy]

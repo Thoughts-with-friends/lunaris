@@ -5,7 +5,7 @@
 //!
 //! Corresponds to melonDS's `src/net/LocalMP.{h,cpp}`. The socket-backed
 //! counterpart of this module (melonDS's `LAN.cpp`) deliberately lives in
-//! the frontend crate `lunaris-net`, because `nds-core` owns no sockets —
+//! the frontend crate `lunaris_net`, because `nds-core` owns no sockets —
 //! see [`crate::hw::net`].
 
 mod local_mp;

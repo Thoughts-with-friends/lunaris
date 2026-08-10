@@ -17,7 +17,7 @@
 //!   and [`MpInterface::recv_replies`] reads it back out with `Type >> 16`.
 //! * `MPInterface::Set` / `Get` (a process-global `unique_ptr`) has no
 //!   equivalent: the frontend owns the selected backend instead. See
-//!   `lunaris-net`'s `mp_interface` module.
+//!   `lunaris_net`'s `mp_interface` module.
 
 use std::time::Duration;
 
@@ -45,7 +45,7 @@ pub enum MpInterfaceType {
     /// FIFOs ([`super::local::LocalMp`]).
     Local,
     /// Instances on separate machines, exchanging frames over sockets.
-    /// Implemented by the frontend (`lunaris-net`), not by `nds-core`.
+    /// Implemented by the frontend (`lunaris_net`), not by `nds-core`.
     Lan,
     /// Rollback/lockstep netplay. Not implemented.
     Netplay,

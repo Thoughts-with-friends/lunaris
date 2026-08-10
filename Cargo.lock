@@ -2528,22 +2528,14 @@ dependencies = [
  "egui_plot",
  "gilrs",
  "ico",
- "lunaris-net",
  "lunaris_gui_common",
+ "lunaris_net",
  "nds-core",
  "pollster",
  "rfd",
  "serde",
  "serde_json",
  "winres",
-]
-
-[[package]]
-name = "lunaris-net"
-version = "0.1.0"
-dependencies = [
- "nds-core",
- "rusty_enet",
 ]
 
 [[package]]
@@ -2573,6 +2565,14 @@ dependencies = [
  "serde_json",
  "winres",
  "zstd",
+]
+
+[[package]]
+name = "lunaris_net"
+version = "0.1.0"
+dependencies = [
+ "nds-core",
+ "rusty_enet",
 ]
 
 [[package]]

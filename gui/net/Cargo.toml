@@ -1,7 +1,7 @@
 # Room hosting/joining and MP frame relay over TCP+UDP. See
 # docs/design/design_lan.md.
 [package]
-name = "lunaris-net"
+name = "lunaris_net"
 version.workspace = true
 authors.workspace = true
 categories.workspace = true

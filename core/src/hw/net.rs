@@ -14,11 +14,11 @@
 //!
 //! # What lives elsewhere, and why
 //! `nds-core` owns no sockets — a constraint the Wi-Fi hardware module and
-//! the `lunaris-net` crate both document and depend on. So the two melonDS
+//! the `lunaris_net` crate both document and depend on. So the two melonDS
 //! files that *are* socket code stay in the frontend:
 //!
 //! * `LAN.cpp` (enet-based room hosting, discovery, player list) is
-//!   `lunaris-net`'s `room`/`transport`/`wire` modules.
+//!   `lunaris_net`'s `room`/`transport`/`wire` modules.
 //! * `Netplay.cpp` (savestate-synchronised netplay) has no lunaris
 //!   equivalent and is not ported.
 //!
