@@ -356,7 +356,8 @@ impl dyn Backup {
         // …); the first byte of the little-endian `game_code` is the
         // cartridge header's first ASCII game-code character. See
         // `docs/design/ir-nand-foreign-sav-design.md` §2.1/§3.1.
-        let is_ir_cart = (header.game_code & 0xFF) as u8 == b'I';
+        let is_ir_cart =
+            (header.game_code & 0xFF) as u8 == b'I' && std::env::var_os("LUNARIS_NO_IR").is_none();
 
         match sram_type {
             1 => {

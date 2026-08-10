@@ -50,6 +50,9 @@ impl Backup for IrBackup {
     }
 
     fn write(&mut self, hold: bool, value: u8) {
+        if self.expecting_selector && std::env::var_os("LUNARIS_SPI_TRACE").is_some() {
+            eprintln!("[ir] selector {value:02X} hold={hold}");
+        }
         if self.expecting_selector {
             // The device-selector byte itself: 00h hands the rest of the
             // transaction to the flash chip untouched; 08h is a status

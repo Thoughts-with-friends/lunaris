@@ -9,6 +9,7 @@ node_modules/
 *.nds
 *.sav
 *.log
+*.bak
 logs/
 
 *config.json*

@@ -557,7 +557,15 @@ impl SPICNT {
                 self.busy = value >> 7 & 0x1 != 0;
             }
             1 => {
-                self.slot_mode = value >> 5 & 0x1 != 0;
+                let new_slot_mode = value >> 5 & 0x1 != 0;
+                if std::env::var_os("LUNARIS_SPI_TRACE").is_some()
+                    && self.slot_mode
+                    && !new_slot_mode
+                    && self.hold
+                {
+                    eprintln!("[auxspicnt] bit13 cleared while hold=1 (CS release)");
+                }
+                self.slot_mode = new_slot_mode;
                 self.transfer_ready_irq = value >> 6 & 0x1 != 0;
                 self.slot_enable = value >> 7 & 0x1 != 0;
             }
