@@ -211,50 +211,80 @@ impl Wifi {
             return false;
         }
 
-        let Some(mut transport) = self.transport.take() else { return false };
-        let mut buf = vec![0u8; Wifi::RX_BUFFER_SIZE];
-        let recv = match kind {
-            RxKind::Regular => transport.recv_packet(&mut buf),
-            RxKind::HostFrames => {
-                transport.recv_host_packet(&mut buf, self.link_hints().recv_timeout)
-            }
-        };
-        self.transport = Some(transport);
+        // Ported from `CheckRX`'s `for (;;)` loop (`Wifi.cpp:1581-1645`): a
+        // frame that fails validation is discarded and the next one is
+        // pulled immediately, within this same call, rather than giving up
+        // the whole polling opportunity for one bad or irrelevant frame.
+        // Bounded so a misbehaving transport can't stall a tick forever.
+        const MAX_DRAIN_ATTEMPTS: u32 = 64;
+        let (len, frame_kind, timestamp_us, runahead_us, frame_len) = 'drain: {
+            for _ in 0..MAX_DRAIN_ATTEMPTS {
+                let Some(mut transport) = self.transport.take() else { return false };
+                let mut buf = vec![0u8; Wifi::RX_BUFFER_SIZE];
+                let recv = match kind {
+                    RxKind::Regular => transport.recv_packet(&mut buf),
+                    RxKind::HostFrames => {
+                        transport.recv_host_packet(&mut buf, self.link_hints().recv_timeout)
+                    }
+                };
+                self.transport = Some(transport);
 
-        let (len, frame_kind, timestamp_us, runahead_us) = match recv {
-            MpRecv::Frame { len, kind, timestamp_us, runahead_us } => {
-                (len, kind, timestamp_us, runahead_us)
-            }
-            MpRecv::HostGone => {
-                self.is_mp = false;
-                self.is_mp_client = false;
-                return false;
-            }
-            MpRecv::None => return false,
-        };
+                let (len, frame_kind, timestamp_us, runahead_us) = match recv {
+                    MpRecv::Frame { len, kind, timestamp_us, runahead_us } => {
+                        (len, kind, timestamp_us, runahead_us)
+                    }
+                    MpRecv::HostGone => {
+                        self.is_mp = false;
+                        self.is_mp_client = false;
+                        return false;
+                    }
+                    MpRecv::None => return false,
+                };
 
-        if len < 12 + 24 {
-            return false; // Too short to contain a valid 802.11 header.
-        }
-        let frame_len = buf[10] as usize | (buf[11] as usize) << 8;
-        if frame_len != len - 12 {
-            warn!("wifi: bad MP frame length {frame_len}/{}", len - 12);
+                if len < 12 + 24 {
+                    continue; // Too short to contain a valid 802.11 header.
+                }
+                let frame_len = buf[10] as usize | (buf[11] as usize) << 8;
+                if frame_len != len - 12 {
+                    warn!("wifi: bad MP frame length {frame_len}/{}", len - 12);
+                    continue;
+                }
+                let channel = buf[9];
+                if channel as i32 != self.cur_channel || self.cur_channel == 0 {
+                    if super::debug_enabled() {
+                        eprintln!(
+                            "[wifi] RX dropped: channel mismatch (frame channel={channel}, our \
+                             cur_channel={}) -- both peers must resolve the same channel from \
+                             their (possibly independently-generated) firmware RF calibration \
+                             table",
+                            self.cur_channel
+                        );
+                    }
+                    continue;
+                }
+
+                // Ignore MP frames on the regular path while we are not
+                // ourselves engaged in an MP session -- otherwise a bystander
+                // instance would classify a stranger's CMD/reply frame and
+                // (via `step_rx`'s `0x800C` branch) transmit a blank reply
+                // into a session it isn't part of. Ported from `Wifi.cpp:
+                // 1620-1628` ("hack: ignore MP frames if not engaged in a MP
+                // comm").
+                if kind == RxKind::Regular
+                    && !self.is_mp
+                    && (mac_eq(&buf, 12 + 16, MP_REPLY_MAC)
+                        || mac_eq(&buf, 12 + 4, MP_CMD_MAC)
+                        || mac_eq(&buf, 12 + 4, MP_REPLY_MAC))
+                {
+                    continue;
+                }
+
+                self.rx_buffer[..len].copy_from_slice(&buf[..len]);
+                break 'drain (len, frame_kind, timestamp_us, runahead_us, frame_len);
+            }
             return false;
-        }
-        let channel = buf[9];
-        if channel as i32 != self.cur_channel || self.cur_channel == 0 {
-            if super::debug_enabled() {
-                eprintln!(
-                    "[wifi] RX dropped: channel mismatch (frame channel={channel}, our \
-                     cur_channel={}) -- both peers must resolve the same channel from their \
-                     (possibly independently-generated) firmware RF calibration table",
-                    self.cur_channel
-                );
-            }
-            return false;
-        }
+        };
 
-        self.rx_buffer[..len].copy_from_slice(&buf[..len]);
         let frame_ctl = self.rx_buffer[12] as u16 | (self.rx_buffer[13] as u16) << 8;
         let frame_type = frame_ctl & 0x00FF;
         let tx_rate = self.rx_buffer[8];
@@ -269,6 +299,7 @@ impl Wifi {
         let cropped_framelen = self.crop_framelen(frame_len as u16);
 
         if super::debug_enabled() {
+            let channel = self.rx_buffer[9];
             eprintln!(
                 "[wifi] RX accepted: kind={frame_kind:?} frame_type=0x{frame_type:04X} \
                  mac_good={mac_good} channel={channel} is_mp_client={} len={len} \

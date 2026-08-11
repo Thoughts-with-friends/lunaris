@@ -105,7 +105,13 @@ impl LanRoomState {
             player_name: config.lan.player_name.clone(),
             room_name: config.lan.room_name.clone(),
             rom_fingerprint: nds.rom_fingerprint().to_bytes(),
-            mac_suffix: config.lan.mac_suffix,
+            // Must match what's actually baked into this process's
+            // firmware (`gui/common/src/loader.rs::load_rom`), not the raw
+            // persisted `config.lan.mac_suffix` -- see
+            // `LanConfig::effective_mac_suffix`'s doc comment. Using the raw
+            // value here would make the room's MAC-collision check compare
+            // against a value that isn't actually what's on the wire.
+            mac_suffix: config.lan.effective_mac_suffix(),
             max_players: config.lan.max_players,
             control_port: config.lan.control_port,
             mp_port: config.lan.mp_port,

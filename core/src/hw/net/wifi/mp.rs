@@ -14,6 +14,12 @@ use std::{
     time::Duration,
 };
 
+use crate::hw::net::mp_interface::MAX_INSTANCES;
+
+/// Per-client slot size inside the caller's `recv_replies` buffer, matching
+/// melonDS's `MPClientReplies[15*1024]` / `packets[(aid-1)*1024]` layout.
+const REPLY_SLOT_SIZE: usize = 1024;
+
 /// Which of the four MP frame categories a received frame belongs to. The
 /// wire protocol tags this explicitly (`docs/design/design_lan.md` §5.4's
 /// `mp_type` field) rather than making the receiver sniff the 802.11 frame
@@ -306,24 +312,35 @@ impl MpTransport for LoopbackTransport {
 
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16 {
         let mut answered = 0u16;
-        let mut offset = 0usize;
 
         while let Ok(frame) = self.reply_rx.try_recv() {
             if aid_mask & (1 << frame.aid) == 0 {
                 continue;
             }
 
-            // Tolerate replies from the same logical exchange
-            // (within a coarse window), mirroring melonDS's ±32ms
-            // reply-collection tolerance.
-            if frame.timestamp_us.abs_diff(timestamp_us) > 32_000 {
+            // One-sided staleness test, matching melonDS's
+            // `header->Timestamp < (timestamp - 32)`: a reply whose
+            // timestamp is *ahead* of ours (legitimate -- clients are
+            // explicitly granted a run-ahead window by the host's ack) must
+            // never be rejected, only one that lags behind by more than the
+            // tolerance. `wrapping_sub` mirrors melonDS's unsigned
+            // underflow at low timestamps, where the test becomes
+            // vacuously true early in a session.
+            if frame.timestamp_us < timestamp_us.wrapping_sub(32_000) {
                 continue;
             }
 
-            let end = (offset + frame.data.len()).min(buf.len());
-            if end > offset {
-                buf[offset..end].copy_from_slice(&frame.data[..end - offset]);
-                offset = end;
+            // Replies are addressed by association ID into fixed 1 KiB
+            // slots -- `packets[(aid-1)*1024]` in melonDS -- not packed
+            // back-to-back. `aid == 0` would underflow that index and
+            // `aid > 15` would run past the buffer, so both are dropped.
+            if !(1..MAX_INSTANCES as u16).contains(&frame.aid) {
+                continue;
+            }
+            let slot = (frame.aid as usize - 1) * REPLY_SLOT_SIZE;
+            let end = (slot + frame.data.len()).min(buf.len());
+            if end > slot {
+                buf[slot..end].copy_from_slice(&frame.data[..end - slot]);
             }
 
             answered |= 1 << frame.aid;
@@ -374,9 +391,50 @@ mod tests {
     #[test]
     fn recv_replies_collects_within_timestamp_tolerance() {
         let (mut host, mut client) = LoopbackTransport::new_pair();
-        client.send_reply(&[7], 1_000, 1);
-        let mut buf = [0u8; 64];
-        let answered = host.recv_replies(&mut buf, 1_000, 1 << 1);
+        // A realistic emulated timestamp, past the `wrapping_sub(32_000)`
+        // underflow window exercised by `early_session_replies_are_stale`
+        // below.
+        client.send_reply(&[7], 100_000, 1);
+        let mut buf = [0u8; 1024];
+        let answered = host.recv_replies(&mut buf, 100_000, 1 << 1);
         assert_eq!(answered, 1 << 1);
+        assert_eq!(&buf[..1], &[7]);
+    }
+
+    #[test]
+    fn recv_replies_ahead_of_the_host_clock_are_accepted() {
+        // A client legitimately running ahead of the host (within its
+        // granted run-ahead window) must not have its reply rejected by a
+        // symmetric tolerance check -- only a reply that lags behind
+        // matters. Regression test for the two-sided `abs_diff` bug.
+        let (mut host, mut client) = LoopbackTransport::new_pair();
+        client.send_reply(&[7], 100_500, 1);
+        let mut buf = [0u8; 1024];
+        let answered = host.recv_replies(&mut buf, 100_000, 1 << 1);
+        assert_eq!(answered, 1 << 1);
+    }
+
+    #[test]
+    fn recv_replies_land_in_their_per_aid_slot() {
+        let (mut host, mut client) = LoopbackTransport::new_pair();
+        client.send_reply(&[0xAB; 4], 100_000, 2);
+        let mut buf = [0u8; 15 * REPLY_SLOT_SIZE];
+        let answered = host.recv_replies(&mut buf, 100_000, 1 << 2);
+        assert_eq!(answered, 1 << 2);
+        // AID 2 occupies the second 1 KiB slot, not offset 0.
+        assert_eq!(&buf[REPLY_SLOT_SIZE..REPLY_SLOT_SIZE + 4], &[0xAB; 4]);
+        assert!(buf[..REPLY_SLOT_SIZE].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn early_session_replies_are_stale() {
+        // Mirrors `LocalMp`'s `early_session_replies_are_all_treated_as_stale`:
+        // at low timestamps `timestamp - 32_000` underflows, which melonDS
+        // relies on to vacuously treat everything as stale.
+        let (mut host, mut client) = LoopbackTransport::new_pair();
+        client.send_reply(&[7], 1_000, 1);
+        let mut buf = [0u8; 1024];
+        let answered = host.recv_replies(&mut buf, 1_000, 1 << 1);
+        assert_eq!(answered, 0);
     }
 }

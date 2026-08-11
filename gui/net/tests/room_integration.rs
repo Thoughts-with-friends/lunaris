@@ -13,12 +13,12 @@ use std::{
 use lunaris_net::{Room, RoomConfig};
 use nds_core::nds::MpTransport;
 
-fn cfg(name: &str, control_port: u16, mp_port: u16) -> RoomConfig {
+fn cfg(name: &str, control_port: u16, mp_port: u16, mac_suffix: [u8; 3]) -> RoomConfig {
     RoomConfig {
         player_name: name.to_owned(),
         room_name: "Integration Test Room".to_owned(),
         rom_fingerprint: [0xAB; 16],
-        mac_suffix: [1, 2, 3],
+        mac_suffix,
         max_players: 4,
         control_port,
         mp_port,
@@ -40,9 +40,10 @@ fn wait_until(mut predicate: impl FnMut() -> bool, timeout: Duration) -> bool {
 fn host_and_join_see_each_other_in_the_player_list() {
     // Distinct ports per test function to avoid collisions when the test
     // binary runs multiple tests in parallel.
-    let host_room = Room::host(&cfg("Host", 27064, 27065)).expect("failed to host room");
-    let guest_room = Room::join(&cfg("Guest", 27064, 27066), IpAddr::V4(Ipv4Addr::LOCALHOST))
-        .expect("failed to join room");
+    let host_room = Room::host(&cfg("Host", 27064, 27065, [1, 2, 3])).expect("failed to host room");
+    let guest_room =
+        Room::join(&cfg("Guest", 27064, 27066, [4, 5, 6]), IpAddr::V4(Ipv4Addr::LOCALHOST))
+            .expect("failed to join room");
 
     assert_eq!(guest_room.handle.self_id(), 1);
     assert!(!guest_room.handle.is_host());
@@ -68,9 +69,11 @@ fn host_and_join_see_each_other_in_the_player_list() {
 
 #[test]
 fn mp_frames_relay_over_real_udp_sockets() {
-    let mut host_room = Room::host(&cfg("Host", 27164, 27165)).expect("failed to host room");
-    let mut guest_room = Room::join(&cfg("Guest", 27164, 27166), IpAddr::V4(Ipv4Addr::LOCALHOST))
-        .expect("failed to join room");
+    let mut host_room =
+        Room::host(&cfg("Host", 27164, 27165, [1, 2, 3])).expect("failed to host room");
+    let mut guest_room =
+        Room::join(&cfg("Guest", 27164, 27166, [4, 5, 6]), IpAddr::V4(Ipv4Addr::LOCALHOST))
+            .expect("failed to join room");
 
     // Give the host a moment to learn the guest's UDP address from Hello
     // before the guest's first send.
@@ -78,7 +81,12 @@ fn mp_frames_relay_over_real_udp_sockets() {
         wait_until(|| host_room.handle.players().len() == 2, Duration::from_secs(2));
     assert!(host_knows_guest, "host never registered the guest's UDP endpoint");
 
-    host_room.transport.send_packet(&[1, 2, 3, 4], 1_000);
+    // A realistic emulated timestamp: below ~32_000 the one-sided
+    // staleness test in `recv_replies` (`timestamp - 32_000`, matching
+    // melonDS's `header->Timestamp < (timestamp - 32)`) underflows and
+    // every reply is vacuously stale, by design -- see
+    // `docs/design/review_mp_local.md` F5.
+    host_room.transport.send_packet(&[1, 2, 3, 4], 100_000);
 
     let mut buf = [0u8; 64];
     let mut received = false;
@@ -94,8 +102,26 @@ fn mp_frames_relay_over_real_udp_sockets() {
     }
     assert!(received, "guest never received the host's UDP packet");
 
-    guest_room.transport.send_reply(&[9, 9], 1_000, 1);
+    guest_room.transport.send_reply(&[9, 9], 100_000, 1);
     let mut reply_buf = [0u8; 64];
-    let answered = host_room.transport.recv_replies(&mut reply_buf, 1_000, 1 << 1);
+    let answered = host_room.transport.recv_replies(&mut reply_buf, 100_000, 1 << 1);
     assert_eq!(answered, 1 << 1, "host never collected the guest's reply");
+}
+
+#[test]
+fn joining_with_a_colliding_mac_suffix_is_rejected() {
+    // Two DS units with identical Wi-Fi MAC addresses can never complete
+    // the association handshake with each other -- the host must reject a
+    // joiner whose `mac_suffix` collides with an existing player's rather
+    // than let them join a session that can never actually connect over
+    // MP. See `docs/design/review_mp_local.md` F13.
+    let _host_room =
+        Room::host(&cfg("Host", 27264, 27265, [7, 7, 7])).expect("failed to host room");
+    let result =
+        Room::join(&cfg("Guest", 27264, 27266, [7, 7, 7]), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let err = result.err().expect("join with a colliding MAC suffix must fail");
+    assert!(
+        err.to_string().contains("MAC address collision"),
+        "unexpected error for a MAC collision: {err}"
+    );
 }

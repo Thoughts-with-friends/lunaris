@@ -15,14 +15,31 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, Ordering},
-        mpsc::{Receiver, Sender, TryRecvError},
+        mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use nds_core::nds::{LinkHints, MpFrameKind, MpRecv, MpTransport};
 
 use crate::wire::{MpDatagram, WireFrameKind};
+
+/// How long an inbound MP datagram may sit in the receive queue before it
+/// is assumed stale and dropped rather than delivered. Matches melonDS's
+/// `LAN::ProcessLAN` staleness rule ("any incoming packet should be
+/// consumed by the core quickly, so if it's been sitting in the queue for
+/// more than one frame's time, we can assume it's stale",
+/// `docs/design/melonds/net/LAN.cpp:805-834`) -- one video frame's worth of
+/// wall-clock time. Undelivered stale frames poison the MP client's sync
+/// clock (`Wifi::next_sync`) if left in the queue; see
+/// `docs/design/review_mp_local.md` F3.
+const RX_STALE: Duration = Duration::from_millis(16);
+/// Soft cap on each inbound channel. `sync_channel` blocks a full sender,
+/// so the RX pump uses `try_send` and drops the *newest* datagram on
+/// overflow instead -- a deliberate deviation from melonDS's drop-oldest
+/// policy, acceptable because [`RX_STALE`] eviction on the consumer side
+/// keeps the backlog from ever reaching this cap in practice.
+const RX_QUEUE_CAP: usize = 32;
 
 fn to_core_kind(kind: WireFrameKind) -> MpFrameKind {
     match kind {
@@ -73,11 +90,19 @@ impl SharedHints {
 
 struct Inbound {
     kind: WireFrameKind,
-    sender_id: u8,
     aid: u16,
     timestamp_us: u64,
     runahead_us: u32,
     payload: Vec<u8>,
+    /// Wall-clock instant this datagram was pulled off the socket, used by
+    /// the consumer side to evict stale entries (see [`RX_STALE`]).
+    arrival: Instant,
+}
+
+/// `true` if `frame` has been sitting in the queue longer than
+/// [`RX_STALE`] and should be dropped rather than delivered.
+fn is_stale(frame: &Inbound) -> bool {
+    frame.arrival.elapsed() > RX_STALE
 }
 
 /// UDP-backed [`MpTransport`]. Construct via [`NetTransport::new`], which
@@ -118,14 +143,18 @@ impl NetTransport {
         // shutdown flag instead of blocking forever in `recv_from`.
         socket.set_read_timeout(Some(Duration::from_millis(200)))?;
 
-        let (regular_tx, regular_rx) = std::sync::mpsc::channel();
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        // Bounded: an unbounded channel would let a stalled consumer
+        // accumulate an ever-growing backlog of frames that are stale by
+        // the time they're read, exactly the failure mode in
+        // `docs/design/review_mp_local.md` F3.
+        let (regular_tx, regular_rx) = std::sync::mpsc::sync_channel(RX_QUEUE_CAP);
+        let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(RX_QUEUE_CAP);
         let host_gone = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         spawn_rx_pump(
             Arc::clone(&socket),
-            host_id,
+            self_id,
             regular_tx,
             reply_tx,
             Arc::clone(&host_gone),
@@ -153,6 +182,18 @@ impl NetTransport {
     /// Propagates any error from the underlying `local_addr` call.
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.socket.local_addr()
+    }
+
+    /// A shared handle onto this transport's "host is gone" flag, so a
+    /// caller with a more authoritative signal than a UDP socket error --
+    /// e.g. the room's TCP control channel dropping, which the underlying
+    /// socket alone cannot detect (`docs/design/review_mp_local.md` F6) --
+    /// can raise it directly. The next [`MpTransport::recv_packet`] /
+    /// [`MpTransport::recv_host_packet`] call will then report
+    /// [`MpRecv::HostGone`].
+    #[must_use]
+    pub fn host_gone_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.host_gone)
     }
 
     fn next_seq(&self) -> u32 {
@@ -220,52 +261,86 @@ impl MpTransport for NetTransport {
     }
 
     fn recv_packet(&mut self, buf: &mut [u8]) -> MpRecv {
-        match self.regular_rx.try_recv() {
-            Ok(frame) => deliver(buf, frame),
-            Err(TryRecvError::Empty) => {
-                if self.host_gone.load(Ordering::Relaxed) {
-                    MpRecv::HostGone
-                } else {
-                    MpRecv::None
+        loop {
+            match self.regular_rx.try_recv() {
+                Ok(frame) if is_stale(&frame) => continue,
+                Ok(frame) => return deliver(buf, frame),
+                Err(TryRecvError::Empty) => {
+                    return if self.host_gone.load(Ordering::Relaxed) {
+                        MpRecv::HostGone
+                    } else {
+                        MpRecv::None
+                    };
                 }
+                Err(TryRecvError::Disconnected) => return MpRecv::HostGone,
             }
-            Err(TryRecvError::Disconnected) => MpRecv::HostGone,
         }
     }
 
     fn recv_host_packet(&mut self, buf: &mut [u8], timeout: Duration) -> MpRecv {
-        match self.regular_rx.recv_timeout(timeout) {
-            Ok(frame) => deliver(buf, frame),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if self.host_gone.load(Ordering::Relaxed) { MpRecv::HostGone } else { MpRecv::None }
+        // Budget the whole call, not each individual receive: draining a
+        // backlog of stale frames (F3) must not let the effective wait
+        // exceed the caller's timeout.
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.regular_rx.recv_timeout(remaining) {
+                Ok(frame) if is_stale(&frame) => continue,
+                Ok(frame) => return deliver(buf, frame),
+                Err(RecvTimeoutError::Timeout) => {
+                    return if self.host_gone.load(Ordering::Relaxed) {
+                        MpRecv::HostGone
+                    } else {
+                        MpRecv::None
+                    };
+                }
+                Err(RecvTimeoutError::Disconnected) => return MpRecv::HostGone,
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => MpRecv::HostGone,
         }
     }
 
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16 {
         let mut answered = 0u16;
-        let mut offset = 0usize;
-        // Bounded wall-clock budget: this is called synchronously from the
-        // TX-complete path, so it must not stall the caller indefinitely
-        // even if a client never replies.
-        let deadline = std::time::Instant::now() + Duration::from_millis(50);
+        // Ported from melonDS `LAN::RecvReplies`: honour the transport's
+        // configured receive budget (`link_hints().recv_timeout`, melonDS's
+        // `MPRecvTimeout`) rather than a value hard-coded independently of
+        // it -- see `docs/design/review_mp_local.md` F11.
+        let timeout = self.hints.get().recv_timeout;
+        let deadline = Instant::now() + timeout;
         loop {
-            if answered & aid_mask == aid_mask || std::time::Instant::now() >= deadline {
+            if answered & aid_mask == aid_mask {
                 break;
             }
-            match self.reply_rx.recv_timeout(Duration::from_millis(5)) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match self.reply_rx.recv_timeout(remaining) {
                 Ok(frame) => {
-                    if frame.aid >= 16 || aid_mask & (1 << frame.aid) == 0 {
+                    if is_stale(&frame) {
                         continue;
                     }
-                    if frame.timestamp_us.abs_diff(timestamp_us) > 32_000 {
+                    if frame.aid == 0 || frame.aid >= 16 || aid_mask & (1 << frame.aid) == 0 {
                         continue;
                     }
-                    let end = (offset + frame.payload.len()).min(buf.len());
-                    if end > offset {
-                        buf[offset..end].copy_from_slice(&frame.payload[..end - offset]);
-                        offset = end;
+                    // One-sided staleness test on the *emulated* timestamp
+                    // (distinct from `arrival`/`RX_STALE`, which guards
+                    // wall-clock queue latency): matches melonDS's
+                    // `header->Timestamp < (timestamp - 32)`. A reply whose
+                    // emulated clock legitimately runs ahead of the host's
+                    // (granted by the host's own run-ahead window) must
+                    // never be rejected -- only one that lags behind.
+                    if frame.timestamp_us < timestamp_us.wrapping_sub(32_000) {
+                        continue;
+                    }
+                    // Replies are addressed by association ID into fixed
+                    // 1 KiB slots (`packets[(aid-1)*1024]` in melonDS), not
+                    // packed back-to-back -- see
+                    // `docs/design/review_mp_local.md` F2.
+                    let slot = (frame.aid as usize - 1) * 1024;
+                    let end = (slot + frame.payload.len()).min(buf.len());
+                    if end > slot {
+                        buf[slot..end].copy_from_slice(&frame.payload[..end - slot]);
                     }
                     answered |= 1 << frame.aid;
                 }
@@ -299,9 +374,9 @@ fn deliver(buf: &mut [u8], frame: Inbound) -> MpRecv {
 
 fn spawn_rx_pump(
     socket: Arc<UdpSocket>,
-    host_id: u8,
-    regular_tx: Sender<Inbound>,
-    reply_tx: Sender<Inbound>,
+    self_id: u8,
+    regular_tx: SyncSender<Inbound>,
+    reply_tx: SyncSender<Inbound>,
     host_gone: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 ) {
@@ -314,24 +389,35 @@ fn spawn_rx_pump(
             match socket.recv_from(&mut buf) {
                 Ok((len, _addr)) => {
                     let Ok(dgram) = MpDatagram::decode(&buf[..len]) else { continue };
+                    // Reject a datagram that echoed back to us -- from a
+                    // misconfigured peer table (see `Room::host`'s former
+                    // self-entry) or a broadcast/relay quirk. melonDS's
+                    // `LAN::RecvPacketGeneric` applies the same
+                    // `SenderID == MyPlayer.ID` filter; see
+                    // `docs/design/review_mp_local.md` F4.
+                    if dgram.sender_id == self_id {
+                        continue;
+                    }
                     let inbound = Inbound {
                         kind: dgram.kind,
-                        sender_id: dgram.sender_id,
                         aid: dgram.aid,
                         timestamp_us: dgram.timestamp_us,
                         runahead_us: dgram.runahead_us,
                         payload: dgram.payload,
+                        arrival: Instant::now(),
                     };
-                    let _ = inbound.sender_id; // Currently informational only; host-only filtering happens via `PeerTable`/room logic upstream.
+                    // `try_send`: a full queue means the consumer has
+                    // fallen behind, and the datagram now waiting longest
+                    // is about to age out via `RX_STALE` regardless -- see
+                    // the `RX_QUEUE_CAP` doc comment.
                     match dgram.kind {
                         WireFrameKind::Reply => {
-                            let _ = reply_tx.send(inbound);
+                            let _ = reply_tx.try_send(inbound);
                         }
                         _ => {
-                            let _ = regular_tx.send(inbound);
+                            let _ = regular_tx.try_send(inbound);
                         }
                     }
-                    let _ = host_id;
                 }
                 Err(e)
                     if e.kind() == std::io::ErrorKind::WouldBlock
@@ -346,4 +432,117 @@ fn spawn_rx_pump(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+
+    use super::*;
+
+    /// Binds a `NetTransport` pair on localhost, each addressed by the
+    /// other. `host_id` is `0` (transport `a`); `b` is instance `1`.
+    fn transport_pair() -> (NetTransport, NetTransport) {
+        let sock_a = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let sock_b = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr_a = sock_a.local_addr().unwrap();
+        let addr_b = sock_b.local_addr().unwrap();
+
+        let peers_a = Arc::new(PeerTable::default());
+        peers_a.set(vec![(1, addr_b)]);
+        let peers_b = Arc::new(PeerTable::default());
+        peers_b.set(vec![(0, addr_a)]);
+
+        let hints_a = Arc::new(SharedHints::default());
+        hints_a.set(LinkHints { runahead_us: 1000, recv_timeout: Duration::from_millis(200) });
+        let hints_b = Arc::new(SharedHints::default());
+        hints_b.set(LinkHints { runahead_us: 1000, recv_timeout: Duration::from_millis(200) });
+
+        let a = NetTransport::from_socket(sock_a, 0, 0, peers_a, hints_a).unwrap();
+        let b = NetTransport::from_socket(sock_b, 1, 0, peers_b, hints_b).unwrap();
+        (a, b)
+    }
+
+    #[test]
+    fn packet_round_trips_between_paired_sockets() {
+        let (mut a, mut b) = transport_pair();
+        a.send_packet(&[1, 2, 3], 100);
+        // `recv_host_packet` blocks up to the timeout instead of a fixed
+        // `sleep` + single `try_recv`, so this doesn't race `RX_STALE`
+        // eviction the way an over-long sleep before a non-blocking poll
+        // would.
+        let mut buf = [0u8; 16];
+        let recv = b.recv_host_packet(&mut buf, Duration::from_millis(200));
+        assert_eq!(
+            recv,
+            MpRecv::Frame { len: 3, kind: MpFrameKind::Packet, timestamp_us: 100, runahead_us: 0 }
+        );
+        assert_eq!(&buf[..3], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn own_frame_echoed_back_is_never_delivered() {
+        // Simulates the self-loop bug (F4): a raw datagram claiming to be
+        // from this transport's own `self_id`, sent straight at its own
+        // socket, must never surface from `recv_packet`.
+        let (mut a, _b) = transport_pair();
+        let addr_a = a.local_addr().unwrap();
+        let echo_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let dgram = MpDatagram {
+            sender_id: 0, // Same as `a`'s own `self_id`.
+            kind: WireFrameKind::Packet,
+            aid: 0,
+            send_seq: 0,
+            timestamp_us: 1,
+            runahead_us: 0,
+            payload: vec![9, 9, 9],
+        };
+        echo_socket.send_to(&dgram.encode(), addr_a).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+
+        let mut buf = [0u8; 16];
+        assert_eq!(a.recv_packet(&mut buf), MpRecv::None);
+    }
+
+    #[test]
+    fn replies_land_in_their_per_aid_slot() {
+        let (mut a, mut b) = transport_pair();
+        b.send_reply(&[0xAB; 4], 100_000, 2);
+        let mut buf = [0u8; 15 * 1024];
+        let answered = a.recv_replies(&mut buf, 100_000, 1 << 2);
+        assert_eq!(answered, 1 << 2);
+        assert_eq!(&buf[1024..1028], &[0xAB; 4]);
+        assert!(buf[..1024].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn replies_ahead_of_the_host_clock_are_accepted() {
+        // Regression test for the two-sided `abs_diff` bug: a client
+        // legitimately running ahead of the host (within its granted
+        // run-ahead window) must not be rejected.
+        let (mut a, mut b) = transport_pair();
+        b.send_reply(&[7], 100_500, 1);
+        let mut buf = [0u8; 15 * 1024];
+        let answered = a.recv_replies(&mut buf, 100_000, 1 << 1);
+        assert_eq!(answered, 1 << 1);
+    }
+
+    #[test]
+    fn stale_arrival_frames_are_dropped() {
+        // Directly exercises the `RX_STALE` eviction path used by `recv_packet`
+        // /`recv_host_packet`, without needing to actually wait `RX_STALE`
+        // out on a real socket.
+        let frame = Inbound {
+            kind: WireFrameKind::Packet,
+            aid: 0,
+            timestamp_us: 1,
+            runahead_us: 0,
+            payload: vec![1],
+            arrival: Instant::now() - Duration::from_millis(50),
+        };
+        assert!(is_stale(&frame));
+
+        let fresh = Inbound { arrival: Instant::now(), ..frame };
+        assert!(!is_stale(&fresh));
+    }
 }

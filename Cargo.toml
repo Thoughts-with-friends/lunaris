@@ -14,7 +14,7 @@ version = "0.1.0"
 default-members = ["gui/egui"]
 members = [
   "bitfield",
-  "core", "core-tiny", "core_tiny",
+  "core", "core_tiny",
   "free_bios",
   "gui/common",
   "gui/egui",

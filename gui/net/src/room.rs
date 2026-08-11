@@ -28,6 +28,10 @@ use crate::{
     wire::{self, ControlMessage, LinkParams, PlayerRecord, RejectReason},
 };
 
+/// Host-side table of `(player id, mac_suffix)` used to reject a joiner
+/// whose Wi-Fi MAC would collide with an existing player's (F13).
+type MacSuffixTable = Arc<Mutex<Vec<(u8, [u8; 3])>>>;
+
 /// Caller-supplied identity/room parameters, shared by both
 /// [`Room::host`] and [`Room::join`].
 #[derive(Debug, Clone)]
@@ -158,8 +162,13 @@ impl Room {
         let listener = TcpListener::bind(("0.0.0.0", cfg.control_port))?;
         let udp_socket = UdpSocket::bind(("0.0.0.0", cfg.mp_port))?;
 
+        // Starts empty, not seeded with the host's own address: a host
+        // never needs to send MP frames to itself, and doing so let every
+        // beacon/CMD/ack the host transmitted loop straight back into its
+        // own RX path -- see `docs/design/review_mp_local.md` F4b. Gains
+        // entries only as guests join, via `spawn_host_accept_loop`'s
+        // `udp_addrs`/`peers.set` below.
         let peers = Arc::new(PeerTable::default());
-        peers.set(vec![(0, SocketAddr::new(IpAddr::from([127, 0, 0, 1]), cfg.mp_port))]);
         let hints_shared = Arc::new(SharedHints::default());
         hints_shared.set(Controller::new().hints());
 
@@ -194,11 +203,19 @@ impl Room {
         let (outbound_tx, outbound_rx) = std::sync::mpsc::channel::<ControlMessage>();
         let shutdown = Arc::new(AtomicBool::new(false));
 
+        // Tracks each connected player's Wi-Fi MAC suffix so a joiner whose
+        // suffix collides with an existing player can be rejected
+        // (`RejectReason::MacCollision`) instead of silently producing two
+        // Wi-Fi MAC addresses that can never associate -- see
+        // `docs/design/review_mp_local.md` F13.
+        let mac_suffixes: MacSuffixTable = Arc::new(Mutex::new(vec![(0, cfg.mac_suffix)]));
+
         spawn_host_accept_loop(
             listener,
             Arc::clone(&state),
             Arc::clone(&peers),
             Arc::clone(&connections),
+            Arc::clone(&mac_suffixes),
             cfg.mp_port,
             Arc::clone(&shutdown),
         );
@@ -283,6 +300,11 @@ impl Room {
             Arc::clone(&peers),
             Arc::clone(&hints_shared),
         )?;
+        // The TCP control channel dropping is a far more immediate and
+        // reliable "the host is gone" signal than a UDP socket error (UDP
+        // has no connection state to break) -- see `NetTransport::
+        // host_gone_flag` and `docs/design/review_mp_local.md` F6.
+        let host_gone = transport.host_gone_flag();
 
         let state = Arc::new(Mutex::new(RoomState {
             players: vec![
@@ -324,6 +346,7 @@ impl Room {
             Arc::clone(&state),
             Arc::clone(&peers),
             Arc::clone(&hints_shared),
+            Arc::clone(&host_gone),
             host_ip,
             host_mp_port,
             Arc::clone(&shutdown),
@@ -393,14 +416,16 @@ fn spawn_host_accept_loop(
     state: Arc<Mutex<RoomState>>,
     peers: Arc<PeerTable>,
     connections: Arc<Mutex<Vec<(u8, TcpStream)>>>,
+    mac_suffixes: MacSuffixTable,
     mp_port: u16,
     shutdown: Arc<AtomicBool>,
 ) {
     // Per-connection UDP addresses, tracked alongside the TCP write-clone
     // table so `PeerTable` (consumed by `NetTransport`) can be rebuilt
-    // whenever membership changes.
-    let udp_addrs: Arc<Mutex<Vec<(u8, SocketAddr)>>> =
-        Arc::new(Mutex::new(vec![(0, SocketAddr::new(IpAddr::from([127, 0, 0, 1]), mp_port))]));
+    // whenever membership changes. Starts empty -- see `Room::host`'s
+    // matching comment on why the host's own address must never be a
+    // broadcast target (F4b).
+    let udp_addrs: Arc<Mutex<Vec<(u8, SocketAddr)>>> = Arc::new(Mutex::new(Vec::new()));
 
     let _ = listener.set_nonblocking(true);
     std::thread::spawn(move || {
@@ -418,6 +443,7 @@ fn spawn_host_accept_loop(
                         Arc::clone(&peers),
                         Arc::clone(&connections),
                         Arc::clone(&udp_addrs),
+                        Arc::clone(&mac_suffixes),
                         mp_port,
                         Arc::clone(&shutdown),
                     );
@@ -439,6 +465,7 @@ fn spawn_host_guest_thread(
     peers: Arc<PeerTable>,
     connections: Arc<Mutex<Vec<(u8, TcpStream)>>>,
     udp_addrs: Arc<Mutex<Vec<(u8, SocketAddr)>>>,
+    mac_suffixes: MacSuffixTable,
     mp_port: u16,
     shutdown: Arc<AtomicBool>,
 ) {
@@ -447,7 +474,8 @@ fn spawn_host_guest_thread(
             Ok((_, msg)) => msg,
             Err(_) => return,
         };
-        let ControlMessage::Hello { player_name, rom_fingerprint, udp_port, .. } = hello else {
+        let ControlMessage::Hello { player_name, rom_fingerprint, mac_suffix, udp_port } = hello
+        else {
             let _ = wire::write_framed(
                 &mut stream,
                 &ControlMessage::Reject { reason: RejectReason::VersionMismatch },
@@ -455,6 +483,26 @@ fn spawn_host_guest_thread(
             );
             return;
         };
+
+        // Two players with the same Wi-Fi MAC address (derived from
+        // `mac_suffix`, see `gui/common/src/loader.rs::patch_firmware_mac`)
+        // can never complete the DS association handshake with each other
+        // -- reject up front with a diagnosable reason instead of letting
+        // them join a session that can never actually connect over MP. See
+        // `docs/design/review_mp_local.md` F13.
+        if mac_suffixes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|&(_, s)| s == mac_suffix)
+        {
+            let _ = wire::write_framed(
+                &mut stream,
+                &ControlMessage::Reject { reason: RejectReason::MacCollision },
+                0,
+            );
+            return;
+        }
 
         let assigned_id = {
             let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -485,6 +533,7 @@ fn spawn_host_guest_thread(
             addrs.push((assigned_id, SocketAddr::new(addr.ip(), udp_port)));
             peers.set(addrs.clone());
         }
+        mac_suffixes.lock().unwrap_or_else(|e| e.into_inner()).push((assigned_id, mac_suffix));
 
         let (room_name, max_players, host_fingerprint, link) = {
             let guard = state.lock().unwrap_or_else(|e| e.into_inner());
@@ -548,6 +597,7 @@ fn spawn_host_guest_thread(
         state.lock().unwrap_or_else(|e| e.into_inner()).players.retain(|p| p.id != assigned_id);
         connections.lock().unwrap_or_else(|e| e.into_inner()).retain(|(id, _)| *id != assigned_id);
         udp_addrs.lock().unwrap_or_else(|e| e.into_inner()).retain(|(id, _)| *id != assigned_id);
+        mac_suffixes.lock().unwrap_or_else(|e| e.into_inner()).retain(|(id, _)| *id != assigned_id);
         peers.set(udp_addrs.lock().unwrap_or_else(|e| e.into_inner()).clone());
         broadcast(&connections, &player_list_message(&state), 0);
     });
@@ -630,11 +680,13 @@ fn spawn_local_outbound_loop(
     });
 }
 
+#[expect(clippy::too_many_arguments, reason = "internal spawn helper, not part of the public API")]
 fn spawn_client_reader_loop(
     mut stream: TcpStream,
     state: Arc<Mutex<RoomState>>,
     peers: Arc<PeerTable>,
     hints: Arc<SharedHints>,
+    host_gone: Arc<AtomicBool>,
     host_ip: IpAddr,
     mp_port: u16,
     shutdown: Arc<AtomicBool>,
@@ -672,6 +724,7 @@ fn spawn_client_reader_loop(
                 Ok((_, ControlMessage::Reject { reason })) => {
                     state.lock().unwrap_or_else(|e| e.into_inner()).last_error =
                         Some(reject_message(reason));
+                    host_gone.store(true, Ordering::Relaxed);
                     return;
                 }
                 Ok(_) => {}
@@ -679,6 +732,11 @@ fn spawn_client_reader_loop(
                     let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
                     guard.last_error = Some("connection to host lost".to_owned());
                     guard.left = true;
+                    drop(guard);
+                    // The TCP control channel is a far more immediate
+                    // signal than a UDP socket error -- see
+                    // `docs/design/review_mp_local.md` F6.
+                    host_gone.store(true, Ordering::Relaxed);
                     return;
                 }
             }

@@ -108,6 +108,47 @@ pub struct LanConfig {
     pub recv_timeout_ms: u16,
 }
 
+impl LanConfig {
+    /// The Wi-Fi MAC suffix actually baked into this **process's**
+    /// firmware image, combining the persisted [`LanConfig::mac_suffix`]
+    /// with this process's OS process id.
+    ///
+    /// `Config::PATH` (`"./config.json"`) is resolved relative to the
+    /// working directory, so two `lunaris` processes launched from the same
+    /// directory -- the ordinary way to test local multiplayer on one
+    /// PC -- load the *same* `config.json` and therefore the *same*
+    /// persisted `mac_suffix`. Without this, both processes would patch
+    /// their firmware to an identical MAC address despite
+    /// `docs/design/review_mp_local.md` F13's fix, and the DS association
+    /// handshake would never complete (two "different" consoles with the
+    /// same MAC look like one console to the Wi-Fi hardware). Mixing in
+    /// `std::process::id()` -- guaranteed unique among concurrently running
+    /// processes on this machine, which is exactly the property needed
+    /// here -- fixes that without requiring the user to hand-edit
+    /// `config.json` between launches.
+    ///
+    /// Must be used consistently everywhere a MAC-derived value has to
+    /// match what's actually in this process's firmware: both
+    /// `gui/common/src/loader.rs`'s firmware patch and
+    /// `RoomConfig::mac_suffix` (so the room's MAC-collision check compares
+    /// the values actually in use, not the raw persisted one).
+    #[must_use]
+    pub fn effective_mac_suffix(&self) -> [u8; 3] {
+        mix_mac_suffix(self.mac_suffix, std::process::id())
+    }
+}
+
+/// Pure XOR mix of a persisted suffix with a process id, factored out of
+/// [`LanConfig::effective_mac_suffix`] so it's testable without depending
+/// on the calling test's own live `std::process::id()`.
+fn mix_mac_suffix(suffix: [u8; 3], pid: u32) -> [u8; 3] {
+    [
+        suffix[0] ^ (pid & 0xFF) as u8,
+        suffix[1] ^ ((pid >> 8) & 0xFF) as u8,
+        suffix[2] ^ ((pid >> 16) & 0xFF) as u8,
+    ]
+}
+
 impl Default for LanConfig {
     fn default() -> Self {
         // A random-ish default seeded from the current time so two fresh
@@ -226,5 +267,30 @@ impl Config {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(Self::PATH, json);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_suffix_mixing_differs_for_different_process_ids() {
+        // Two processes sharing the same persisted `mac_suffix` (the
+        // ordinary case when both load the same `config.json`) must still
+        // end up with different effective suffixes.
+        let base = [1, 2, 3];
+        assert_ne!(mix_mac_suffix(base, 1000), mix_mac_suffix(base, 1004));
+    }
+
+    #[test]
+    fn mac_suffix_mixing_is_identity_for_pid_zero() {
+        assert_eq!(mix_mac_suffix([9, 8, 7], 0), [9, 8, 7]);
+    }
+
+    #[test]
+    fn mac_suffix_mixing_is_deterministic_for_one_process() {
+        let base = [4, 5, 6];
+        assert_eq!(mix_mac_suffix(base, 42), mix_mac_suffix(base, 42));
     }
 }

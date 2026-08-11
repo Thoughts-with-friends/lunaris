@@ -917,6 +917,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "core_tiny"
+version = "0.1.0"
+
+[[package]]
 name = "coreaudio-rs"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

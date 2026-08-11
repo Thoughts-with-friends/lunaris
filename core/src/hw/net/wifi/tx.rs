@@ -182,7 +182,9 @@ impl Wifi {
     /// [`Wifi::send_mp_default_reply`]. See
     /// `docs/design/local-mp-melonds-parity.md` Gap 3.1.
     pub(super) fn start_mp_reply(&mut self, clienttime: u16, clientmask: u16) {
-        eprintln!("[DEBUG] start_mp_reply ENTER us_timestamp={}", self.us_timestamp);
+        if super::debug_enabled() {
+            eprintln!("[wifi] start_mp_reply us_timestamp={}", self.us_timestamp);
+        }
         if self.ioport(W_TXSlotReply2) & 0x8000 != 0 {
             // Mark the previous reply as sent successfully.
             let prev_addr = (self.ioport(W_TXSlotReply2) & 0x0FFF) << 1;
@@ -345,17 +347,18 @@ impl Wifi {
                     self.raise_irq(1, request);
                 }
                 self.mp_reply_timer = 16 + self.preamble_len(self.tx_slots[1].rate);
-                eprintln!(
-                    "[DEBUG] tx_phase_transmit_done ENTER us_timestamp={}",
-                    self.us_timestamp
-                );
+                if super::debug_enabled() {
+                    eprintln!("[wifi] tx_phase_transmit_done us_timestamp={}", self.us_timestamp);
+                }
                 if self.mp_client_mask != 0
                     && let Some(mut transport) = self.transport.take()
                 {
                     let mut buf = vec![0u8; self.mp_client_replies.len()];
                     let answered =
                         transport.recv_replies(&mut buf, self.us_timestamp, self.mp_client_mask);
-                    eprintln!("[DEBUG] recv_replies answered=0x{answered:04X}");
+                    if super::debug_enabled() {
+                        eprintln!("[wifi] recv_replies answered=0x{answered:04X}");
+                    }
                     self.mp_client_replies[..buf.len()].copy_from_slice(&buf);
                     self.mp_client_fail &= !answered;
                     self.transport = Some(transport);
