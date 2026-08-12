@@ -78,7 +78,7 @@ impl HW {
                 }
 
                 // info!(target:"nds_core::arm7", "called wifi read_8");
-                self.wifi.read8(addr)
+                self.wifi.read8(addr, &mut self.interrupts[0].request)
             }
             _ => {
                 warn!("Ignoring ARM7 IO Register Read at 0x{:08X}", addr);
@@ -93,8 +93,17 @@ impl HW {
                 return 0;
             }
 
-            // info!(target:"nds_core::arm7", "called wifi read_16");
-            self.wifi.read16(addr - 0x0480_0000);
+            // The Wi-Fi register file is 16-bit-native: a side-effecting read
+            // (`W_RXBufDataRead`'s cursor auto-increment, its `W_RXBufCount`
+            // decrement and IRQ 9) must fire exactly once per CPU access.
+            // This used to discard `read16`'s result and fall through to the
+            // two `arm7_read_io8` calls below -- each of which composes its
+            // own `read16` -- firing every side effect *three* times for one
+            // 16-bit CPU read, and draining the RX ring far faster than the
+            // driver intended. Returning the value directly is what the
+            // `crate::hw::net::wifi::regs` module doc already claimed this
+            // path did. See `docs/design/design_lan.md` §6.2.
+            return self.wifi.read16(addr - 0x0480_0000, &mut self.interrupts[0].request);
         }
         (self.arm7_read_io8(addr) as u16) | (self.arm7_read_io8(addr + 1) as u16) << 8
     }
@@ -109,8 +118,9 @@ impl HW {
                 }
 
                 // info!(target:"nds_core::arm7", "called wifi read_32");
-                (self.wifi.read16(addr - 0x0480_0000) as u32)
-                    | (self.wifi.read16(addr + 2 - 0x0480_0000) as u32) << 16
+                let lo = self.wifi.read16(addr - 0x0480_0000, &mut self.interrupts[0].request);
+                let hi = self.wifi.read16(addr + 2 - 0x0480_0000, &mut self.interrupts[0].request);
+                (lo as u32) | (hi as u32) << 16
             }
             _ => {
                 (self.arm7_read_io8(addr) as u32)

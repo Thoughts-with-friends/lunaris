@@ -32,6 +32,18 @@ fn num_clients(mask: u16) -> u32 {
     (1..16).filter(|i| mask & (1 << i) != 0).count() as u32
 }
 
+/// Highest-priority busy slot, in melonDS's `USTimer` order
+/// (5 → 4 → 3 → 2 → 1 → 0).
+///
+/// Called only on the idle → transmitting transition and after a slot
+/// reports finished -- **never** mid-transmission. Re-scanning every tick
+/// (the previous behaviour) let a higher-index slot preempt one already in
+/// flight; see [`Wifi::process_tx`] and
+/// `docs/design/local-mp-melonds-parity-2.md` F3.
+pub(super) fn pick_busy_slot(busy: u16) -> Option<usize> {
+    SLOT_BUSY_BITS.iter().enumerate().rev().find(|&(_, &bit)| busy & bit != 0).map(|(i, _)| i)
+}
+
 impl Wifi {
     /// Preamble duration in 8µs ticks. Long (1 Mbit) transmissions always
     /// use the long preamble; short (2 Mbit) transmissions use the short
@@ -114,6 +126,7 @@ impl Wifi {
     /// handling, not from [`Wifi::fire_tx`] -- the beacon slot is
     /// IRQ14-triggered, not CPU-request-triggered.
     pub(super) fn start_tx_beacon(&mut self) {
+        self.diag.beacon_tx += 1;
         let (addr, length, rate) = self.read_slot_frame_info(W_TXSlotBeacon);
         self.tx_slots[4].valid = true;
         self.tx_slots[4].addr = addr;
@@ -167,6 +180,7 @@ impl Wifi {
         } else if txstart & 0x0004 != 0 {
             self.start_tx_locn(2);
         } else if txstart & 0x0002 != 0 {
+            self.diag.cmd_tx += 1;
             self.mp_client_fail = 0xFFFE;
             self.start_tx_cmd();
         } else if txstart & 0x0001 != 0 {
@@ -182,7 +196,9 @@ impl Wifi {
     /// [`Wifi::send_mp_default_reply`]. See
     /// `docs/design/local-mp-melonds-parity.md` Gap 3.1.
     pub(super) fn start_mp_reply(&mut self, clienttime: u16, clientmask: u16) {
-        eprintln!("[DEBUG] start_mp_reply ENTER us_timestamp={}", self.us_timestamp);
+        if super::debug_enabled() {
+            eprintln!("[wifi] start_mp_reply us_timestamp={}", self.us_timestamp);
+        }
         if self.ioport(W_TXSlotReply2) & 0x8000 != 0 {
             // Mark the previous reply as sent successfully.
             let prev_addr = (self.ioport(W_TXSlotReply2) & 0x0FFF) << 1;
@@ -252,6 +268,29 @@ impl Wifi {
         self.ram[addr + 1] = (value >> 8) as u8;
     }
 
+    /// Increments the per-client MP reply-failure counter for every client bit
+    /// set in `clientfail`.
+    ///
+    /// These are **byte**-wide counters packed two per 16-bit port starting at
+    /// [`W_CMDStat0`], which melonDS addresses as a flat byte array via
+    /// `IOPORT8(W_CMDStat0 + i)`: client `i` lives in port
+    /// `W_CMDStat0 + (i & !1)`, low byte for even `i` and high byte for odd `i`.
+    /// A host game reads them to decide whether a client has gone
+    /// unresponsive. Ported from `ReportMPReplyErrors` (`Wifi.cpp:594-605`);
+    /// see `docs/design/local-mp-melonds-parity-2.md` F6.
+    pub(super) fn report_mp_reply_errors(&mut self, clientfail: u16) {
+        for i in 1..16usize {
+            if clientfail & (1 << i) == 0 {
+                continue;
+            }
+            let port = W_CMDStat0 + (i & !1);
+            let word = self.ioport(port);
+            let (shift, keep) = if i & 1 == 0 { (0, 0xFF00u16) } else { (8, 0x00FFu16) };
+            let byte = ((word >> shift) as u8).wrapping_add(1);
+            self.set_ioport(port, (word & keep) | (u16::from(byte) << shift));
+        }
+    }
+
     /// Increments a slot's retry/TX counter (saturating at `0xFF`, with the
     /// upper byte cleared). Ported from `IncrementTXCount`
     /// (`Wifi.cpp:587-592`).
@@ -261,11 +300,22 @@ impl Wifi {
         self.set_ram_u16(addr + 4, u16::from(cnt.saturating_add(1)));
     }
 
-    /// Advances the highest-priority busy TX slot by one 8µs timer tick.
+    /// Advances the **latched** TX slot by one 8µs timer tick.
+    ///
+    /// The slot is chosen once, by [`Wifi::tick`], on the idle → transmitting
+    /// transition, and re-chosen by [`Wifi::reselect_tx_slot`] only after one
+    /// finishes. Ported from `USTimer` (`Wifi.cpp:1833-1849`); see
+    /// `docs/design/local-mp-melonds-parity-2.md` F3 for why re-scanning per
+    /// tick broke MP: the beacon slot (index 4) arms every beacon interval and
+    /// would preempt an in-flight CMD round (index 1) mid-phase, silently
+    /// stopping the phase-2 `mp_reply_timer` loop that delivers client replies.
     pub(super) fn process_tx(&mut self, request: &mut InterruptRequest) {
-        let Some(slot) = self.pick_busy_slot() else {
-            self.com_status &= !0x2;
-            return;
+        let slot = match usize::try_from(self.tx_cur_slot) {
+            Ok(slot) if slot < self.tx_slots.len() => slot,
+            _ => {
+                self.com_status &= !0x2;
+                return;
+            }
         };
 
         self.tx_slots[slot].phase_time -= super::Wifi::TIMER_INTERVAL_US as i32;
@@ -308,6 +358,9 @@ impl Wifi {
 
     fn tx_phase_preamble_done(&mut self, slot: usize, request: &mut InterruptRequest) {
         self.raise_irq(7, request);
+        // Hardware points the RX/TX address register at the frame being sent
+        // for the duration of the transfer (`Wifi.cpp:1004`).
+        self.set_ioport(W_RXTXAddr, self.tx_slots[slot].addr >> 1);
         // Slot 5 (reply) already transmitted synchronously inside
         // `start_mp_reply`; sending it again here would duplicate the
         // frame. Ported from `ProcessTX`'s `if (num != 5) TXSendFrame(...)`.
@@ -345,17 +398,23 @@ impl Wifi {
                     self.raise_irq(1, request);
                 }
                 self.mp_reply_timer = 16 + self.preamble_len(self.tx_slots[1].rate);
-                eprintln!(
-                    "[DEBUG] tx_phase_transmit_done ENTER us_timestamp={}",
-                    self.us_timestamp
-                );
+                if super::debug_enabled() {
+                    eprintln!("[wifi] tx_phase_transmit_done us_timestamp={}", self.us_timestamp);
+                }
                 if self.mp_client_mask != 0
                     && let Some(mut transport) = self.transport.take()
                 {
                     let mut buf = vec![0u8; self.mp_client_replies.len()];
                     let answered =
                         transport.recv_replies(&mut buf, self.us_timestamp, self.mp_client_mask);
-                    eprintln!("[DEBUG] recv_replies answered=0x{answered:04X}");
+                    if answered != 0 {
+                        self.diag.replies_answered += 1;
+                    } else {
+                        self.diag.replies_empty += 1;
+                    }
+                    if super::debug_enabled() {
+                        eprintln!("[wifi] recv_replies answered=0x{answered:04X}");
+                    }
                     self.mp_client_replies[..buf.len()].copy_from_slice(&buf);
                     self.mp_client_fail &= !answered;
                     self.transport = Some(transport);
@@ -372,8 +431,8 @@ impl Wifi {
                 }
                 self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !0x0080);
                 self.tx_slots[5].valid = false;
-                self.com_status &= !0x2;
                 self.fire_tx();
+                self.reselect_tx_slot();
             }
             _ => {
                 self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !SLOT_BUSY_BITS[slot]);
@@ -392,8 +451,8 @@ impl Wifi {
                     _ => {}
                 }
                 self.tx_slots[slot].valid = false;
-                self.com_status &= !0x2;
                 self.fire_tx();
+                self.reselect_tx_slot();
             }
         }
     }
@@ -402,9 +461,9 @@ impl Wifi {
         self.set_ioport(W_TXSeqNo, (self.ioport(W_TXSeqNo) + 1) & 0x0FFF);
         self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !0x0080);
         self.tx_slots[5].valid = false;
-        self.com_status &= !0x2;
         let _ = request;
         self.fire_tx();
+        self.reselect_tx_slot();
     }
 
     /// Phase 2: MP host command finished transmitting; the reply-collection
@@ -413,11 +472,18 @@ impl Wifi {
     /// `ProcessTX` case 2 (`Wifi.cpp:1125-1143`).
     fn tx_phase_mp_host_done(&mut self, _slot: usize, request: &mut InterruptRequest) {
         self.raise_irq(7, request);
+        // Hardware parks the RX/TX pointer here for the ack window
+        // (`Wifi.cpp:1131`).
+        self.set_ioport(W_RXTXAddr, 0xFC0);
         let rate_factor = if self.tx_slots[1].rate == 2 { 4 } else { 8 };
         self.tx_slots[1].phase_time = 32 * rate_factor;
 
-        // TODO: does a reply failure raise any IRQ of its own? melonDS
-        // leaves this unresolved too (`Wifi.cpp:594-596`).
+        // Bump each failed client's counter before the ack goes out, matching
+        // `Wifi.cpp:1138-1141`'s order. melonDS leaves it unresolved whether a
+        // reply failure raises any IRQ of its own (`Wifi.cpp:594-596`), so
+        // neither does this port.
+        self.report_mp_reply_errors(self.mp_client_fail);
+
         let cmdcount = self.cmd_counter.div_ceil(10) as u16;
         self.send_mp_ack(cmdcount);
 
@@ -452,10 +518,17 @@ impl Wifi {
         self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !(1 << 1));
         self.set_ioport(W_TXSlotCmd, self.ioport(W_TXSlotCmd) & 0x7FFF);
         self.tx_slots[1].valid = false;
-        self.com_status &= !0x2;
 
+        if super::debug_enabled() {
+            eprintln!(
+                "[wifi] MP CMD round complete: raising IRQ 12, clientfail=0x{:04X}",
+                self.mp_client_fail
+            );
+        }
+        self.diag.irq12 += 1;
         self.raise_irq(12, request);
         self.fire_tx();
+        self.reselect_tx_slot();
     }
 
     /// Phase 13: the CMD slot started, but `CmdCounter` ran out before a
@@ -469,14 +542,24 @@ impl Wifi {
         self.set_ram_u16(addr as usize, 0x0005);
         self.set_ioport(W_TXSeqNo, (self.ioport(W_TXSeqNo) + 1) & 0x0FFF);
         self.tx_slots[1].valid = false;
-        self.com_status &= !0x2;
+        self.diag.irq12 += 1;
         self.raise_irq(12, request);
         self.fire_tx();
+        self.reselect_tx_slot();
     }
 
-    fn pick_busy_slot(&self) -> Option<usize> {
-        let busy = self.ioport(W_TXBusy);
-        SLOT_BUSY_BITS.iter().enumerate().rev().find(|&(_, &bit)| busy & bit != 0).map(|(i, _)| i)
+    /// Re-selects the current TX slot after one has finished, dropping back to
+    /// idle when none is left. Ported from `USTimer`'s post-`ProcessTX`
+    /// re-selection (`Wifi.cpp:1866-1881`).
+    fn reselect_tx_slot(&mut self) {
+        match pick_busy_slot(self.ioport(W_TXBusy)) {
+            Some(slot) => self.tx_cur_slot = slot as i32,
+            None => {
+                self.tx_cur_slot = -1;
+                self.com_status &= !0x2;
+                self.rx_counter = 0;
+            }
+        }
     }
 
     /// Builds the 12-byte hardware header + frame body into `tx_buffer` and
@@ -528,11 +611,12 @@ impl Wifi {
         if self.cur_channel == 0 {
             return;
         }
+        // Only the channel byte is patched. The rate (`[8]`) and frame length
+        // (`[0xA]`) are the game's own staged TX-header values and travel
+        // verbatim -- melonDS overwrites neither (`Wifi.cpp:655-660`).
+        // Re-deriving them here discarded whatever the game actually set. See
+        // `docs/design/local-mp-melonds-parity-2.md` F8a.
         self.tx_buffer[9] = self.cur_channel as u8;
-        self.tx_buffer[8] = if s.rate == 2 { 0x14 } else { 0x0A };
-        let frame_len_bytes = copy_len.saturating_sub(12) as u16;
-        self.tx_buffer[10] = frame_len_bytes as u8;
-        self.tx_buffer[11] = (frame_len_bytes >> 8) as u8;
 
         if matches!(slot, 0 | 2 | 3) && copy_len >= 0xE {
             let fc = self.tx_buffer[0xC] as u16 | (self.tx_buffer[0xD] as u16) << 8;
@@ -604,11 +688,14 @@ impl Wifi {
         if self.cur_channel == 0 {
             return;
         }
-        self.tx_buffer[8] = if rate == 2 { 0x14 } else { 0x0A };
+        // As in `Wifi::send_slot_frame`, only the channel byte is patched:
+        // melonDS reaches the reply slot through the same `TXSendFrame`
+        // (`SendMPReply` calls `TXSendFrame(slot, 5)`, and `ProcessTX` case 0
+        // skips it precisely because it already ran), which overwrites neither
+        // the rate nor the length. See
+        // `docs/design/local-mp-melonds-parity-2.md` F8a.
+        let _ = rate;
         self.tx_buffer[9] = self.cur_channel as u8;
-        let frame_len_bytes = copy_len.saturating_sub(12) as u16;
-        self.tx_buffer[10] = frame_len_bytes as u8;
-        self.tx_buffer[11] = (frame_len_bytes >> 8) as u8;
 
         if super::debug_enabled() {
             eprintln!(
@@ -617,6 +704,7 @@ impl Wifi {
             );
         }
 
+        self.diag.reply_tx += 1;
         self.increment_tx_count(s.addr);
         let Some(mut transport) = self.transport.take() else { return };
         transport.send_reply(&self.tx_buffer[..copy_len], self.us_timestamp, aid);
@@ -671,6 +759,7 @@ impl Wifi {
             eprintln!("[wifi] TX mp_reply (default/blank) aid={aid} channel={}", self.cur_channel);
         }
 
+        self.diag.blank_reply_tx += 1;
         let Some(mut transport) = self.transport.take() else { return };
         transport.send_reply(&self.tx_buffer[..12 + 28], self.us_timestamp, aid);
         self.transport = Some(transport);

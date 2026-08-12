@@ -307,8 +307,27 @@ impl MpTransport for LoopbackTransport {
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16 {
         let mut answered = 0u16;
         let mut offset = 0usize;
+        // melonDS releases the reply wait on *either* "every addressed AID
+        // sent data" or "every connected instance has been heard from"
+        // (`docs/design/melonds/net/LocalMP.cpp:295-360`). A `LoopbackTransport`
+        // pair has exactly one peer, so hearing from it at all is the second
+        // condition. Tracked so a zero-length keep-alive reply -- which names
+        // no AID and sets no `answered` bit -- still ends the wait, matching
+        // `NetTransport::recv_replies`. See
+        // `docs/design/local-mp-melonds-parity-2.md` F5.
+        let mut heard_from_peer = false;
 
         while let Ok(frame) = self.reply_rx.try_recv() {
+            heard_from_peer |= frame.sender_id != self.peer_id;
+
+            // A zero-length reply carries no AID; its only job is the
+            // `heard_from_peer` bookkeeping above.
+            if frame.data.is_empty() {
+                if heard_from_peer {
+                    break;
+                }
+                continue;
+            }
             if aid_mask & (1 << frame.aid) == 0 {
                 continue;
             }

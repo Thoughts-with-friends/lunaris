@@ -38,6 +38,7 @@
 //! GBATEK: <https://problemkaputt.de/gbatek.htm#dswirelesscommunications>
 
 mod bb_rf;
+pub mod diag;
 pub mod mp;
 mod net;
 mod net_driver;
@@ -149,6 +150,12 @@ pub struct Wifi {
     /// elapse. See [`rx::PendingRxHeader`].
     rx_pending: PendingRxHeader,
 
+    /// Local-multiplayer progress counters. Not serialized: purely
+    /// diagnostic, and a savestate load should not carry stale counts into
+    /// a fresh session. See [`diag`].
+    #[savestate(skip)]
+    pub(super) diag: diag::MpDiag,
+
     us_until_power_on: i32,
     cmd_counter: u32,
 
@@ -204,6 +211,7 @@ impl Wifi {
             mp_last_seqno: 0xFFFF,
             rx_deferred: DeferredRxParams::default(),
             rx_pending: PendingRxHeader::default(),
+            diag: diag::MpDiag::default(),
             us_until_power_on: 0,
             cmd_counter: 0,
             transport: None,
@@ -230,6 +238,12 @@ impl Wifi {
         self.rx_timestamp = 0;
         self.mp_client_mask = 0;
         self.mp_client_fail = 0;
+        // The latched TX slot is meaningless across a rewind; leaving a stale
+        // index would have `Wifi::process_tx` advance a slot the reloaded
+        // `W_TXBusy` no longer marks busy. See
+        // `docs/design/local-mp-melonds-parity-2.md` F3.
+        self.tx_cur_slot = -1;
+        self.com_status = 0;
     }
 
     /// Loads channel calibration and BSSID-independent defaults. Mirrors
@@ -423,6 +437,25 @@ impl Wifi {
         scheduler.schedule(Event::Wifi, HW::on_wifi_timer, delay.max(1) as usize);
     }
 
+    /// A snapshot of the local-multiplayer progress counters, with the live
+    /// hardware fields refreshed. Exposed so a frontend can render the same
+    /// handshake breakdown the `LUNARIS_MP_DIAG` dump prints. See [`diag`].
+    pub fn diag_snapshot(&self) -> diag::MpDiag {
+        let mut snapshot = self.diag;
+        snapshot.channel = self.cur_channel;
+        snapshot.is_mp = self.is_mp;
+        snapshot.is_mp_client = self.is_mp_client;
+        snapshot.aid = self.ioport(W_AIDLow);
+        snapshot.transport_installed = self.transport.is_some();
+        snapshot
+    }
+
+    /// Prints the [`diag`] summary immediately. See [`crate::hw::HW::wifi_dump_diag`].
+    pub fn dump_diag(&self) {
+        let snapshot = self.diag_snapshot();
+        snapshot.dump_now(snapshot.transport_installed);
+    }
+
     /// Returns `true` if this instance currently believes it is engaged in
     /// an MP session (host or client). Exposed for UI link-status display.
     pub fn is_mp_active(&self) -> bool {
@@ -452,6 +485,17 @@ impl Wifi {
     /// `docs/design/design_lan.md` §6.3 and §17 (Union-Room symptom).
     pub(crate) fn tick(&mut self, scheduler: &mut Scheduler, request: &mut InterruptRequest) {
         self.us_timestamp += Self::TIMER_INTERVAL_US;
+
+        // Keep the diagnostic summary's live fields current and let it decide
+        // whether this tick crosses a dump boundary. See [`diag`].
+        if diag::diag_enabled() {
+            self.diag.channel = self.cur_channel;
+            self.diag.is_mp = self.is_mp;
+            self.diag.is_mp_client = self.is_mp_client;
+            self.diag.aid = self.ioport(W_AIDLow);
+            let transport_installed = self.transport.is_some();
+            self.diag.tick_us(Self::TIMER_INTERVAL_US, transport_installed);
+        }
 
         // `USCounter`/the millisecond beacon timer only run while the game
         // has armed them via `W_USCountCnt`; `USTimestamp` (MP sync) above
@@ -499,6 +543,12 @@ impl Wifi {
             let busy = self.ioport(W_TXBusy);
             if busy != 0 {
                 self.com_status = 0x2;
+                // Latch the slot *once*, on the idle -> transmitting
+                // transition; `Wifi::process_tx` then advances that slot until
+                // it finishes and `Wifi::reselect_tx_slot` picks the next.
+                // Ported from `USTimer` (`Wifi.cpp:1833-1849`); see
+                // `docs/design/local-mp-melonds-parity-2.md` F3.
+                self.tx_cur_slot = tx::pick_busy_slot(busy).map_or(-1, |s| s as i32);
             } else if !self.is_mp_client || self.us_timestamp > self.next_sync {
                 if self.rx_counter & 0x1FF == 0 {
                     self.check_rx(RxKind::Regular, request);
@@ -610,10 +660,11 @@ mod tests {
     #[test]
     fn register_mirror_does_not_double_increment() {
         let mut wifi = Wifi::new();
+        let mut request = InterruptRequest::empty();
         wifi.set_ioport(W_RXBufReadAddr, 0x100);
         wifi.set_ioport(W_RXCnt, 0x8000);
-        let active = wifi.read16(W_RXBufDataRead as u32);
-        let passive = wifi.read16(0x1000 + W_RXBufDataRead as u32);
+        let active = wifi.read16(W_RXBufDataRead as u32, &mut request);
+        let passive = wifi.read16(0x1000 + W_RXBufDataRead as u32, &mut request);
         // The active-region read must have advanced the read cursor; the
         // mirrored (1000h-1FFFh) read must not have advanced it again.
         assert_ne!(active, 0xFFFF);
@@ -626,9 +677,10 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let mut request = InterruptRequest::empty();
         wifi.write16(0x4000, 0xBEEF, &mut scheduler, &mut request);
-        assert_eq!(wifi.read16(0x4000), 0xBEEF);
+        assert_eq!(wifi.read16(0x4000, &mut request), 0xBEEF);
         // Mirror at 4800h..5FFFh maps into the same 8KiB RAM.
-        assert_eq!(wifi.read16(0x5000), wifi.ram[0x1000] as u16 | (wifi.ram[0x1001] as u16) << 8);
+        let mirrored = wifi.read16(0x5000, &mut request);
+        assert_eq!(mirrored, wifi.ram[0x1000] as u16 | (wifi.ram[0x1001] as u16) << 8);
     }
 
     #[test]
@@ -638,7 +690,7 @@ mod tests {
         let mut request = InterruptRequest::empty();
         wifi.write16(W_TXStatCnt as u32, 0x1234, &mut scheduler, &mut request);
         wifi.write8(W_TXStatCnt as u32, 0xFF);
-        assert_eq!(wifi.read16(W_TXStatCnt as u32), 0x1234);
+        assert_eq!(wifi.read16(W_TXStatCnt as u32, &mut request), 0x1234);
     }
 
     #[test]
@@ -661,6 +713,139 @@ mod tests {
         wifi.rf_regs[1] = 0x41 + 6;
         wifi.change_channel();
         assert_eq!(wifi.cur_channel, 7);
+    }
+
+    /// A `W_ModeReset` write with bit 14 set must install the hardware's
+    /// RX-ring defaults. Without them `W_RXBufBegin == W_RXBufEnd == 0`, and
+    /// `Wifi::check_rx`'s zero-size-ring guard rejects *every* inbound frame --
+    /// the driver relies on this register instead of programming the ring
+    /// itself. `docs/design/local-mp-melonds-parity-2.md` F0.
+    #[test]
+    fn mode_reset_bit14_installs_rx_ring_defaults() {
+        let mut wifi = Wifi::new();
+        let mut scheduler = Scheduler::new();
+        let mut request = InterruptRequest::empty();
+
+        assert_eq!(
+            wifi.ioport(W_RXBufBegin),
+            wifi.ioport(W_RXBufEnd),
+            "precondition: the ring is zero-sized before W_ModeReset"
+        );
+
+        wifi.write16(W_ModeReset as u32, 0x4000, &mut scheduler, &mut request);
+
+        assert_eq!(wifi.ioport(W_RXBufBegin), 0x4000);
+        assert_eq!(wifi.ioport(W_RXBufEnd), 0x4800);
+        assert_ne!(wifi.ioport(W_RXBufBegin), wifi.ioport(W_RXBufEnd));
+        assert_eq!(wifi.ioport(W_RXFilter), 0x0401);
+        assert_eq!(wifi.ioport(W_RXFilter2), 0x0008);
+        assert_eq!(wifi.ioport(W_TXRetryLimit), 0x0707);
+    }
+
+    /// The RX header must land at the byte offset named by the write cursor
+    /// (`cursor << 1`), not at the cursor's raw halfword value. Regression
+    /// test for the address-unit conflation in
+    /// `docs/design/local-mp-melonds-parity-2.md` §2/F1: masking instead of
+    /// shifting put every frame after the first inside its predecessor's body.
+    #[test]
+    fn rx_header_lands_at_the_write_cursor_shifted_left() {
+        let mut wifi = Wifi::new();
+        let mut request = InterruptRequest::empty();
+        wifi.set_ioport(W_RXCnt, 0x8000);
+        wifi.set_ioport(W_RXBufBegin, 0x4000);
+        wifi.set_ioport(W_RXBufEnd, 0x4800);
+        wifi.set_ioport(W_RXBufReadCursor, 0x07FF); // Far from the write path.
+        wifi.set_ioport(W_RXBufWriteCursor, 0x0100); // Halfword 0x100 -> byte 0x200.
+
+        wifi.rx_buffer[..12 + 32].fill(0xAA);
+        wifi.start_rx(&mut request, true, false, 0x8008, 0x14, 32);
+        for _ in 0..64 {
+            if wifi.com_status & 0x1 == 0 {
+                break;
+            }
+            wifi.step_rx(&mut request);
+        }
+
+        // `rxflags` was written at byte 0x200, not at 0x100.
+        assert_eq!(
+            wifi.ram[0x0200] as u16 | (wifi.ram[0x0201] as u16) << 8,
+            0x8008,
+            "the RX header must be written at (write cursor << 1)"
+        );
+        assert_eq!(wifi.ram[0x0100], 0, "nothing may be written at the unshifted offset");
+        // The cursor advanced past header + body, still in halfword units.
+        assert!(wifi.ioport(W_RXBufWriteCursor) >= 0x0100 + ((12 + 32) / 2));
+    }
+
+    /// The MP reply slot's internal `W_TXBusy` bit 7 must never be visible to
+    /// the CPU -- hardware exposes no bit for it (`Wifi.cpp:2088`).
+    /// `docs/design/local-mp-melonds-parity-2.md` F2.
+    #[test]
+    fn tx_busy_read_hides_the_mp_reply_slot_bit() {
+        let mut wifi = Wifi::new();
+        let mut request = InterruptRequest::empty();
+        wifi.set_ioport(W_TXBusy, 0x0082);
+        assert_eq!(wifi.read16(W_TXBusy as u32, &mut request), 0x0002);
+    }
+
+    /// Arming the beacon slot while the MP CMD slot is mid-round must not
+    /// steal the phase machine. Regression test for the beacon-preempts-CMD
+    /// failure in `docs/design/local-mp-melonds-parity-2.md` F3: the CMD
+    /// slot's phase-2 `mp_reply_timer` loop is what delivers client replies,
+    /// and a preemption silently stops it.
+    #[test]
+    fn beacon_slot_does_not_preempt_an_in_flight_cmd_round() {
+        let mut wifi = Wifi::new();
+        let mut scheduler = Scheduler::new();
+        let mut request = InterruptRequest::empty();
+
+        wifi.set_ioport(W_TXBusy, 0x0002); // CMD slot busy.
+        wifi.tx_slots[1] =
+            TxSlot { valid: true, phase: 2, phase_time: 100_000, rate: 2, ..Default::default() };
+        wifi.com_status = 0;
+        wifi.tick(&mut scheduler, &mut request);
+        assert_eq!(wifi.tx_cur_slot, 1, "the CMD slot must be latched on the idle -> TX edge");
+
+        // The beacon interval elapses mid-round and arms slot 4.
+        wifi.set_ioport(W_TXBusy, wifi.ioport(W_TXBusy) | 0x0010);
+        wifi.tick(&mut scheduler, &mut request);
+        assert_eq!(wifi.tx_cur_slot, 1, "the beacon slot must not preempt the CMD round");
+    }
+
+    /// `W_RXBufCount` must stop at zero rather than wrapping to `0xFFFF`, and
+    /// must raise IRQ 9 on the zero transition -- the "receive buffer drained"
+    /// signal. The *write* path already did both; the read path did neither.
+    /// `docs/design/local-mp-melonds-parity-2.md` F4.
+    #[test]
+    fn rx_buf_data_read_counts_down_to_zero_and_raises_irq9() {
+        let mut wifi = Wifi::new();
+        let mut request = InterruptRequest::empty();
+        wifi.set_ioport(W_IE, 1 << 9);
+        wifi.set_ioport(W_RXBufBegin, 0x4000);
+        wifi.set_ioport(W_RXBufEnd, 0x4800);
+        wifi.set_ioport(W_RXBufCount, 1);
+
+        wifi.read16(W_RXBufDataRead as u32, &mut request);
+        assert_eq!(wifi.ioport(W_RXBufCount), 0);
+        assert_ne!(wifi.ioport(W_IF) & (1 << 9), 0, "IRQ 9 must fire on the zero transition");
+
+        wifi.read16(W_RXBufDataRead as u32, &mut request);
+        assert_eq!(wifi.ioport(W_RXBufCount), 0, "must not underflow to 0xFFFF");
+    }
+
+    /// Each client that failed to reply bumps its own byte-wide counter in the
+    /// `W_CMDStat0..7` block, leaving every other client's byte untouched.
+    /// Under `IOPORT8(W_CMDStat0 + i)` packing, client `i` lives in port
+    /// `W_CMDStat0 + (i & !1)` -- low byte for even `i`, high byte for odd.
+    /// `docs/design/local-mp-melonds-parity-2.md` F6.
+    #[test]
+    fn mp_reply_errors_increment_per_client_byte_counters() {
+        let mut wifi = Wifi::new();
+        wifi.report_mp_reply_errors(0b0000_0000_0000_0110); // Clients 1 and 2.
+
+        assert_eq!(wifi.ioport(W_CMDStat0), 0x0100, "client 1 = high byte of 1D0h");
+        assert_eq!(wifi.ioport(W_CMDStat0 + 2), 0x0001, "client 2 = low byte of 1D2h");
+        assert_eq!(wifi.ioport(W_CMDStat0 + 4), 0x0000, "no other client's byte moved");
     }
 
     /// Regression test for the Union Room symptom (design doc §17, fixed

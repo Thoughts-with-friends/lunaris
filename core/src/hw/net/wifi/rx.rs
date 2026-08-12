@@ -129,14 +129,23 @@ impl Wifi {
     /// `mp_last_seqno`. Ported from the management/data branches of
     /// `FinishRX`'s classification switch (`Wifi.cpp:1292-1407`).
     ///
-    /// Not ported: the control-frame (PS-poll) branch and the `W_RXFilter`/
-    /// `W_RXFilter2` accept-reject gating -- both out of scope for local MP
-    /// play. See `docs/design/local-mp-melonds-parity.md` Gap 2.3.
-    fn classify_rxflags(&mut self) -> (u16, bool) {
+    /// Returns `None` if `W_RXFilter`/`W_RXFilter2` reject the frame outright.
+    /// These are **drops**, not annotations: melonDS `return`s from `FinishRX`
+    /// before writing the RX header, so a rejected frame never becomes visible
+    /// to the driver at all. This port previously computed `rxflags` and never
+    /// dropped, handing the driver's state machine frames it does not
+    /// expect -- including control frames, which hardware discards unless they
+    /// are PS-poll. See `docs/design/local-mp-melonds-parity-2.md` F7.
+    ///
+    /// The filter defaults (`W_RXFilter = 0x0401`, `W_RXFilter2 = 0x0008`) are
+    /// installed by the `W_ModeReset` bit-14 write handled in
+    /// [`super::regs`]; without that, every filter test here reads zero.
+    fn classify_rxflags(&mut self) -> Option<(u16, bool)> {
         let frame_ctl = self.rx_buffer[12] as u16 | (self.rx_buffer[13] as u16) << 8;
         let mut rxflags = 0x0010u16;
         let mut cmd_dupe = false;
         let bssid = self.bssid();
+        let rxfilter = self.ioport(W_RXFilter);
 
         match (frame_ctl >> 2) & 0x3 {
             0 => {
@@ -144,16 +153,53 @@ impl Wifi {
                 if mac_eq(&self.rx_buffer, 12 + 16, bssid) {
                     rxflags |= 0x8000;
                 }
-                if (frame_ctl >> 4) & 0xF == 0x8 {
-                    rxflags |= 0x0001; // Beacon.
+
+                let subtype = (frame_ctl >> 4) & 0xF;
+                if subtype == 0x8 {
+                    // Beacon.
+                    if rxflags & 0x8000 == 0 && rxfilter & (1 << 0) == 0 {
+                        return None;
+                    }
+                    rxflags |= 0x0001;
+                } else if (subtype <= 0x5 || (0xA..=0xC).contains(&subtype))
+                    && rxflags & 0x8000 == 0
+                    && rxfilter & (3 << 9) == 0
+                {
+                    return None;
                 }
+            }
+            1 => {
+                // Control frame. Hardware accepts only PS-poll here and
+                // discards every other subtype (`Wifi.cpp:1327-1345`).
+                if frame_ctl & 0xF0 != 0xA0 {
+                    return None;
+                }
+                if mac_eq(&self.rx_buffer, 12 + 4, bssid) {
+                    rxflags |= 0x8000;
+                }
+                if rxflags & 0x8000 == 0 && rxfilter & (1 << 11) == 0 {
+                    return None;
+                }
+                rxflags |= 0x0005;
             }
             2 => {
                 // Data frame.
                 let fromto = ((frame_ctl >> 8) & 0x3) as usize;
+                if self.ioport(W_RXFilter2) & (1 << fromto) != 0 {
+                    return None;
+                }
+
                 let bssid_offset = [16usize, 4, 10, 0][fromto];
                 if bssid_offset != 0 && mac_eq(&self.rx_buffer, 12 + bssid_offset, bssid) {
                     rxflags |= 0x8000;
+                }
+
+                if rxflags & 0x8000 == 0 && rxfilter & (1 << 11) == 0 {
+                    return None;
+                }
+                // Retransmitted frame.
+                if frame_ctl & (1 << 11) != 0 && rxfilter & (1 << 0) == 0 {
+                    return None;
                 }
 
                 if mac_eq(&self.rx_buffer, 12 + 16, MP_REPLY_MAC) {
@@ -171,11 +217,38 @@ impl Wifi {
                 } else {
                     rxflags |= 0x0008;
                 }
+
+                // Per-subtype gating (`Wifi.cpp:1409-1457`).
+                let accepted = match (frame_ctl >> 4) & 0xF {
+                    0x0 | 0x4 => true,
+                    0x1 => match rxflags & 0xF {
+                        0xD => rxfilter & (1 << 7) != 0,
+                        0xE => true,
+                        _ => rxfilter & (1 << 1) != 0,
+                    },
+                    0x2 => rxflags & 0xF == 0xC || rxfilter & (1 << 2) != 0,
+                    0x3 => rxfilter & (1 << 3) != 0,
+                    0x5 => {
+                        if rxflags & 0xF == 0xF {
+                            rxfilter & (1 << 8) != 0
+                        } else {
+                            rxfilter & (1 << 4) != 0
+                        }
+                    }
+                    0x6 => rxfilter & (1 << 5) != 0,
+                    0x7 => rxfilter & (1 << 6) != 0,
+                    _ => false,
+                };
+                if !accepted {
+                    return None;
+                }
             }
+            // Frame type 3 (reserved) has no branch in melonDS's switch: it
+            // keeps the base `rxflags` and is delivered.
             _ => {}
         }
 
-        (rxflags, cmd_dupe)
+        Some((rxflags, cmd_dupe))
     }
 
     /// Applies `W_RXLenCrop` to a frame length. WEP-frame cropping
@@ -195,6 +268,7 @@ impl Wifi {
             return false;
         }
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
+            self.diag.drops.rx_disabled += 1;
             if super::debug_enabled() && rx_gate_warn_latch() {
                 eprintln!(
                     "[wifi] check_rx: W_RXCnt bit15 (RX enable) is clear -- driver has not \
@@ -208,6 +282,7 @@ impl Wifi {
         // `Wifi.cpp:1572-1573`; without this guard a frame arriving before
         // the driver sets up `W_RXBufBegin`/`W_RXBufEnd` corrupts Wi-Fi RAM.
         if self.ioport(W_RXBufBegin) == self.ioport(W_RXBufEnd) {
+            self.diag.drops.ring_unconfigured += 1;
             return false;
         }
 
@@ -234,15 +309,18 @@ impl Wifi {
         };
 
         if len < 12 + 24 {
+            self.diag.drops.too_short += 1;
             return false; // Too short to contain a valid 802.11 header.
         }
         let frame_len = buf[10] as usize | (buf[11] as usize) << 8;
         if frame_len != len - 12 {
+            self.diag.drops.bad_length += 1;
             warn!("wifi: bad MP frame length {frame_len}/{}", len - 12);
             return false;
         }
         let channel = buf[9];
         if channel as i32 != self.cur_channel || self.cur_channel == 0 {
+            self.diag.drops.channel_mismatch += 1;
             if super::debug_enabled() {
                 eprintln!(
                     "[wifi] RX dropped: channel mismatch (frame channel={channel}, our \
@@ -265,8 +343,33 @@ impl Wifi {
         // `frame_kind` -- this is what the game actually reads out of the
         // RX header. See the module doc comment and
         // `docs/design/local-mp-melonds-parity.md` §2.
-        let (rxflags, cmd_dupe) = self.classify_rxflags();
+        let Some((rxflags, cmd_dupe)) = self.classify_rxflags() else {
+            self.diag.drops.filtered += 1;
+            if super::debug_enabled() {
+                eprintln!(
+                    "[wifi] RX dropped by W_RXFilter/W_RXFilter2 (filter=0x{:04X}/0x{:04X}, \
+                     frame_ctl=0x{frame_ctl:04X})",
+                    self.ioport(W_RXFilter),
+                    self.ioport(W_RXFilter2)
+                );
+            }
+            return false;
+        };
         let cropped_framelen = self.crop_framelen(frame_len as u16);
+
+        // Stage 3/4 of the `diag` summary: the frame survived every check,
+        // and this is how the hardware classified it.
+        self.diag.rx_accepted += 1;
+        match rxflags & 0x800F {
+            0x8001 => self.diag.rxflags_beacon += 1,
+            0x800C => self.diag.rxflags_cmd += 1,
+            0x800D => self.diag.rxflags_ack += 1,
+            0x800E | 0x800F => self.diag.rxflags_reply += 1,
+            // Management frames carry no MP MAC and land here; the
+            // association/authentication traffic is what matters.
+            _ if (frame_ctl >> 2) & 0x3 == 0 => self.diag.rxflags_mgmt += 1,
+            _ => {}
+        }
 
         if super::debug_enabled() {
             eprintln!(
@@ -391,11 +494,51 @@ impl Wifi {
         let base = self.ioport(W_RXBufBegin) as u32 & 0x1FFE;
         let end = self.ioport(W_RXBufEnd) as u32 & 0x1FFE;
 
-        let header_addr = self.ioport(W_RXBufWriteCursor) as u32 & 0x1FFE;
+        // `W_RXBufWriteCursor` is a *halfword*-unit address register, so the
+        // byte offset is `cursor << 1`. Masking it instead (as this line used
+        // to) placed the RX header at roughly half the intended offset: with
+        // the cursor at zero after a `W_RXCnt` bit-0 reset the first frame
+        // still landed correctly, and every frame after it landed inside the
+        // previous frame's body. `step_rx` already stored the cursor back in
+        // the halfword convention (`>> 1`), so the two halves of this module
+        // disagreed. Ported from `StartRX` (`Wifi.cpp:1228`) and `FinishRX`
+        // (`Wifi.cpp:1466`), which both shift. See
+        // `docs/design/local-mp-melonds-parity-2.md` §2 and F1.
+        let header_addr = ((self.ioport(W_RXBufWriteCursor) as u32) << 1) & 0x1FFE;
         let mut addr = header_addr;
         increment_rx_addr(&mut addr, 12, base, end);
 
+        // melonDS's byte pump aborts the reception when the write cursor
+        // catches up with `W_RXBufReadCursor` -- the driver has not drained
+        // the previous frame yet, and continuing would overwrite unread data
+        // (`Wifi.cpp:1918-1938`). This port writes the body in one step rather
+        // than pumping it, so it detects the same condition up front and drops
+        // the frame instead of corrupting the ring. See
+        // `docs/design/local-mp-melonds-parity-2.md` F8e.
+        let read_cursor = ((self.ioport(W_RXBufReadCursor) as u32) << 1) & 0x1FFE;
         let body_len = cropped_framelen as usize;
+        let mut probe = addr;
+        let mut overruns = false;
+        let mut i = 0;
+        while i < body_len {
+            if probe == read_cursor {
+                overruns = true;
+                break;
+            }
+            increment_rx_addr(&mut probe, 2, base, end);
+            i += 2;
+        }
+        if overruns {
+            self.diag.drops.ring_full += 1;
+            if super::debug_enabled() {
+                eprintln!(
+                    "[wifi] RX dropped: ring full (wr=0x{header_addr:04X} rd=0x{read_cursor:04X} \
+                     len={body_len}) -- driver has not drained the previous frame"
+                );
+            }
+            return;
+        }
+
         let mut i = 0;
         while i < body_len {
             let a = addr as usize;
@@ -539,7 +682,7 @@ impl Wifi {
         let total = (12 + framelen as usize).min(reply.len()).min(self.rx_buffer.len());
         self.rx_buffer[..total].copy_from_slice(&reply[..total]);
 
-        let (rxflags, cmd_dupe) = self.classify_rxflags();
+        let Some((rxflags, cmd_dupe)) = self.classify_rxflags() else { return };
         let mac_good = self.rx_buffer[16] & 0x01 != 0 || self.mac_matches(&self.rx_buffer[16..22]);
 
         self.rx_timestamp = 0;

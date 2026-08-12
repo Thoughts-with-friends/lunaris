@@ -115,6 +115,11 @@ pub mod names {
     pub const W_RXStatHalfIE: usize = 0x1AE;
     pub const W_TXErrorCount: usize = 0x1C0;
     pub const W_RXCount: usize = 0x1C4;
+    /// Base of the per-client MP reply-failure counters. These are **byte**-wide
+    /// counters, two per 16-bit port, covering association IDs `1..=15` across
+    /// ports `1D0h`..`1DEh` (`docs/design/melonds/Wifi.h:146-153`). melonDS
+    /// addresses them as a flat byte array via `IOPORT8(W_CMDStat0 + i)`.
+    pub const W_CMDStat0: usize = 0x1D0;
     pub const W_TXSeqNo: usize = 0x210;
     pub const W_RFStatus: usize = 0x214;
     pub const W_IFSet: usize = 0x21C;
@@ -126,7 +131,12 @@ impl Wifi {
     /// 16-bit read from Wi-Fi address space (`addr` relative to
     /// `4800000h`). Implements the mirroring rules of
     /// `docs/design/design_lan.md` §6.2.
-    pub fn read16(&mut self, addr: u32) -> u16 {
+    ///
+    /// Takes `request` because reading `W_RXBufDataRead` decrements
+    /// `W_RXBufCount` and raises IRQ 9 on the zero transition -- a read with
+    /// an interrupt side effect. See
+    /// `docs/design/local-mp-melonds-parity-2.md` F4.
+    pub fn read16(&mut self, addr: u32, request: &mut InterruptRequest) -> u16 {
         if addr >= 0x0001_0000 {
             return 0;
         }
@@ -144,14 +154,14 @@ impl Wifi {
         // that must not trigger auto-increment side effects.
         let active = addr < 0x1000;
         let reg = (addr & 0x0FFE) as usize;
-        let value = self.read_register(reg, active);
+        let value = self.read_register(reg, active, request);
         if super::debug_enabled() {
             eprintln!("[wifi] reg read  0x{reg:03X} -> 0x{value:04X}");
         }
         value
     }
 
-    fn read_register(&mut self, reg: usize, active: bool) -> u16 {
+    fn read_register(&mut self, reg: usize, active: bool, request: &mut InterruptRequest) -> u16 {
         match reg {
             W_Random => {
                 // Not a cryptographically accurate LFSR; matches melonDS's
@@ -178,21 +188,58 @@ impl Wifi {
                 }
             }
             W_BBBusy | W_RFBusy => 0,
-            W_RXBufDataRead if active => self.rx_buf_data_read(),
+            // Hardware exposes no `W_TXBusy` bit for the automatic MP reply
+            // slot: bit 7 is internal state only. `Wifi.cpp:2088` ("no bit for
+            // MP replies. odd"). See
+            // `docs/design/local-mp-melonds-parity-2.md` F2.
+            W_TXBusy => self.ioport(W_TXBusy) & 0x001F,
+            W_RXBufDataRead if active => self.rx_buf_data_read(request),
             _ => self.ioport(reg),
         }
     }
 
-    fn rx_buf_data_read(&mut self) -> u16 {
+    /// Reads one halfword out of the RX ring at `W_RXBufReadAddr`, advancing
+    /// the cursor past the ring end and over the driver-programmed gap.
+    /// Ported from `Wifi.cpp:2057-2085`.
+    ///
+    /// The gap (`W_RXBufGapAddr`/`W_RXBufGapSize`) lets the driver read a
+    /// frame's header and body as one contiguous stream while the hardware
+    /// skips the region between them; ignoring it hands the driver the wrong
+    /// bytes from the second field onward. `W_RXBufCount` counts down the
+    /// halfwords the driver asked for and raises IRQ 9 on reaching zero -- the
+    /// "receive buffer drained" signal a driver may block on. Neither was
+    /// implemented here, even though the *write* path (`W_RXBufDataRead`'s
+    /// write case below) already had both. See
+    /// `docs/design/local-mp-melonds-parity-2.md` F4.
+    fn rx_buf_data_read(&mut self, request: &mut InterruptRequest) -> u16 {
+        let begin = self.ioport(W_RXBufBegin) as u32 & 0x1FFE;
+        let end = self.ioport(W_RXBufEnd) as u32 & 0x1FFE;
+
         let mut rdaddr = self.ioport(W_RXBufReadAddr) as u32 & 0x1FFE;
         let ret = self.ram[rdaddr as usize] as u16 | (self.ram[rdaddr as usize + 1] as u16) << 8;
+
         rdaddr += 2;
-        if rdaddr == (self.ioport(W_RXBufEnd) as u32 & 0x1FFE) {
-            rdaddr = self.ioport(W_RXBufBegin) as u32 & 0x1FFE;
+        if rdaddr == end {
+            rdaddr = begin;
         }
-        self.set_ioport(W_RXBufReadAddr, rdaddr as u16);
-        let count = self.ioport(W_RXBufCount).wrapping_sub(1);
-        self.set_ioport(W_RXBufCount, count);
+        if rdaddr == self.ioport(W_RXBufGapAddr) as u32 & 0x1FFE {
+            rdaddr += (self.ioport(W_RXBufGapSize) as u32) << 1;
+            if rdaddr >= end {
+                rdaddr = rdaddr + begin - end;
+            }
+        }
+        self.set_ioport(W_RXBufReadAddr, (rdaddr & 0x1FFE) as u16);
+
+        // Only decrement a non-zero count: melonDS never underflows this to
+        // `0xFFFF`, and IRQ 9 fires exactly on the zero transition.
+        let count = self.ioport(W_RXBufCount);
+        if count > 0 {
+            self.set_ioport(W_RXBufCount, count - 1);
+            if count - 1 == 0 {
+                self.raise_irq(9, request);
+            }
+        }
+
         ret
     }
 
@@ -241,6 +288,57 @@ impl Wifi {
         request: &mut InterruptRequest,
     ) {
         match reg {
+            // `Wifi.cpp:2118-2183`. Bit 13 and bit 14 each restore a documented
+            // group of registers to hardware defaults; the DS driver relies on
+            // this instead of programming them one by one. Leaving it unported
+            // meant `W_RXBufBegin`/`W_RXBufEnd` stayed zero, and
+            // `Wifi::check_rx`'s zero-size-ring guard then rejected *every*
+            // inbound frame. See `docs/design/local-mp-melonds-parity-2.md` F0.
+            //
+            // Not ported: the bit-0 edge's `UpdatePowerStatus(0)` call and the
+            // `IOPORT(0x27C)` writes -- both belong to the power-management
+            // state machine this emulator does not implement (see the previous
+            // design document's Appendix C).
+            W_ModeReset => {
+                self.set_ioport(W_ModeReset, value & 0x0001);
+
+                if value & 0x2000 != 0 {
+                    self.set_ioport(W_RXBufWriteAddr, 0);
+                    self.set_ioport(W_CmdTotalTime, 0);
+                    self.set_ioport(W_CmdReplyTime, 0);
+                    self.set_ioport(0x1A4, 0);
+                    self.set_ioport(0x278, 0x000F);
+                }
+                if value & 0x4000 != 0 {
+                    self.diag.mode_reset += 1;
+                    self.set_ioport(W_ModeWEP, 0);
+                    self.set_ioport(W_TXStatCnt, 0);
+                    self.set_ioport(0x00A, 0);
+                    self.set_ioport(W_MACAddr0, 0);
+                    self.set_ioport(W_MACAddr1, 0);
+                    self.set_ioport(W_MACAddr2, 0);
+                    self.set_ioport(W_BSSID0, 0);
+                    self.set_ioport(W_BSSID1, 0);
+                    self.set_ioport(W_BSSID2, 0);
+                    self.set_ioport(W_AIDLow, 0);
+                    self.set_ioport(W_AIDFull, 0);
+                    self.set_ioport(W_TXRetryLimit, 0x0707);
+                    self.set_ioport(0x02E, 0);
+                    self.set_ioport(W_RXBufBegin, 0x4000);
+                    self.set_ioport(W_RXBufEnd, 0x4800);
+                    self.set_ioport(W_TXBeaconTIM, 0);
+                    self.set_ioport(W_Preamble, 0x0001);
+                    self.set_ioport(W_RXFilter, 0x0401);
+                    self.set_ioport(0x0D4, 0x0001);
+                    self.set_ioport(W_RXFilter2, 0x0008);
+                    self.set_ioport(0x0EC, 0x3F03);
+                    self.set_ioport(W_TXHeaderCnt, 0);
+                    self.set_ioport(0x198, 0);
+                    self.set_ioport(0x1A2, 0x0001);
+                    self.set_ioport(0x224, 0x0003);
+                    self.set_ioport(0x230, 0x0047);
+                }
+            }
             W_IF => self.set_ioport(W_IF, self.ioport(W_IF) & !value),
             // Enabling an already-pending flag must re-raise the ARM7
             // request on this write, not wait for the next `SetIRQ` call.
@@ -358,6 +456,13 @@ impl Wifi {
             | W_TXBufGapSize | W_TXBufCount => {
                 self.set_ioport(reg, value & 0x0FFF);
             }
+            // Counted for the `diag` summary: if neither this nor a
+            // `W_ModeReset` bit-14 write ever happens, the RX ring stays
+            // zero-sized and `check_rx` rejects every inbound frame.
+            W_RXBufBegin | W_RXBufEnd => {
+                self.diag.rxbuf_cfg += 1;
+                self.set_ioport(reg, value);
+            }
             // Writes to `W_CmdCount` set the countdown timer directly
             // (reads recompute the driver-visible value from it via
             // `div_ceil`); the register mirror itself is never stored.
@@ -414,11 +519,23 @@ impl Wifi {
         }
     }
 
+    /// Writes one halfword of a staged TX frame at `W_TXBufWriteAddr`,
+    /// advancing the cursor over the driver-programmed gap. Ported from
+    /// `Wifi.cpp:2389-2400`.
+    ///
+    /// The driver stages a frame's 12-byte hardware header and its 802.11 body
+    /// as one contiguous write stream; `W_TXBufGapAddr`/`W_TXBufGapSize` tell
+    /// the hardware to skip the region between them. Ignoring the gap lays
+    /// every staged frame out wrong in Wi-Fi RAM. See
+    /// `docs/design/local-mp-melonds-parity-2.md` F4.
     fn tx_buf_data_write(&mut self, value: u16, request: &mut InterruptRequest) {
         let mut addr = self.ioport(W_TXBufWriteAddr) as u32 & 0x1FFE;
         self.ram[addr as usize] = value as u8;
         self.ram[addr as usize + 1] = (value >> 8) as u8;
         addr += 2;
+        if addr == self.ioport(W_TXBufGapAddr) as u32 & 0x1FFE {
+            addr += (self.ioport(W_TXBufGapSize) as u32) << 1;
+        }
         self.set_ioport(W_TXBufWriteAddr, addr as u16 & 0x1FFE);
 
         let count = self.ioport(W_TXBufCount);
@@ -442,8 +559,8 @@ impl Wifi {
     }
 
     /// 8-bit read: extracts the requested byte from the 16-bit read.
-    pub fn read8(&mut self, addr: u32) -> u8 {
-        let word = self.read16(addr & !1);
+    pub fn read8(&mut self, addr: u32, request: &mut InterruptRequest) -> u8 {
+        let word = self.read16(addr & !1, request);
         if addr & 1 != 0 { (word >> 8) as u8 } else { word as u8 }
     }
 

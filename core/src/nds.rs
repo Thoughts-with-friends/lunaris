@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 pub use crate::hw::{
-    Engine, GraphicsType, Key, LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport,
-    RomFingerprint,
+    Engine, GraphicsType, Key, LinkHints, LoopbackTransport, MpDiag, MpFrameKind, MpRecv,
+    MpTransport, RomFingerprint, RxDrops,
 };
 use crate::{CheatMap, arm::ARM, hw::HW, likely};
 
@@ -120,6 +120,19 @@ impl NDS {
     #[inline]
     pub fn wifi_write16(&mut self, addr: u32, value: u16) {
         self.hw.wifi_write16(addr, value);
+    }
+
+    /// Prints the local-multiplayer diagnostic summary immediately. See
+    /// [`crate::hw::HW::wifi_dump_diag`].
+    /// A snapshot of the local-multiplayer handshake counters, for a
+    /// frontend that wants to show how far the connection got. See
+    /// [`crate::hw::net::wifi::diag`].
+    pub fn wifi_diag_snapshot(&self) -> MpDiag {
+        self.hw.wifi_diag_snapshot()
+    }
+
+    pub fn wifi_dump_diag(&self) {
+        self.hw.wifi_dump_diag();
     }
 
     /// Diagnostic escape hatch: see [`crate::hw::HW::wifi_read16`].

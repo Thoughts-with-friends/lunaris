@@ -41,7 +41,10 @@ use math::{Div, Sqrt};
 pub use mem::{AccessType, MemoryValue};
 use mem::{CP15, EXMEM, HALTCNT, POWCNT2, WRAMCNT};
 use net::wifi::Wifi;
-pub use net::wifi::mp::{LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport};
+pub use net::wifi::{
+    diag::{MpDiag, RxDrops},
+    mp::{LinkHints, LoopbackTransport, MpFrameKind, MpRecv, MpTransport},
+};
 use rtc::RTC;
 use scheduler::{Event, EventHandler, Scheduler};
 use spi::SPI;
@@ -364,10 +367,23 @@ impl HW {
         self.wifi.write16(addr, value, &mut self.scheduler, &mut self.interrupts[0].request);
     }
 
+    /// Prints the local-multiplayer diagnostic summary immediately, without
+    /// waiting for its periodic interval. See
+    /// [`crate::hw::net::wifi::diag`]; unlike the periodic dump this ignores
+    /// `LUNARIS_MP_DIAG`, so a caller that explicitly asks for a snapshot
+    /// always gets one.
+    pub fn wifi_diag_snapshot(&self) -> net::wifi::diag::MpDiag {
+        self.wifi.diag_snapshot()
+    }
+
+    pub fn wifi_dump_diag(&self) {
+        self.wifi.dump_diag();
+    }
+
     /// Diagnostic escape hatch: reads a Wi-Fi register directly. See
     /// [`HW::wifi_write16`].
     pub fn wifi_read16(&mut self, addr: u32) -> u16 {
-        self.wifi.read16(addr)
+        self.wifi.read16(addr, &mut self.interrupts[0].request)
     }
 
     /// Diagnostic escape hatch: sets Wi-Fi hardware power state directly

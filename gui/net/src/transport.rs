@@ -17,7 +17,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::{Receiver, Sender, TryRecvError},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use nds_core::nds::{LinkHints, MpFrameKind, MpRecv, MpTransport};
@@ -73,6 +73,11 @@ impl SharedHints {
 
 struct Inbound {
     kind: WireFrameKind,
+    /// Room-level player id of the sender. Needed by
+    /// [`NetTransport::recv_replies`] to know when *every* connected peer has
+    /// been heard from -- including one whose reply was a zero-length
+    /// keep-alive carrying no AID. See
+    /// `docs/design/local-mp-melonds-parity-2.md` F5.
     sender_id: u8,
     aid: u16,
     timestamp_us: u64,
@@ -245,32 +250,85 @@ impl MpTransport for NetTransport {
 
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16 {
         let mut answered = 0u16;
-        let mut offset = 0usize;
-        // Bounded wall-clock budget: this is called synchronously from the
-        // TX-complete path, so it must not stall the caller indefinitely
-        // even if a client never replies.
-        let deadline = std::time::Instant::now() + Duration::from_millis(50);
+
+        // melonDS's `RecvReplies` releases on *either* of two conditions
+        // (`docs/design/melonds/net/LocalMP.cpp:295-360`): every addressed AID
+        // sent data, or every connected instance has been heard from at all.
+        // The second is what makes the zero-length keep-alive reply
+        // (`Wifi.cpp:1496-1503`, mirrored in `Wifi::step_rx`) do its job --
+        // without it the host burns its whole receive budget, every CMD round,
+        // waiting for a reply that already arrived carrying no payload. See
+        // `docs/design/local-mp-melonds-parity-2.md` F5.
+        //
+        // Room ids are bounded to `0..16`; anything outside that range
+        // contributes no bit rather than overflowing the shift.
+        let bit = |id: u8| -> u16 { if id < 16 { 1u16 << id } else { 0 } };
+        let connected: u16 =
+            self.peers.snapshot().iter().fold(bit(self.self_id), |acc, &(id, _)| acc | bit(id));
+        let mut heard = bit(self.self_id);
+
+        // Unlike melonDS's `MPStatus.ConnectedBitmask`, this peer table is
+        // published asynchronously by the room's control thread, so an empty
+        // one means "topology not known yet" at least as often as it means
+        // "everybody left". Only trust the sender-based release when the table
+        // actually names a peer; otherwise fall back to waiting out the
+        // receive budget, which is the pre-existing behaviour.
+        let topology_known = connected != bit(self.self_id);
+
+        // Honour the transport's configured receive budget
+        // (`link_hints().recv_timeout`, melonDS's `MPRecvTimeout`) rather than
+        // a value hard-coded independently of it.
+        let timeout = self.hints.get().recv_timeout;
+        let deadline = Instant::now() + timeout;
         loop {
-            if answered & aid_mask == aid_mask || std::time::Instant::now() >= deadline {
+            if answered & aid_mask == aid_mask || (topology_known && heard == connected) {
                 break;
             }
-            match self.reply_rx.recv_timeout(Duration::from_millis(5)) {
-                Ok(frame) => {
-                    if frame.aid >= 16 || aid_mask & (1 << frame.aid) == 0 {
-                        continue;
-                    }
-                    if frame.timestamp_us.abs_diff(timestamp_us) > 32_000 {
-                        continue;
-                    }
-                    let end = (offset + frame.payload.len()).min(buf.len());
-                    if end > offset {
-                        buf[offset..end].copy_from_slice(&frame.payload[..end - offset]);
-                        offset = end;
-                    }
-                    answered |= 1 << frame.aid;
-                }
-                Err(_) => break,
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
             }
+            let Ok(frame) = self.reply_rx.recv_timeout(remaining) else { break };
+
+            // Count the sender regardless of whether its reply carried data:
+            // melonDS's `myinstmask |= (1 << pktheader.SenderID)`.
+            heard |= bit(frame.sender_id);
+
+            // A zero-length reply names no AID and sets no `answered` bit --
+            // its only job was the `heard` bookkeeping above.
+            if frame.payload.is_empty() || frame.aid == 0 || frame.aid >= 16 {
+                continue;
+            }
+            if aid_mask & (1 << frame.aid) == 0 {
+                continue;
+            }
+            // One-sided staleness test on the emulated clock, following
+            // melonDS's `header->Timestamp < (timestamp - 32)`: a reply whose
+            // clock legitimately runs *ahead* of the host's (granted by the
+            // host's own run-ahead window) must never be rejected -- only one
+            // that lags behind. Replaces a two-sided `abs_diff` test, which
+            // rejected exactly the run-ahead case the ack frame authorises.
+            //
+            // Saturating rather than wrapping, deliberately diverging from
+            // melonDS: its tolerance is 32µs, so `timestamp - 32` underflows
+            // only in the first 32µs of a session. lunaris's tolerance is
+            // 32ms, and wrapping there makes *every* reply vacuously stale for
+            // the first 32ms -- long enough to cover a real handshake.
+            if frame.timestamp_us + 32_000 < timestamp_us {
+                continue;
+            }
+            // Replies are addressed by association ID into fixed 1 KiB slots,
+            // exactly as `Wifi::mp_client_reply_rx` reads them back
+            // (`mp_client_replies[(client - 1) * 1024]`, melonDS's
+            // `packets[(aid-1)*1024]`). Packing them back-to-back from offset
+            // zero -- as this used to -- put every reply somewhere the core
+            // never looks.
+            let slot = (frame.aid as usize - 1) * 1024;
+            let end = (slot + frame.payload.len()).min(buf.len());
+            if end > slot {
+                buf[slot..end].copy_from_slice(&frame.payload[..end - slot]);
+            }
+            answered |= 1 << frame.aid;
         }
         answered
     }
@@ -346,4 +404,74 @@ fn spawn_rx_pump(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::Ipv4Addr, time::Instant};
+
+    use super::*;
+
+    /// Binds a `NetTransport` pair on localhost, each addressed by the other.
+    /// `host_id` is `0` (transport `a`); `b` is instance `1`.
+    fn transport_pair() -> (NetTransport, NetTransport) {
+        let sock_a = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let sock_b = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr_a = sock_a.local_addr().unwrap();
+        let addr_b = sock_b.local_addr().unwrap();
+
+        let peers_a = Arc::new(PeerTable::default());
+        peers_a.set(vec![(1, addr_b)]);
+        let peers_b = Arc::new(PeerTable::default());
+        peers_b.set(vec![(0, addr_a)]);
+
+        let hints_a = Arc::new(SharedHints::default());
+        hints_a.set(LinkHints { runahead_us: 1000, recv_timeout: Duration::from_millis(200) });
+        let hints_b = Arc::new(SharedHints::default());
+        hints_b.set(LinkHints { runahead_us: 1000, recv_timeout: Duration::from_millis(200) });
+
+        let a = NetTransport::from_socket(sock_a, 0, 0, peers_a, hints_a).unwrap();
+        let b = NetTransport::from_socket(sock_b, 1, 0, peers_b, hints_b).unwrap();
+        (a, b)
+    }
+
+    /// Replies must land in the fixed per-AID 1 KiB slot the core reads them
+    /// back from (`Wifi::mp_client_reply_rx` indexes
+    /// `mp_client_replies[(client - 1) * 1024]`). Packing them back-to-back
+    /// from offset zero put every reply somewhere the core never looks.
+    #[test]
+    fn replies_land_in_their_per_aid_slot() {
+        let (mut a, mut b) = transport_pair();
+        b.send_reply(&[0xAB; 4], 100_000, 2);
+
+        let mut buf = [0u8; 15 * 1024];
+        let answered = a.recv_replies(&mut buf, 100_000, 1 << 2);
+
+        assert_eq!(answered, 1 << 2);
+        assert_eq!(&buf[1024..1028], &[0xAB; 4], "AID 2 occupies the second 1 KiB slot");
+        assert!(buf[..1024].iter().all(|&b| b == 0), "AID 1's slot must be untouched");
+    }
+
+    /// A zero-length keep-alive reply (aid 0) carries no data and must not set
+    /// an `answered` bit -- but it *must* still release the host's wait,
+    /// because it proves the peer is alive and had nothing to send. Without
+    /// this the host burns its full receive budget on every CMD round,
+    /// blocking the emulator thread inside a microsecond-scale hardware phase.
+    /// `docs/design/local-mp-melonds-parity-2.md` F5.
+    #[test]
+    fn blank_reply_releases_the_wait_without_marking_an_aid() {
+        let (mut a, mut b) = transport_pair();
+        b.send_reply(&[], 100_000, 0);
+
+        let mut buf = [0u8; 15 * 1024];
+        let start = Instant::now();
+        let answered = a.recv_replies(&mut buf, 100_000, 1 << 1);
+
+        assert_eq!(answered, 0, "a blank reply names no AID");
+        assert!(
+            start.elapsed() < Duration::from_millis(150),
+            "the wait must end as soon as every connected peer has been heard from, not after              the full 200ms receive budget (took {:?})",
+            start.elapsed()
+        );
+    }
 }

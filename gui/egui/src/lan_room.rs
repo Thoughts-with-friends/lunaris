@@ -288,11 +288,109 @@ impl LanRoomState {
             link.recv_timeout.as_millis()
         ));
 
+        ui.separator();
+        Self::show_mp_status(ui, nds);
+
         if ui.button("Leave Room").clicked() {
             self.leave(nds);
         }
 
         let _ = action;
+    }
+
+    /// Renders how far the *emulated Wi-Fi* handshake got, underneath the
+    /// room's own player list.
+    ///
+    /// The player list above only reports the `lunaris`-level connection (TCP
+    /// control channel plus UDP peers). A game can sit in a perfectly healthy
+    /// room and still never see its opponent, because local play additionally
+    /// requires the emulated DS Wi-Fi hardware to complete beacon ->
+    /// association -> CMD/reply/ack. This block shows which of those stages
+    /// has actually happened, so "connected in the room but not in the game"
+    /// is diagnosable without a terminal. Mirrors the `LUNARIS_MP_DIAG=1`
+    /// dump; see `core/src/hw/net/wifi/diag.rs`.
+    fn show_mp_status(ui: &mut egui::Ui, nds: &NDS) {
+        let d = nds.wifi_diag_snapshot();
+        let drops = d.drops;
+
+        egui::CollapsingHeader::new("Wi-Fi link status").default_open(true).show(ui, |ui| {
+            let ok = egui::Color32::from_rgb(110, 190, 110);
+            let pending = egui::Color32::from_rgb(220, 140, 80);
+            let mut stage = |label: &str, reached: bool, detail: String| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        if reached { ok } else { pending },
+                        if reached { "OK" } else { "--" },
+                    );
+                    ui.label(label);
+                    ui.weak(detail);
+                });
+            };
+
+            stage("1. RF channel", d.channel != 0, format!("channel {}", d.channel));
+            stage(
+                "2. Driver setup",
+                d.mode_reset > 0 || d.rxbuf_cfg > 0,
+                format!("mode_reset {} / rxbuf_cfg {}", d.mode_reset, d.rxbuf_cfg),
+            );
+            stage(
+                "3. Transmitting",
+                d.beacon_tx + d.cmd_tx + d.reply_tx + d.blank_reply_tx > 0,
+                format!(
+                    "beacon {} / cmd {} / reply {} / blank {}",
+                    d.beacon_tx, d.cmd_tx, d.reply_tx, d.blank_reply_tx
+                ),
+            );
+            stage("4. Receiving", d.rx_accepted > 0, format!("accepted {}", d.rx_accepted));
+            stage(
+                "5. Classified",
+                d.rxflags_beacon + d.rxflags_cmd + d.rxflags_ack + d.rxflags_reply > 0,
+                format!(
+                    "beacon {} / cmd {} / ack {} / reply {} / mgmt {}",
+                    d.rxflags_beacon, d.rxflags_cmd, d.rxflags_ack, d.rxflags_reply, d.rxflags_mgmt
+                ),
+            );
+            stage(
+                "6. Associated",
+                d.is_mp,
+                format!("is_mp {} / client {} / aid {}", d.is_mp, d.is_mp_client, d.aid),
+            );
+            stage(
+                "7. CMD rounds",
+                d.irq12 > 0,
+                format!(
+                    "replies {} / empty {} / irq12 {}",
+                    d.replies_answered, d.replies_empty, d.irq12
+                ),
+            );
+
+            let total_drops = drops.rx_disabled
+                + drops.ring_unconfigured
+                + drops.too_short
+                + drops.bad_length
+                + drops.channel_mismatch
+                + drops.filtered
+                + drops.ring_full;
+            if total_drops > 0 {
+                ui.weak(format!(
+                    "dropped {total_drops}: rx_disabled {} / ring_unconfigured {} / too_short {} \
+                     / bad_length {} / channel_mismatch {} / filtered {} / ring_full {}",
+                    drops.rx_disabled,
+                    drops.ring_unconfigured,
+                    drops.too_short,
+                    drops.bad_length,
+                    drops.channel_mismatch,
+                    drops.filtered,
+                    drops.ring_full,
+                ));
+            }
+
+            ui.add_space(2.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(210, 205, 130),
+                d.verdict(d.transport_installed),
+            );
+        });
     }
 }
 
