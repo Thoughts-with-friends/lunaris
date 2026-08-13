@@ -98,9 +98,69 @@ const WIFI_CONFIG_LEN: usize = 0x138;
 ///
 /// GBATEK "DS Firmware Wifi Calibration Data":
 /// <https://problemkaputt.de/gbatek.htm#dsfirmwarewificalibrationdata>
+/// Baseband initialisation table, uploaded by the driver during Wi-Fi init.
+/// Copied verbatim from melonDS's generated firmware (`BBINIT`,
+/// `docs/design/melonds/SPI_Firmware.cpp:30-38`). Lives at firmware `064h`
+/// (`InitialBBValues[105]`).
+const BB_INIT: [u8; 0x69] = [
+    0x03, 0x17, 0x40, 0x00, 0x1B, 0x6C, 0x48, 0x80, 0x38, 0x00, 0x35, 0x07, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC7, 0xBB, 0x01, 0x24, 0x7F,
+    0x5A, 0x01, 0x3F, 0x01, 0x3F, 0x36, 0x1D, 0x00, 0x78, 0x35, 0x55, 0x12, 0x34, 0x1C, 0x00, 0x01,
+    0x0E, 0x38, 0x03, 0x70, 0xC5, 0x2A, 0x0A, 0x08, 0x04, 0x01, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFE,
+    0xFE, 0xFE, 0xFE, 0xFC, 0xFC, 0xFA, 0xFA, 0xFA, 0xFA, 0xFA, 0xF8, 0xF8, 0xF6, 0x00, 0x12, 0x14,
+    0x12, 0x41, 0x23, 0x03, 0x04, 0x70, 0x35, 0x0E, 0x2C, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x12, 0x28, 0x1C,
+];
+
+/// RF initialisation table (Type-3), uploaded to RF registers `00h`-`28h`
+/// during Wi-Fi init. Copied verbatim from melonDS's `RFINIT`
+/// (`docs/design/melonds/SPI_Firmware.cpp:41-46`). Lives at firmware `0CEh`
+/// (`Type3Config.InitialRFValues[41]`).
+///
+/// Leaving this zeroed -- as this firmware used to -- makes the driver
+/// upload zeros across the whole RF register file, including the two
+/// channel-selection registers, so the emulated radio never holds a value
+/// that [`nds_core`]'s channel detection can match.
+const RF_INIT: [u8; 0x29] = [
+    0x31, 0x4C, 0x4F, 0x21, 0x00, 0x10, 0xB0, 0x08, 0xFA, 0x15, 0x26, 0xE6, 0xC1, 0x01, 0x0E, 0x50,
+    0x05, 0x00, 0x6D, 0x12, 0x00, 0x00, 0x01, 0xFF, 0x0E, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x06,
+    0x06, 0x00, 0x00, 0x00, 0x18, 0x00, 0x02, 0x00, 0x00,
+];
+
+/// Per-channel BB/RF calibration, copied verbatim from melonDS's `CHANDATA`
+/// (`docs/design/melonds/SPI_Firmware.cpp:48-55`) and placed at firmware
+/// `0F8h`, exactly as melonDS does (`SPI_Firmware.cpp:147`).
+///
+/// Layout, 60 bytes: `BBIndex1`, `BBData1[14]`, `BBIndex2`, `BBData2[14]`,
+/// `RFIndex1`, `RFData1[14]`, `RFIndex2`, `RFData2[14]`. The two RF index
+/// bytes are `01h` and `02h`, i.e. the driver selects a channel by writing
+/// `RFData1[ch]` to RF register 1 and `RFData2[ch]` to RF register 2 --
+/// which is what `Wifi::change_channel` matches against.
+const CHAN_DATA: [u8; 0x3C] = [
+    0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0E, 0x0E, 0x0E, 0x0E, 0x0E, 0x0E, 0x0E, 0x16, 0x26,
+    0x1C, 0x1C, 0x1C, 0x1D, 0x1D, 0x1D, 0x1E, 0x1E, 0x1E, 0x1E, 0x1F, 0x1E, 0x1F, 0x18, 0x01, 0x4B,
+    0x4B, 0x4B, 0x4B, 0x4C, 0x4C, 0x4C, 0x4C, 0x4C, 0x4C, 0x4C, 0x4D, 0x4D, 0x4D, 0x02, 0x6C, 0x71,
+    0x76, 0x5B, 0x40, 0x45, 0x4A, 0x2F, 0x34, 0x39, 0x3E, 0x03, 0x08, 0x14,
+];
+
+/// The 16 halfwords melonDS writes at firmware `044h`-`063h`
+/// (`SPI_Firmware.cpp:127-142`), between `Unknown3` and `InitialBBValues`.
+const INITIAL_VALUES: [u16; 16] = [
+    0x0002, 0x0017, 0x0026, 0x1818, 0x0048, 0x4840, 0x0058, 0x0042, 0x0146, 0x8064, 0xE6E6, 0x2443,
+    0x000E, 0x0001, 0x0001, 0x0402,
+];
+
 const fn write_wifi_config<const N: usize>(firmware: &mut [u8; N]) {
-    // 02Fh: Wi-Fi version (5 = "V6_7", a common real-hardware value).
-    firmware[0x02F] = 5;
+    // 02Fh: Wi-Fi version. melonDS's generated DS firmware reports W006
+    // (`SPI_Firmware.cpp:111`); this used to say 5, which is a DSi-era value.
+    firmware[0x02F] = 6;
+    // 030h-035h: Unused3, which melonDS fills with a fixed pattern.
+    firmware[0x030] = 0xFF;
+    firmware[0x031] = 0xFF;
+    firmware[0x032] = 0xFF;
+    firmware[0x033] = 0xFF;
+    firmware[0x034] = 0xFF;
+    firmware[0x035] = 0x00;
     // 036h-03Bh: MAC address placeholder. Patched per-instance by
     // `gui/common/src/loader.rs` (`docs/design/design_lan.md` §7.3) so two
     // lunaris processes never boot with identical MACs.
@@ -110,30 +170,58 @@ const fn write_wifi_config<const N: usize>(firmware: &mut [u8; N]) {
     firmware[0x039] = 0x00;
     firmware[0x03A] = 0x00;
     firmware[0x03B] = 0x00;
-    // 03Ch-03Dh: enabled channels 1-13.
+    // 03Ch-03Dh: enabled channels 1-13 (0x3FFE).
     firmware[0x03C] = 0xFE;
     firmware[0x03D] = 0x3F;
+    // 03Eh-03Fh: Unknown2.
+    firmware[0x03E] = 0xFF;
+    firmware[0x03F] = 0xFF;
     // 040h: RF chip type = Type-3.
     firmware[0x040] = 3;
-    // 041h-042h: RF bits-per-entry / entry count. Matched to melonDS's
-    // generated-firmware fallback values (0x94, 0x29) for fidelity; unlike
-    // the CRC seed above, real driver code doesn't appear to gate Wi-Fi
-    // activation on these specifically, but there's no reason to diverge.
+    // 041h-043h: RF bits-per-entry, entry count, Unknown3.
     firmware[0x041] = 0x94;
     firmware[0x042] = 0x29;
+    firmware[0x043] = 0x02;
 
-    // Type-3 channel table (absolute offsets, see
-    // `docs/design/design_lan.md` §7.1): RFIndex1=116h, RFData1[14]
-    // =117h..125h, RFIndex2=125h, RFData2[14]=126h..134h. Index values (0,
-    // 1) just need to name two distinct RF registers; data values (0x21+i,
-    // 0x41+i) just need to be distinct and non-zero per channel.
-    firmware[0x116] = 0;
-    firmware[0x125] = 1;
-    let mut ch = 0_usize;
-    while ch < 14 {
-        firmware[0x117 + ch] = (0x21 + ch) as u8;
-        firmware[0x126 + ch] = (0x41 + ch) as u8;
-        ch += 1;
+    // 044h-063h: sixteen halfwords melonDS plants verbatim.
+    let mut i = 0;
+    while i < 16 {
+        let v = INITIAL_VALUES[i];
+        firmware[0x044 + i * 2] = (v & 0xFF) as u8;
+        firmware[0x045 + i * 2] = (v >> 8) as u8;
+        i += 1;
+    }
+
+    // 064h-0CCh: InitialBBValues.
+    let mut i = 0;
+    while i < BB_INIT.len() {
+        firmware[0x064 + i] = BB_INIT[i];
+        i += 1;
+    }
+    // 0CDh: Unused4 stays zero.
+
+    // 0CEh-0F6h: Type-3 InitialRFValues.
+    let mut i = 0;
+    while i < RF_INIT.len() {
+        firmware[0x0CE + i] = RF_INIT[i];
+        i += 1;
+    }
+    // 0F7h: BBIndicesPerChannel.
+    firmware[0x0F7] = 0x02;
+
+    // 0F8h-133h: per-channel BB/RF table (BBIndex1/BBData1/BBIndex2/BBData2/
+    // RFIndex1/RFData1/RFIndex2/RFData2).
+    let mut i = 0;
+    while i < CHAN_DATA.len() {
+        firmware[0x0F8 + i] = CHAN_DATA[i];
+        i += 1;
+    }
+
+    // 134h-161h: Type3Config.Unused0, which melonDS fills with 0xFF.
+    let mut i = 0;
+    while i < 46 {
+        firmware[0x134 + i] = 0xFF;
+        i += 1;
     }
 
     // 02Ch-02Dh: config length; 02Ah-02Bh: CRC16 over the config block.
@@ -265,5 +353,109 @@ mod tests {
     fn wifi_config_length_matches_melonds_generated_firmware() {
         let len = FIRMWARE_DS[0x02C] as u16 | (FIRMWARE_DS[0x02D] as u16) << 8;
         assert_eq!(len, 0x138);
+    }
+}
+
+#[cfg(test)]
+mod wifi_calibration_tests {
+    use super::*;
+
+    /// The synthetic firmware must carry a real, self-consistent Wi-Fi
+    /// calibration block, not placeholder values. The DS driver uploads
+    /// `InitialRFValues` across the whole RF register file during init; if
+    /// those are zeros it clobbers the two channel-selection registers, and
+    /// no channel can ever be detected -- which is what made local wireless
+    /// play impossible.
+    #[test]
+    fn wifi_config_carries_melonds_calibration_tables() {
+        let fw = &FIRMWARE_DS;
+
+        assert_eq!(fw[0x040], 3, "RFChipType must be Type-3");
+        assert_eq!(fw[0x041], 0x94, "RFBitsPerEntry");
+        assert_eq!(fw[0x042], 0x29, "RFEntries");
+
+        // InitialBBValues / InitialRFValues must not be blank.
+        assert_eq!(&fw[0x064..0x064 + BB_INIT.len()], &BB_INIT[..]);
+        assert_eq!(&fw[0x0CE..0x0CE + RF_INIT.len()], &RF_INIT[..]);
+        assert!(RF_INIT.iter().any(|&b| b != 0), "RF init table must not be all zeros");
+
+        // Per-channel table at 0F8h, and the two RF index bytes the driver
+        // uses to select a channel.
+        assert_eq!(&fw[0x0F8..0x0F8 + CHAN_DATA.len()], &CHAN_DATA[..]);
+        assert_eq!(fw[0x116], 0x01, "RFIndex1");
+        assert_eq!(fw[0x125], 0x02, "RFIndex2");
+    }
+
+    /// Every channel's `(RFData1, RFData2)` pair must be distinct, or
+    /// `Wifi::change_channel` cannot tell channels apart. melonDS's table
+    /// satisfies this; a hand-written placeholder easily does not.
+    #[test]
+    fn every_channel_has_a_distinct_rf_value_pair() {
+        let fw = &FIRMWARE_DS;
+        let pairs: Vec<(u8, u8)> = (0..14).map(|i| (fw[0x117 + i], fw[0x126 + i])).collect();
+        for (i, a) in pairs.iter().enumerate() {
+            for (j, b) in pairs.iter().enumerate().skip(i + 1) {
+                assert_ne!(a, b, "channels {} and {} share an RF value pair {a:?}", i + 1, j + 1);
+            }
+        }
+    }
+}
+
+/// Returns the synthetic DS firmware with its Wi-Fi MAC address set to
+/// `00:09:BF:xx:yy:zz`, where the last three bytes come from `suffix`, and
+/// the Wi-Fi config checksum recomputed to match.
+///
+/// Every `lunaris` process must boot with a **distinct** MAC. Two instances
+/// sharing one address cannot complete 802.11 authentication with each
+/// other: each sees frames that appear to come from itself, so the
+/// authentication exchange repeats forever and association never starts --
+/// which is exactly what local wireless play between two default-configured
+/// instances used to do.
+///
+/// The `00:09:BF` prefix is Nintendo's OUI and is kept; only the
+/// device-specific half varies. The checksum at `02Ah` covers the whole
+/// Wi-Fi config block from `02Ch`, which includes the MAC at `036h`, so it
+/// has to be recomputed rather than left alone.
+#[must_use]
+pub fn firmware_ds_with_mac_suffix(suffix: [u8; 3]) -> Vec<u8> {
+    let mut fw = FIRMWARE_DS.to_vec();
+    fw[0x036] = 0x00;
+    fw[0x037] = 0x09;
+    fw[0x038] = 0xBF;
+    fw[0x039] = suffix[0];
+    fw[0x03A] = suffix[1];
+    fw[0x03B] = suffix[2];
+
+    let crc = crc16_seeded(&fw[0x02C..0x02C + WIFI_CONFIG_LEN], 0x0000);
+    fw[0x02A] = (crc & 0xFF) as u8;
+    fw[0x02B] = (crc >> 8) as u8;
+    fw
+}
+
+#[cfg(test)]
+mod mac_suffix_tests {
+    use super::*;
+
+    /// Patching the MAC must keep Nintendo's OUI, apply the suffix, and
+    /// leave the Wi-Fi config checksum valid -- the checksum covers the MAC,
+    /// so a naive byte poke would invalidate it.
+    #[test]
+    fn mac_suffix_is_applied_and_checksum_stays_valid() {
+        let fw = firmware_ds_with_mac_suffix([0xAA, 0xBB, 0xCC]);
+
+        assert_eq!(&fw[0x036..0x03C], &[0x00, 0x09, 0xBF, 0xAA, 0xBB, 0xCC]);
+
+        let stored = u16::from(fw[0x02A]) | (u16::from(fw[0x02B]) << 8);
+        let recomputed = crc16_seeded(&fw[0x02C..0x02C + WIFI_CONFIG_LEN], 0x0000);
+        assert_eq!(stored, recomputed, "Wi-Fi config checksum must match the patched MAC");
+    }
+
+    /// Two different suffixes must produce two different MACs -- the whole
+    /// point is that two instances never share an address.
+    #[test]
+    fn different_suffixes_give_different_macs() {
+        let a = firmware_ds_with_mac_suffix([1, 2, 3]);
+        let b = firmware_ds_with_mac_suffix([4, 5, 6]);
+        assert_ne!(&a[0x036..0x03C], &b[0x036..0x03C]);
     }
 }

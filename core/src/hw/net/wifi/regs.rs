@@ -154,6 +154,9 @@ impl Wifi {
         // that must not trigger auto-increment side effects.
         let active = addr < 0x1000;
         let reg = (addr & 0x0FFE) as usize;
+        if let Some(n) = self.reg_read_counts.get_mut(reg >> 1) {
+            *n = n.saturating_add(1);
+        }
         let value = self.read_register(reg, active, request);
         if super::debug_enabled() {
             eprintln!("[wifi] reg read  0x{reg:03X} -> 0x{value:04X}");
@@ -300,7 +303,13 @@ impl Wifi {
             // state machine this emulator does not implement (see the previous
             // design document's Appendix C).
             W_ModeReset => {
+                let old = self.ioport(W_ModeReset);
                 self.set_ioport(W_ModeReset, value & 0x0001);
+                // Bit 0 is the transceiver's master enable; both edges
+                // re-evaluate power (`Wifi.cpp:2130-2143`).
+                if (old ^ value) & 0x0001 != 0 {
+                    self.update_power_status(0);
+                }
 
                 if value & 0x2000 != 0 {
                     self.set_ioport(W_RXBufWriteAddr, 0);
@@ -356,10 +365,10 @@ impl Wifi {
             W_AIDLow => self.set_ioport(W_AIDLow, value & 0x000F),
             W_AIDFull => self.set_ioport(W_AIDFull, value & 0x07FF),
             W_TXBufDataWrite => self.tx_buf_data_write(value, request),
-            W_BBWrite => self.bb_write(value),
-            W_BBCnt => {
-                self.set_ioport(W_BBCnt, value);
-            }
+            // `W_BBWrite` only stages the value; the transfer is committed by
+            // the following `W_BBCnt` write. See [`Wifi::bb_write`].
+            W_BBWrite => self.set_ioport(W_BBWrite, value),
+            W_BBCnt => self.bb_write(value),
             W_RFData1 | W_RFData2 => {
                 self.set_ioport(reg, value);
                 if reg == W_RFData2 {
@@ -476,6 +485,69 @@ impl Wifi {
             W_PowerForce => {
                 self.set_ioport(W_PowerForce, value & 0x8001);
                 self.update_power_on(scheduler);
+                self.update_power_status(0);
+            }
+            // `Wifi.cpp:2186-2202`: selecting a power-management mode can
+            // arm `W_PowerDownCtrl` and clear the transceiver state.
+            W_ModeWEP => {
+                let value = value & 0x007F;
+                self.set_ioport(W_ModeWEP, value);
+                if self.ioport(W_PowerTX) & (1 << 1) != 0 {
+                    match value & 0x7 {
+                        1 => self
+                            .set_ioport(W_PowerDownCtrl, self.ioport(W_PowerDownCtrl) | (1 << 1)),
+                        2 => self.set_ioport(W_PowerDownCtrl, 3),
+                        _ => {}
+                    }
+                    if value & 0x7 != 3 {
+                        self.set_ioport(W_PowerState, self.ioport(W_PowerState) & 0x0300);
+                    }
+                    self.update_power_status(0);
+                }
+            }
+            // `Wifi.cpp:2236-2246`.
+            W_PowerTX => {
+                self.set_ioport(W_PowerTX, value & 0x0003);
+                if value & (1 << 1) != 0 {
+                    match self.ioport(W_ModeWEP) & 0x7 {
+                        1 => self
+                            .set_ioport(W_PowerDownCtrl, self.ioport(W_PowerDownCtrl) | (1 << 1)),
+                        2 => self.set_ioport(W_PowerDownCtrl, 3),
+                        _ => {}
+                    }
+                    self.update_power_status(0);
+                }
+            }
+            // The driver's main "power the radio up/down" port; only
+            // writable in `W_ModeWEP` mode 3 (`Wifi.cpp:2249-2264`).
+            W_PowerState => {
+                if self.ioport(W_ModeWEP) & 0x7 != 3 {
+                    return;
+                }
+                let mut v = (self.ioport(W_PowerState) & 0x0300) | (value & 0x0003);
+                if v & 0x0300 == 0x0200 {
+                    v &= !(1 << 0);
+                } else {
+                    v &= !(1 << 1);
+                }
+                if v & (1 << 9) == 0 {
+                    v &= !(1 << 8);
+                }
+                self.set_ioport(W_PowerState, v);
+                self.update_power_status(0);
+            }
+            // `Wifi.cpp:2271-2286`.
+            W_PowerDownCtrl => {
+                self.set_ioport(W_PowerDownCtrl, value & 0x0003);
+                if self.ioport(W_PowerTX) & (1 << 1) != 0 {
+                    match self.ioport(W_ModeWEP) & 0x7 {
+                        1 => self
+                            .set_ioport(W_PowerDownCtrl, self.ioport(W_PowerDownCtrl) | (1 << 1)),
+                        2 => self.set_ioport(W_PowerDownCtrl, 3),
+                        _ => {}
+                    }
+                }
+                self.update_power_status(0);
             }
             // `W_USCount0..3` back the `us_counter` field directly, mirroring
             // melonDS's `Wifi.cpp:2294-2297`; without this the CPU cannot
@@ -548,12 +620,27 @@ impl Wifi {
         }
     }
 
+    /// Commits a baseband register transfer. Ported from melonDS's
+    /// `case W_BBCnt` (`Wifi.cpp:2309-2317`).
+    ///
+    /// The driver stages the byte in `W_BBWrite` and *then* writes `W_BBCnt`
+    /// with `5000h | regid` to perform the transfer, so the commit belongs on
+    /// the `W_BBCnt` write. This module used to commit on the `W_BBWrite`
+    /// write instead, using whatever `W_BBCnt` still held from the
+    /// **previous** transfer -- so every value landed in the wrong register.
+    /// The driver reads each register back through `W_BBRead` to verify its
+    /// upload, so it never saw what it wrote, and looped re-uploading the
+    /// whole baseband table forever without ever reaching RF channel
+    /// selection.
     fn bb_write(&mut self, value: u16) {
-        let cnt = self.ioport(W_BBCnt);
-        if (cnt & 0xF000) == 0x5000 {
-            let id = (cnt & 0xFF) as usize;
+        self.set_ioport(W_BBCnt, value);
+        if (value & 0xF000) == 0x5000 {
+            self.diag.bb_writes += 1;
+            let id = (value & 0xFF) as usize;
+            // Some registers are hardwired and silently ignore writes
+            // (`BBREG_FIXED`, `Wifi.cpp:119-146`).
             if self.bb_regs_ro[id] == 0 {
-                self.bb_regs[id] = value as u8;
+                self.bb_regs[id] = self.ioport(W_BBWrite) as u8;
             }
         }
     }

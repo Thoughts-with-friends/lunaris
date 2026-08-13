@@ -70,8 +70,25 @@ pub fn load_rom(config: &Config) -> NDS {
         // silently unused behind a stale temp-dir copy from a previous
         // build, exactly as happened while diagnosing
         // `docs/design/design_lan.md`'s Union-Room symptom.
-        let default_path = std::env::temp_dir().join("freebios_firmware.bin");
-        fs::write(&default_path, free_bios::firmware::FIRMWARE_DS).unwrap();
+        // Per-process path *and* per-process MAC. Two `lunaris` instances on
+        // one machine read the same config file, so `config.lan.mac_suffix`
+        // alone would give them the same address -- and two DS radios that
+        // share a MAC can never complete 802.11 authentication with each
+        // other, so local wireless play would loop on auth forever without
+        // ever associating. Mixing the process id in guarantees they differ;
+        // a separate file keeps them from overwriting each other's copy.
+        let pid = std::process::id();
+        let cfg_suffix = config.lan.mac_suffix;
+        let suffix = [
+            cfg_suffix[0] ^ (pid & 0xFF) as u8,
+            cfg_suffix[1] ^ ((pid >> 8) & 0xFF) as u8,
+            // Bit 0 of the first octet is the multicast flag and bit 1 the
+            // locally-administered flag; those live in byte `036h`, which is
+            // fixed at `00`, so the suffix bytes are free-form.
+            cfg_suffix[2] ^ ((pid >> 16) & 0xFF) as u8,
+        ];
+        let default_path = std::env::temp_dir().join(format!("freebios_firmware_{pid}.bin"));
+        fs::write(&default_path, free_bios::firmware::firmware_ds_with_mac_suffix(suffix)).unwrap();
         default_path
     };
 

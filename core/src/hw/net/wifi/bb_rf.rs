@@ -47,6 +47,7 @@ impl Wifi {
     /// but Type-2 is kept for compatibility with imported real firmware
     /// dumps.
     pub(super) fn rf_transfer(&mut self) {
+        self.diag.rf_transfers += 1;
         if self.rf_version == 3 {
             self.rf_transfer_type3();
         } else {
@@ -57,6 +58,8 @@ impl Wifi {
     fn rf_transfer_type2(&mut self) {
         let data2 = self.ioport(W_RFData2);
         let id = ((data2 >> 2) & 0x1F) as usize;
+        self.diag.rf_last_id = id as u8;
+        self.diag.rf_last_cmd = if data2 & 0x0080 != 0 { 6 } else { 5 };
         if data2 & 0x0080 != 0 {
             let data = self.rf_regs[id];
             self.set_ioport(W_RFData1, (data & 0xFFFF) as u16);
@@ -77,6 +80,8 @@ impl Wifi {
         let data2 = self.ioport(W_RFData2);
         let id = ((data1 >> 8) & 0x3F) as usize;
         let cmd = data2 & 0xF;
+        self.diag.rf_last_id = id as u8;
+        self.diag.rf_last_cmd = cmd as u8;
         if cmd == 6 {
             let val = self.rf_regs[id] & 0xFF;
             self.set_ioport(W_RFData1, (data1 & 0xFF00) | val as u16);

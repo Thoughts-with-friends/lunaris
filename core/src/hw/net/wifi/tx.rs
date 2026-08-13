@@ -89,10 +89,9 @@ impl Wifi {
     /// isn't enough time left for a full CMD/reply/ack round. See
     /// `docs/design/local-mp-melonds-parity.md` Gap 1.4.
     ///
-    /// Deliberately not ported: melonDS's `UpdatePowerStatus(1)` call at
-    /// the end, which force-wakes the transceiver. That belongs to the
-    /// broader power-management state machine this emulator does not
-    /// implement (see the design doc's Appendix C).
+    /// Ends with `UpdatePowerStatus(1)` to force-wake the transceiver, as
+    /// melonDS does (`Wifi.cpp:735`): the host must be awake to run the
+    /// command round it just armed.
     fn start_tx_cmd(&mut self) {
         let (addr, length, rate) = self.read_slot_frame_info(W_TXSlotCmd);
 
@@ -119,6 +118,8 @@ impl Wifi {
             self.tx_slots[1].phase = 13;
             self.tx_slots[1].phase_time = self.cmd_counter as i32 - 100;
         }
+
+        self.update_power_status(1);
     }
 
     /// Starts the beacon slot (4). Ported from `StartTX_Beacon`
@@ -361,6 +362,8 @@ impl Wifi {
         // Hardware points the RX/TX address register at the frame being sent
         // for the duration of the transfer (`Wifi.cpp:1004`).
         self.set_ioport(W_RXTXAddr, self.tx_slots[slot].addr >> 1);
+        // Transmitting (`Wifi.cpp:983-985`).
+        self.set_status(if slot == 5 { 8 } else { 3 });
         // Slot 5 (reply) already transmitted synchronously inside
         // `start_mp_reply`; sending it again here would duplicate the
         // frame. Ported from `ProcessTX`'s `if (num != 5) TXSendFrame(...)`.
@@ -378,6 +381,7 @@ impl Wifi {
         request: &mut InterruptRequest,
     ) {
         self.raise_irq(7, request);
+        self.set_status(8);
         self.tx_slots[5].phase = 11;
         self.tx_slots[5].phase_time = 28 * 4;
     }
@@ -397,6 +401,8 @@ impl Wifi {
                     self.set_ioport(W_TXStat, 0x0800);
                     self.raise_irq(1, request);
                 }
+                // Waiting for client replies (`Wifi.cpp:1058`).
+                self.set_status(5);
                 self.mp_reply_timer = 16 + self.preamble_len(self.tx_slots[1].rate);
                 if super::debug_enabled() {
                     eprintln!("[wifi] tx_phase_transmit_done us_timestamp={}", self.us_timestamp);
@@ -472,6 +478,7 @@ impl Wifi {
     /// `ProcessTX` case 2 (`Wifi.cpp:1125-1143`).
     fn tx_phase_mp_host_done(&mut self, _slot: usize, request: &mut InterruptRequest) {
         self.raise_irq(7, request);
+        self.set_status(8);
         // Hardware parks the RX/TX pointer here for the ack window
         // (`Wifi.cpp:1131`).
         self.set_ioport(W_RXTXAddr, 0xFC0);
@@ -552,6 +559,9 @@ impl Wifi {
     /// idle when none is left. Ported from `USTimer`'s post-`ProcessTX`
     /// re-selection (`Wifi.cpp:1866-1881`).
     fn reselect_tx_slot(&mut self) {
+        // Back to idle before picking the next slot (`Wifi.cpp:1081`,
+        // `1109`, `1120`, `1177`, `1194`).
+        self.set_status(1);
         match pick_busy_slot(self.ioport(W_TXBusy)) {
             Some(slot) => self.tx_cur_slot = slot as i32,
             None => {
@@ -665,6 +675,10 @@ impl Wifi {
                 self.transport = Some(transport);
             }
             _ => {
+                // LOC1-3: authentication/association and any other frame the
+                // driver stages by hand. This is the guest's entire outbound
+                // traffic until it associates.
+                self.diag.loc_tx += 1;
                 let Some(mut transport) = self.transport.take() else { return };
                 transport.send_packet(&self.tx_buffer[..copy_len], self.us_timestamp);
                 self.transport = Some(transport);

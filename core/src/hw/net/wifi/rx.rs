@@ -286,6 +286,7 @@ impl Wifi {
             return false;
         }
 
+        self.diag.rx_polls += 1;
         let Some(mut transport) = self.transport.take() else { return false };
         let mut buf = vec![0u8; Wifi::RX_BUFFER_SIZE];
         let recv = match kind {
@@ -305,7 +306,10 @@ impl Wifi {
                 self.is_mp_client = false;
                 return false;
             }
-            MpRecv::None => return false,
+            MpRecv::None => {
+                self.diag.rx_empty += 1;
+                return false;
+            }
         };
 
         if len < 12 + 24 {
@@ -360,6 +364,17 @@ impl Wifi {
         // Stage 3/4 of the `diag` summary: the frame survived every check,
         // and this is how the hardware classified it.
         self.diag.rx_accepted += 1;
+        if frame_ctl & (1 << 11) != 0 {
+            self.diag.rx_retry_flagged += 1;
+        }
+        // Authentication body: algorithm / sequence / status.
+        if (frame_ctl >> 2) & 0x3 == 0 && (frame_ctl >> 4) & 0xF == 0xB {
+            for (i, slot) in self.diag.last_auth.iter_mut().enumerate() {
+                let o = 12 + 24 + i * 2;
+                *slot = self.rx_buffer.get(o).copied().unwrap_or(0) as u16
+                    | (self.rx_buffer.get(o + 1).copied().unwrap_or(0) as u16) << 8;
+            }
+        }
         match rxflags & 0x800F {
             0x8001 => self.diag.rxflags_beacon += 1,
             0x800C => self.diag.rxflags_cmd += 1,
@@ -367,7 +382,10 @@ impl Wifi {
             0x800E | 0x800F => self.diag.rxflags_reply += 1,
             // Management frames carry no MP MAC and land here; the
             // association/authentication traffic is what matters.
-            _ if (frame_ctl >> 2) & 0x3 == 0 => self.diag.rxflags_mgmt += 1,
+            _ if (frame_ctl >> 2) & 0x3 == 0 => {
+                self.diag.rxflags_mgmt += 1;
+                self.diag.rx_mgmt_subtype[((frame_ctl >> 4) & 0xF) as usize] += 1;
+            }
             _ => {}
         }
 
@@ -564,6 +582,8 @@ impl Wifi {
 
         self.com_status |= 0x1;
         self.rx_time = cropped_framelen as i32 * if tx_rate == 0x14 { 4 } else { 8 };
+        // Receiving (`Wifi.cpp:1241`).
+        self.set_status(6);
         self.raise_irq(6, request);
     }
 
@@ -582,6 +602,10 @@ impl Wifi {
         }
         self.com_status &= !0x1;
         self.rx_counter = 0;
+        if self.com_status == 0 {
+            // Back to idle (`Wifi.cpp:1255-1258`).
+            self.set_status(1);
+        }
 
         let pending = self.rx_pending;
         self.rx_pending = PendingRxHeader::default();

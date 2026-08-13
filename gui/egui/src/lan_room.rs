@@ -158,6 +158,18 @@ impl LanRoomState {
         nds: &mut NDS,
         action: &mut LanUiAction,
     ) {
+        // Seed the join field on first draw. Kept here rather than in
+        // `Default` because the config isn't available there, and an empty
+        // field would otherwise force the user to type an address even for
+        // the usual two-processes-on-one-machine case.
+        if self.host_ip_input.is_empty() {
+            self.host_ip_input = if config.lan.last_host_ip.is_empty() {
+                lunaris_gui_common::config::DEFAULT_HOST_IP.to_owned()
+            } else {
+                config.lan.last_host_ip.clone()
+            };
+        }
+
         let mut changed = false;
         ui.horizontal(|ui| {
             ui.label("Player name");
@@ -316,6 +328,10 @@ impl LanRoomState {
         egui::CollapsingHeader::new("Wi-Fi link status").default_open(true).show(ui, |ui| {
             let ok = egui::Color32::from_rgb(110, 190, 110);
             let pending = egui::Color32::from_rgb(220, 140, 80);
+            ui.weak(format!(
+                "MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5]
+            ));
             let mut stage = |label: &str, reached: bool, detail: String| {
                 ui.horizontal(|ui| {
                     ui.colored_label(
@@ -327,7 +343,28 @@ impl LanRoomState {
                 });
             };
 
-            stage("1. RF channel", d.channel != 0, format!("channel {}", d.channel));
+            stage(
+                "1. RF channel",
+                d.channel != 0,
+                format!(
+                    "channel {} \u{b7} chip type {} \u{b7} RF[{}]=0x{:X} RF[{}]=0x{:X}{}",
+                    d.channel,
+                    d.rf_version,
+                    d.rf_channel_index[0],
+                    d.rf_regs_now[0],
+                    d.rf_channel_index[1],
+                    d.rf_regs_now[1],
+                    if d.rf_table_empty { " \u{b7} TABLE EMPTY" } else { "" },
+                ),
+            );
+            stage(
+                "1b. RF programmed",
+                d.rf_transfers > 0,
+                format!(
+                    "rf transfers {} (last id {} cmd {}) \u{b7} bb writes {}",
+                    d.rf_transfers, d.rf_last_id, d.rf_last_cmd, d.bb_writes
+                ),
+            );
             stage(
                 "2. Driver setup",
                 d.mode_reset > 0 || d.rxbuf_cfg > 0,
@@ -335,13 +372,17 @@ impl LanRoomState {
             );
             stage(
                 "3. Transmitting",
-                d.beacon_tx + d.cmd_tx + d.reply_tx + d.blank_reply_tx > 0,
+                d.loc_tx + d.beacon_tx + d.cmd_tx + d.reply_tx + d.blank_reply_tx > 0,
                 format!(
-                    "beacon {} / cmd {} / reply {} / blank {}",
-                    d.beacon_tx, d.cmd_tx, d.reply_tx, d.blank_reply_tx
+                    "loc {} / beacon {} / cmd {} / reply {} / blank {}",
+                    d.loc_tx, d.beacon_tx, d.cmd_tx, d.reply_tx, d.blank_reply_tx
                 ),
             );
-            stage("4. Receiving", d.rx_accepted > 0, format!("accepted {}", d.rx_accepted));
+            stage(
+                "4. Receiving",
+                d.rx_accepted > 0,
+                format!("accepted {} / polls {} / empty {}", d.rx_accepted, d.rx_polls, d.rx_empty),
+            );
             stage(
                 "5. Classified",
                 d.rxflags_beacon + d.rxflags_cmd + d.rxflags_ack + d.rxflags_reply > 0,
@@ -363,6 +404,46 @@ impl LanRoomState {
                     d.replies_answered, d.replies_empty, d.irq12
                 ),
             );
+
+            // Management-frame subtypes, named. While a link is forming this
+            // is the whole story: an association response arriving (or not),
+            // and a deauthentication tearing the session down.
+            const MGMT_NAMES: [(usize, &str); 7] = [
+                (0x0, "assoc-req"),
+                (0x1, "assoc-resp"),
+                (0x4, "probe-req"),
+                (0x5, "probe-resp"),
+                (0x8, "beacon"),
+                (0xB, "auth"),
+                (0xC, "deauth"),
+            ];
+            let mgmt: Vec<String> = MGMT_NAMES
+                .iter()
+                .filter(|&&(i, _)| d.rx_mgmt_subtype[i] > 0)
+                .map(|&(i, name)| format!("{name} {}", d.rx_mgmt_subtype[i]))
+                .collect();
+            if !mgmt.is_empty() {
+                ui.weak(format!("rx mgmt  {}", mgmt.join("  ")));
+            }
+            if d.rx_mgmt_subtype[0xB] > 0 {
+                ui.weak(format!(
+                    "last auth  algo {} / seq {} / status {}  \u{b7} retry-flagged rx {}",
+                    d.last_auth[0], d.last_auth[1], d.last_auth[2], d.rx_retry_flagged
+                ));
+            }
+
+            // What the driver is polling. A Wi-Fi init that stalls spins on
+            // one register; naming it turns "nothing happens" into a
+            // specific unimplemented behaviour.
+            let polled: Vec<String> = d
+                .top_reads
+                .iter()
+                .filter(|&&(_, n)| n > 0)
+                .map(|&(reg, n)| format!("{reg:03X}:{n}"))
+                .collect();
+            if !polled.is_empty() {
+                ui.weak(format!("most-read regs  {}", polled.join("  ")));
+            }
 
             let total_drops = drops.rx_disabled
                 + drops.ring_unconfigured

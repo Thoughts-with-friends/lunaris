@@ -158,8 +158,12 @@ impl Room {
         let listener = TcpListener::bind(("0.0.0.0", cfg.control_port))?;
         let udp_socket = UdpSocket::bind(("0.0.0.0", cfg.mp_port))?;
 
+        // Starts empty: the peer table names who to *send to*, and a host
+        // must never send to itself. Seeding it with the host's own address
+        // made every broadcast loop back -- the host received its own
+        // beacons and adopted their timestamps. Guests are added by the
+        // accept loop as they say Hello.
         let peers = Arc::new(PeerTable::default());
-        peers.set(vec![(0, SocketAddr::new(IpAddr::from([127, 0, 0, 1]), cfg.mp_port))]);
         let hints_shared = Arc::new(SharedHints::default());
         hints_shared.set(Controller::new().hints());
 
@@ -399,8 +403,7 @@ fn spawn_host_accept_loop(
     // Per-connection UDP addresses, tracked alongside the TCP write-clone
     // table so `PeerTable` (consumed by `NetTransport`) can be rebuilt
     // whenever membership changes.
-    let udp_addrs: Arc<Mutex<Vec<(u8, SocketAddr)>>> =
-        Arc::new(Mutex::new(vec![(0, SocketAddr::new(IpAddr::from([127, 0, 0, 1]), mp_port))]));
+    let udp_addrs: Arc<Mutex<Vec<(u8, SocketAddr)>>> = Arc::new(Mutex::new(Vec::new()));
 
     let _ = listener.set_nonblocking(true);
     std::thread::spawn(move || {

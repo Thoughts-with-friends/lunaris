@@ -130,7 +130,7 @@ impl NetTransport {
 
         spawn_rx_pump(
             Arc::clone(&socket),
-            host_id,
+            self_id,
             regular_tx,
             reply_tx,
             Arc::clone(&host_gone),
@@ -357,7 +357,7 @@ fn deliver(buf: &mut [u8], frame: Inbound) -> MpRecv {
 
 fn spawn_rx_pump(
     socket: Arc<UdpSocket>,
-    host_id: u8,
+    self_id: u8,
     regular_tx: Sender<Inbound>,
     reply_tx: Sender<Inbound>,
     host_gone: Arc<AtomicBool>,
@@ -372,6 +372,25 @@ fn spawn_rx_pump(
             match socket.recv_from(&mut buf) {
                 Ok((len, _addr)) => {
                     let Ok(dgram) = MpDatagram::decode(&buf[..len]) else { continue };
+
+                    // Never deliver a frame this instance sent itself.
+                    // melonDS applies the same filter in
+                    // `LocalMP::RecvPacketGeneric` ("packet we sent out --
+                    // skip") and `LAN::RecvPacketGeneric`.
+                    //
+                    // The host broadcasts to every peer in its table, and a
+                    // datagram can come back to it; without this filter the
+                    // host receives its *own* beacon, classifies it as a
+                    // beacon matching its own BSSID, and adopts the embedded
+                    // timestamp into `USCOUNTER`. That both corrupts the
+                    // host's clock and -- because the adopted value is not
+                    // a multiple of the 8µs timer interval -- used to stop
+                    // its millisecond timer permanently, so it transmitted
+                    // exactly one beacon and no client could ever find it.
+                    if dgram.sender_id == self_id {
+                        continue;
+                    }
+
                     let inbound = Inbound {
                         kind: dgram.kind,
                         sender_id: dgram.sender_id,
@@ -380,7 +399,6 @@ fn spawn_rx_pump(
                         runahead_us: dgram.runahead_us,
                         payload: dgram.payload,
                     };
-                    let _ = inbound.sender_id; // Currently informational only; host-only filtering happens via `PeerTable`/room logic upstream.
                     match dgram.kind {
                         WireFrameKind::Reply => {
                             let _ = reply_tx.send(inbound);
@@ -389,7 +407,6 @@ fn spawn_rx_pump(
                             let _ = regular_tx.send(inbound);
                         }
                     }
-                    let _ = host_id;
                 }
                 Err(e)
                     if e.kind() == std::io::ErrorKind::WouldBlock
@@ -433,6 +450,33 @@ mod tests {
         let a = NetTransport::from_socket(sock_a, 0, 0, peers_a, hints_a).unwrap();
         let b = NetTransport::from_socket(sock_b, 1, 0, peers_b, hints_b).unwrap();
         (a, b)
+    }
+
+    /// A datagram carrying this instance's own `sender_id` must never be
+    /// delivered. The host broadcasts to every peer in its table and its own
+    /// frames can come back; delivering them made the host receive its own
+    /// beacon, adopt the embedded timestamp into `USCOUNTER`, and stop
+    /// beaconing entirely. melonDS applies the same filter in
+    /// `LocalMP::RecvPacketGeneric`.
+    #[test]
+    fn own_frame_echoed_back_is_never_delivered() {
+        let (mut a, _b) = transport_pair();
+        let addr_a = a.local_addr().unwrap();
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let dgram = MpDatagram {
+            sender_id: 0, // `a`'s own id.
+            kind: WireFrameKind::Packet,
+            aid: 0,
+            send_seq: 0,
+            timestamp_us: 1,
+            runahead_us: 0,
+            payload: vec![9, 9, 9],
+        };
+        echo.send_to(&dgram.encode(), addr_a).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let mut buf = [0u8; 16];
+        assert_eq!(a.recv_packet(&mut buf), MpRecv::None, "self-sent frame must be dropped");
     }
 
     /// Replies must land in the fixed per-AID 1 KiB slot the core reads them

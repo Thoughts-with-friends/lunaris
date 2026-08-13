@@ -67,7 +67,37 @@ pub struct MpDiag {
     pub rxbuf_cfg: u32,
     /// Resolved RF channel, or `0` if channel detection never succeeded.
     pub channel: i32,
+    /// `RFChipType` from the firmware Wi-Fi config block (2 or 3).
+    pub rf_version: u8,
+    /// The two RF register ids the channel table is indexed by.
+    pub rf_channel_index: [u32; 2],
+    /// `true` if the parsed channel table is entirely zero -- channel
+    /// detection cannot work, and either the firmware image or the parse
+    /// offsets are wrong. See [`super::Wifi::load_firmware_config`].
+    pub rf_table_empty: bool,
+    /// Current contents of the two channel-index RF registers, i.e. what the
+    /// game last asked for. Compared against the table by
+    /// [`super::Wifi::change_channel`].
+    pub rf_regs_now: [u32; 2],
+    /// RF register transfers the driver has triggered (`W_RFData2` writes).
+    /// Zero means the driver never programmed the radio at all, so no
+    /// channel can ever be selected regardless of the calibration table.
+    pub rf_transfers: u32,
+    /// Register id and command of the most recent RF transfer, for telling
+    /// "the driver wrote a different register" apart from "the driver never
+    /// wrote anything".
+    pub rf_last_id: u8,
+    pub rf_last_cmd: u8,
+    /// Baseband register writes (`W_BBWrite` with `W_BBCnt` in write mode).
+    /// The driver uploads the BB table before touching the RF chip, so a
+    /// zero here places the failure even earlier.
+    pub bb_writes: u32,
 
+    /// General-purpose (LOC1-3) slot transmissions -- authentication,
+    /// association and every other management/data frame a client sends
+    /// while joining. Counted separately because these, not beacons or MP
+    /// frames, are what a *guest* transmits before it associates.
+    pub loc_tx: u32,
     /// Beacon slot transmissions.
     pub beacon_tx: u32,
     /// MP CMD slot transmissions.
@@ -77,6 +107,12 @@ pub struct MpDiag {
     /// Blank keep-alive replies sent because we had nothing staged.
     pub blank_reply_tx: u32,
 
+    /// Times the hardware actually asked the transport for a frame. Lets
+    /// "we polled and the peer sent nothing" be told apart from "we never
+    /// polled", which the drop counters alone cannot express.
+    pub rx_polls: u32,
+    /// Polls that came back empty.
+    pub rx_empty: u32,
     /// Frames that passed every check and entered the RX pump.
     pub rx_accepted: u32,
     /// Per-reason rejection counters.
@@ -92,6 +128,23 @@ pub struct MpDiag {
     pub rxflags_ack: u32,
     /// Accepted management frames (association/authentication traffic).
     pub rxflags_mgmt: u32,
+    /// Accepted management frames broken down by 802.11 subtype, indexed by
+    /// `(frame_control >> 4) & 0xF`. Lumping them together hides the thing
+    /// that actually matters while a link is forming: whether an
+    /// association *response* ever arrives, and whether a deauthentication
+    /// is what tears the session down.
+    pub rx_mgmt_subtype: [u32; 16],
+    /// The most recent received authentication frame's body fields:
+    /// `[algorithm, sequence, status]` from body offsets 0/2/4. A stalled
+    /// 802.11 authentication is invisible from frame counts alone -- these
+    /// three values say whether the responder ever answers with sequence 2
+    /// and status 0 (success), or keeps repeating sequence 1.
+    pub last_auth: [u16; 3],
+    /// How many received frames carried the 802.11 retransmit flag
+    /// (frame-control bit 11). A driver discards what it believes are
+    /// duplicates, so every frame arriving flagged as a retry stalls a
+    /// handshake while the frame counters still look healthy.
+    pub rx_retry_flagged: u32,
 
     /// Non-zero `answered` masks returned by the transport's reply collection.
     pub replies_answered: u32,
@@ -106,6 +159,15 @@ pub struct MpDiag {
     pub is_mp_client: bool,
     /// Association id granted by the host, or `0`.
     pub aid: u16,
+    /// This instance's programmed MAC address. Two instances that share one
+    /// can never complete 802.11 authentication with each other, so it is
+    /// shown rather than left to be inferred from an endless `auth`
+    /// exchange.
+    pub mac: [u8; 6],
+    /// The five most-read Wi-Fi registers as `(port, count)`, descending.
+    /// A driver stuck in a readiness poll spins on one port, so this names
+    /// what it is waiting for. Filled in by [`super::Wifi::diag_snapshot`].
+    pub top_reads: [(u16, u32); 5],
     /// Whether a frontend-supplied MP transport is currently installed --
     /// i.e. whether this instance is in a room at all. Refreshed by
     /// [`super::Wifi::diag_snapshot`]; not maintained by the counters.
@@ -146,24 +208,40 @@ impl MpDiag {
         eprintln!(
             "\n[mp-diag] ---- local multiplayer status ----\n\
              [mp-diag] transport_installed={transport_installed} channel={} is_mp={} is_mp_client={} aid={}\n\
+             [mp-diag] rf: chip_type={} index=[{},{}] regs_now=[0x{:X},0x{:X}] table_empty={}\n\
+             [mp-diag] rf: transfers={} last_id={} last_cmd={} bb_writes={}\n\
              [mp-diag] 1. driver setup   : mode_reset={} rxbuf_cfg={}\n\
-             [mp-diag] 2. transmitted    : beacon={} cmd={} reply={} blank_reply={}\n\
-             [mp-diag] 3. received       : accepted={}\n\
+             [mp-diag] 2. transmitted    : loc={} beacon={} cmd={} reply={} blank_reply={}\n\
+             [mp-diag] 3. received       : accepted={} polls={} empty={}\n\
              [mp-diag]    dropped        : rx_disabled={} ring_unconfigured={} too_short={} bad_length={}\n\
              [mp-diag]                     channel_mismatch={} filtered={} ring_full={}\n\
              [mp-diag] 4. classified     : beacon={} cmd={} reply={} ack={} mgmt={}\n\
-             [mp-diag] 5. round complete : replies_answered={} replies_empty={} irq12={}",
+             [mp-diag] 5. round complete : replies_answered={} replies_empty={} irq12={}
+             [mp-diag] most-read regs  : {}",
             self.channel,
             self.is_mp,
             self.is_mp_client,
             self.aid,
+            self.rf_version,
+            self.rf_channel_index[0],
+            self.rf_channel_index[1],
+            self.rf_regs_now[0],
+            self.rf_regs_now[1],
+            self.rf_table_empty,
+            self.rf_transfers,
+            self.rf_last_id,
+            self.rf_last_cmd,
+            self.bb_writes,
             self.mode_reset,
             self.rxbuf_cfg,
+            self.loc_tx,
             self.beacon_tx,
             self.cmd_tx,
             self.reply_tx,
             self.blank_reply_tx,
             self.rx_accepted,
+            self.rx_polls,
+            self.rx_empty,
             d.rx_disabled,
             d.ring_unconfigured,
             d.too_short,
@@ -179,6 +257,13 @@ impl MpDiag {
             self.replies_answered,
             self.replies_empty,
             self.irq12,
+            self
+                .top_reads
+                .iter()
+                .filter(|&&(_, n)| n > 0)
+                .map(|&(reg, n)| format!("{reg:03X}:{n}"))
+                .collect::<Vec<_>>()
+                .join("  "),
         );
         eprintln!("[mp-diag] {}", self.verdict(transport_installed));
     }
@@ -193,9 +278,30 @@ impl MpDiag {
                 .to_string();
         }
         if self.channel == 0 {
-            return "VERDICT: RF channel never resolved (channel=0); nothing can be sent or \
-                    received. Check firmware Wi-Fi calibration."
-                .to_string();
+            if self.rf_transfers == 0 {
+                return format!(
+                    "VERDICT: the driver never programmed the RF chip (0 RF transfers, {} BB                      writes), so no channel was ever selected. The failure is upstream of the                      channel table -- the game's Wi-Fi init did not get as far as the radio.",
+                    self.bb_writes
+                );
+            }
+            if self.rf_table_empty {
+                return format!(
+                    "VERDICT: RF channel never resolved -- the firmware's channel table is all \
+                     zeros (RFChipType={}). The firmware image is not a usable dump, or it was \
+                     parsed at the wrong offsets.",
+                    self.rf_version
+                );
+            }
+            return format!(
+                "VERDICT: RF channel never resolved. The game asked for RF[{}]=0x{:X} \
+                 RF[{}]=0x{:X}, which matches no entry in the firmware's RFChipType={} channel \
+                 table, so nothing can be sent or received.",
+                self.rf_channel_index[0],
+                self.rf_regs_now[0],
+                self.rf_channel_index[1],
+                self.rf_regs_now[1],
+                self.rf_version,
+            );
         }
         if self.mode_reset == 0 && self.rxbuf_cfg == 0 {
             return "VERDICT: the driver never configured the RX ring (no W_ModeReset bit14 and \
@@ -220,10 +326,16 @@ impl MpDiag {
             ]
             .into_iter()
             .max_by_key(|&(n, _)| n);
+            // A handful of drops during boot is normal; only call a drop
+            // reason the cause when it actually dominates the traffic.
             return match worst {
-                Some((n, why)) if n > 0 => {
+                Some((n, why)) if n > 0 && n * 4 >= self.rx_polls => {
                     format!("VERDICT: no frame was ever accepted. Dominant reason: {why}.")
                 }
+                _ if self.rx_polls > 0 && self.rx_empty == self.rx_polls => format!(
+                    "VERDICT: reception is armed and polling ({} times), but the peer has sent                      nothing at all. The problem is on the *other* instance's transmit side, or                      in the room/UDP layer between them.",
+                    self.rx_polls
+                ),
                 _ => "VERDICT: no frame ever reached this instance at all -- the transport is \
                       delivering nothing. Check the room/UDP layer, not the Wi-Fi hardware."
                     .to_string(),
@@ -265,8 +377,17 @@ mod tests {
         // No transport at all.
         assert!(d.verdict(false).contains("no MP transport"));
 
-        // Transport present, but channel detection never resolved.
+        // Transport present, but the driver never programmed the radio at all.
+        assert!(d.verdict(true).contains("never programmed the RF chip"));
+
+        // Radio programmed, but the values match no channel table entry.
+        d.rf_transfers = 4;
         assert!(d.verdict(true).contains("RF channel never resolved"));
+
+        // An all-zero table is reported as a firmware problem, not a mismatch.
+        d.rf_table_empty = true;
+        assert!(d.verdict(true).contains("channel table is all zeros"));
+        d.rf_table_empty = false;
 
         // Channel fine, but the driver never configured the RX ring.
         d.channel = 7;
@@ -302,7 +423,13 @@ mod tests {
     /// problem from a hardware-layer rejection, and the verdict must say so.
     #[test]
     fn verdict_distinguishes_silent_transport_from_a_rejection() {
-        let d = MpDiag { channel: 7, mode_reset: 1, beacon_tx: 5, ..MpDiag::default() };
+        let d = MpDiag {
+            channel: 7,
+            rf_transfers: 4,
+            mode_reset: 1,
+            beacon_tx: 5,
+            ..MpDiag::default()
+        };
         let v = d.verdict(true);
         assert!(v.contains("transport is delivering nothing"), "{v}");
     }

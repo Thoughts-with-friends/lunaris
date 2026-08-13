@@ -21,6 +21,11 @@ use crate::{
     upscale::{self, UpscaleMethod},
 };
 
+/// Host address the guest "Join Room" field is pre-filled with. Loopback,
+/// i.e. a second `lunaris` process on this same machine, which is the usual
+/// way local wireless play is tested.
+pub const DEFAULT_HOST_IP: &str = "127.0.0.1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
@@ -94,6 +99,9 @@ impl Default for VideoConfig {
 pub struct LanConfig {
     pub player_name: String,
     pub room_name: String,
+    /// Host address the guest join field is pre-filled with. Defaults to
+    /// [`DEFAULT_HOST_IP`] so the common case -- two `lunaris` processes on
+    /// one machine -- needs no typing.
     pub last_host_ip: String,
     pub control_port: u16,
     pub mp_port: u16,
@@ -120,7 +128,7 @@ impl Default for LanConfig {
         Self {
             player_name: "Luna".to_owned(),
             room_name: "Lunaris Room".to_owned(),
-            last_host_ip: String::new(),
+            last_host_ip: DEFAULT_HOST_IP.to_owned(),
             control_port: 7064,
             mp_port: 7065,
             max_players: 8,

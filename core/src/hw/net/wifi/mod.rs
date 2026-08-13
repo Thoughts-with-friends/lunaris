@@ -150,6 +150,19 @@ pub struct Wifi {
     /// elapse. See [`rx::PendingRxHeader`].
     rx_pending: PendingRxHeader,
 
+    /// Set by [`Wifi::update_power_status`] when the transceiver starts
+    /// powering up, and drained by [`Wifi::tick`]. Latched rather than
+    /// raised directly because power status is re-evaluated from register
+    /// writes that do not all have an [`InterruptRequest`] to hand.
+    pending_irq11: bool,
+
+    /// Per-register read tally, indexed like [`Wifi::io`]. Not serialized:
+    /// purely diagnostic. A driver that stalls waiting on the hardware
+    /// spins on one register, so the most-read port names what it is
+    /// waiting for -- which is otherwise invisible.
+    #[savestate(skip)]
+    reg_read_counts: Vec<u32>,
+
     /// Local-multiplayer progress counters. Not serialized: purely
     /// diagnostic, and a savestate load should not carry stale counts into
     /// a fresh session. See [`diag`].
@@ -211,6 +224,8 @@ impl Wifi {
             mp_last_seqno: 0xFFFF,
             rx_deferred: DeferredRxParams::default(),
             rx_pending: PendingRxHeader::default(),
+            pending_irq11: false,
+            reg_read_counts: vec![0; Self::IO_WORDS],
             diag: diag::MpDiag::default(),
             us_until_power_on: 0,
             cmd_counter: 0,
@@ -332,31 +347,89 @@ impl Wifi {
 
     /// Populates RF channel calibration from a firmware Wi-Fi config block.
     /// `config` starts at firmware offset `02Ch`
-    /// (`docs/design/design_lan.md` §7.1) and must be at least `0x134`
-    /// bytes long for a Type-3 RF chip.
+    /// (`docs/design/design_lan.md` §7.1).
+    ///
+    /// Without this table [`Wifi::change_channel`] can never match the values
+    /// the game writes into the RF index registers, `cur_channel` stays `0`,
+    /// and **every** transmission and reception is discarded -- local play
+    /// cannot start at all.
+    ///
+    /// # Offsets
+    /// All offsets below are derived from melonDS's `FirmwareHeader`
+    /// (`docs/design/melonds/SPI_Firmware.h:278-325`) by summing field sizes
+    /// from `WifiConfigChecksum` at firmware `02Ch`, and are given both as
+    /// absolute firmware offsets and as indices into `config`
+    /// (`firmware - 0x2C`):
+    ///
+    /// | Field | Firmware | `config` |
+    /// | --- | --- | --- |
+    /// | `RFChipType` | `040h` | `0x14` |
+    /// | `InitialValues[32]` | `044h` | `0x18` |
+    /// | `InitialBBValues[105]` | `064h` | `0x38` |
+    /// | union start | `0CEh` | `0xA2` |
+    /// | Type2 `InitialRF56Values[84]` | `0F2h` | `0xC6` |
+    /// | Type3 `RFIndex1` | `116h` | `0xEA` |
+    /// | Type3 `RFData1[14]` | `117h` | `0xEB` |
+    /// | Type3 `RFIndex2` | `125h` | `0xF9` |
+    /// | Type3 `RFData2[14]` | `126h` | `0xFA` |
     pub fn load_firmware_config(&mut self, config: &[u8]) {
-        if config.len() < 0x16 {
+        /// `RFChipType`, firmware `040h`.
+        const RF_CHIP_TYPE: usize = 0x14;
+        /// Type-3 `RFIndex1`, firmware `116h`.
+        const TYPE3_RF_INDEX1: usize = 0xEA;
+        /// Type-3 `RFData1[14]`, firmware `117h`.
+        const TYPE3_RF_DATA1: usize = 0xEB;
+        /// Type-3 `RFIndex2`, firmware `125h`.
+        const TYPE3_RF_INDEX2: usize = 0xF9;
+        /// Type-3 `RFData2[14]`, firmware `126h`.
+        const TYPE3_RF_DATA2: usize = 0xFA;
+        /// Type-2 `InitialRF56Values[84]`, firmware `0F2h`.
+        ///
+        /// This used to read `0x38`, which is `InitialBBValues` -- a
+        /// completely different field. A Type-2 firmware therefore produced a
+        /// garbage channel table, no channel ever matched, and `cur_channel`
+        /// stayed `0` for the whole session.
+        const TYPE2_RF56: usize = 0xC6;
+        /// 14 channels x 6 bytes.
+        const TYPE2_RF56_LEN: usize = 84;
+
+        if config.len() <= RF_CHIP_TYPE {
             return;
         }
-        self.rf_version = config[0x14]; // RFChipType, offset 040h - 02Ch
-        if self.rf_version == 3 && config.len() >= 0x108 {
-            let rf_index1 = config[0xEA] as u32; // 0x116 - 0x2C
-            let rf_index2 = config[0xF9] as u32; // 0x125 - 0x2C
-            self.rf_channel_index = [rf_index1, rf_index2];
-            for i in 0..14 {
-                self.rf_channel_data[i][0] = config[0xEB + i] as u32; // RFData1
-                self.rf_channel_data[i][1] = config[0xFA + i] as u32; // RFData2
+        self.rf_version = config[RF_CHIP_TYPE];
+
+        if self.rf_version == 3 {
+            if config.len() < TYPE3_RF_DATA2 + 14 {
+                warn!(
+                    "wifi: firmware Wi-Fi config too short for a Type-3 RF table ({} bytes); \
+                     channel detection will fail",
+                    config.len()
+                );
+                return;
             }
-        } else if config.len() >= 0x94 {
-            // Type-2: two 3-byte values packed per channel at InitialRF56Values.
-            let base = 0x38; // InitialRF56Values start, 0x64 - 0x2C
             self.rf_channel_index =
-                [(config[base + 2] >> 2) as u32, (config[base + 5] >> 2) as u32];
+                [config[TYPE3_RF_INDEX1] as u32, config[TYPE3_RF_INDEX2] as u32];
             for i in 0..14 {
-                let o = base + i * 6;
-                if o + 6 > config.len() {
-                    break;
-                }
+                self.rf_channel_data[i][0] = config[TYPE3_RF_DATA1 + i] as u32;
+                self.rf_channel_data[i][1] = config[TYPE3_RF_DATA2 + i] as u32;
+            }
+        } else {
+            if config.len() < TYPE2_RF56 + TYPE2_RF56_LEN {
+                warn!(
+                    "wifi: firmware Wi-Fi config too short for a Type-2 RF table ({} bytes); \
+                     channel detection will fail",
+                    config.len()
+                );
+                return;
+            }
+            // Type-2 packs two 18-bit values per channel into six bytes.
+            // The index registers are the top 6 bits of the third byte of
+            // each of the first two entries (`InitialRF56Values[2] >> 2`,
+            // `[5] >> 2`).
+            self.rf_channel_index =
+                [(config[TYPE2_RF56 + 2] >> 2) as u32, (config[TYPE2_RF56 + 5] >> 2) as u32];
+            for i in 0..14 {
+                let o = TYPE2_RF56 + i * 6;
                 self.rf_channel_data[i][0] = config[o] as u32
                     | (config[o + 1] as u32) << 8
                     | ((config[o + 2] as u32) & 0x3) << 16;
@@ -364,6 +437,19 @@ impl Wifi {
                     | (config[o + 4] as u32) << 8
                     | ((config[o + 5] as u32) & 0x3) << 16;
             }
+        }
+
+        // A table whose entries are not all distinct cannot identify a
+        // channel unambiguously, and an all-zero one makes an uninitialised
+        // RF spuriously resolve to channel 1 (`docs/design/design_lan.md`
+        // §3.2 trap 3). Both mean channel detection is effectively broken, so
+        // say so once here rather than leaving a silent `cur_channel == 0`.
+        if self.rf_channel_data.iter().all(|&[a, b]| a == 0 && b == 0) {
+            warn!(
+                "wifi: firmware Wi-Fi config yielded an all-zero RF channel table (RFChipType={}); \
+                 channel detection cannot work -- the firmware image is probably not a real dump",
+                self.rf_version
+            );
         }
     }
 
@@ -373,6 +459,124 @@ impl Wifi {
 
     pub(super) fn set_ioport(&mut self, addr: usize, value: u16) {
         self.io[addr >> 1] = value;
+    }
+
+    /// Transceiver power management. Ported from `UpdatePowerStatus`
+    /// (`Wifi.cpp:462-567`); `power` is `1` = force on, `0` = no change
+    /// (re-evaluate), `-1` = request off.
+    ///
+    /// This was previously left unported as "infrastructure-mode power
+    /// saving, not needed for local play". That was wrong: a real game's
+    /// Wi-Fi driver polls `W_PowerState` and `W_RFStatus` in a tight loop
+    /// after uploading its baseband/RF tables, waiting for the transceiver to
+    /// report powered-up. With neither register ever changing, the driver
+    /// spins forever and never selects an RF channel -- so `cur_channel`
+    /// stays `0` and no frame is ever sent or received.
+    ///
+    /// The precedence rules, in melonDS's own words:
+    /// * `W_PowerForce` overrides everything else;
+    /// * clearing `W_ModeReset` bit 0 forcibly powers the transceiver down;
+    /// * otherwise power is driven by IRQ13/IRQ15 or by `W_PowerState`,
+    ///   depending on the mode selected in `W_ModeWEP`;
+    /// * `W_PowerDownCtrl` controls how deep a regular power-down goes.
+    ///
+    /// Not ported: melonDS's partial power states (`W_PowerDownCtrl` 1 or 2),
+    /// which it leaves as a TODO too.
+    pub(super) fn update_power_status(&mut self, power: i32) {
+        let mut power = power;
+        let mut curflags = 0;
+        if self.ioport(W_TRXPower) == 1 {
+            curflags |= 1;
+        }
+        if self.ioport(W_PowerState) & (1 << 9) == 0 {
+            curflags |= 2;
+        }
+        let mut reqflags = curflags;
+
+        if self.ioport(W_PowerForce) & (1 << 15) != 0 {
+            reqflags = if self.ioport(W_PowerForce) & 1 != 0 { 0 } else { 3 };
+        } else if self.ioport(W_ModeReset) & 1 == 0 {
+            reqflags = 0;
+        } else {
+            if power == 0 {
+                if self.ioport(W_PowerState) & 0x0202 == 0x0202 {
+                    power = 1;
+                } else if self.ioport(W_PowerState) & 0x0201 == 0x0001 {
+                    power = -1;
+                }
+            }
+            // `W_PowerDownCtrl` bit 0 inhibits a regular power-down; bit 1
+            // forces a (at least partial) wakeup.
+            if power == -1 && self.ioport(W_PowerDownCtrl) & 1 != 0 {
+                power = 0;
+            }
+
+            if power == 1 {
+                reqflags = 3;
+            } else if power == -1 {
+                reqflags = if self.ioport(W_PowerDownCtrl) != 0 { 3 } else { 0 };
+            } else if self.ioport(W_PowerDownCtrl) & (1 << 1) != 0 {
+                reqflags = 3;
+            }
+        }
+
+        if reqflags == curflags {
+            return;
+        }
+
+        if reqflags & 1 != 0 {
+            if curflags & 1 == 0 {
+                self.set_ioport(W_TRXPower, 1);
+                self.set_status(1);
+            }
+        } else {
+            // Signal that the transceiver is about to turn off; it only
+            // actually does so once no transfer is in flight.
+            self.set_ioport(W_TRXPower, 2);
+            if self.com_status == 0 {
+                self.set_ioport(W_TRXPower, 0);
+                self.set_status(9);
+            }
+        }
+
+        if reqflags & 2 != 0 {
+            self.set_ioport(W_PowerState, self.ioport(W_PowerState) | (1 << 8));
+            if curflags & 2 == 0 && self.us_until_power_on == 0 {
+                // The radio needs ~2ms to come up; `Wifi::tick` counts this
+                // down and then clears `W_PowerState`.
+                self.us_until_power_on = -2048;
+                self.pending_irq11 = true;
+            }
+        } else {
+            let mut state = self.ioport(W_PowerState);
+            state &= !(1 << 0);
+            state &= !(1 << 8);
+            state |= 1 << 9;
+            self.set_ioport(W_PowerState, state);
+            self.us_until_power_on = 0;
+        }
+    }
+
+    /// Publishes the transceiver state to `W_RFStatus`/`W_RFPins`. Ported
+    /// from `SetStatus` (`Wifi.cpp:453-459`).
+    ///
+    /// These two registers are how the driver observes the radio: it polls
+    /// them after powering the transceiver up and between operations. Leaving
+    /// them at zero -- as this module used to, listing both as read-only
+    /// ports that nothing ever wrote -- means a driver waiting for the
+    /// transceiver to report "idle" waits forever. Concretely, that stalls a
+    /// real game after it has uploaded the BB/RF calibration tables but
+    /// *before* it selects an RF channel, so `cur_channel` stays `0` and no
+    /// frame is ever sent or received.
+    ///
+    /// State numbering follows melonDS: `1` = idle, `3` = transmitting,
+    /// `5` = MP host waiting for replies, `6` = receiving, `8` = MP
+    /// reply/ack window, `9` = powered down. States 2/4/7 are unused there
+    /// too.
+    pub(super) fn set_status(&mut self, status: u32) {
+        const RF_PINS: [u16; 10] = [0x04, 0x84, 0, 0x46, 0, 0x84, 0x87, 0, 0x46, 0x04];
+        self.set_ioport(W_RFStatus, status as u16);
+        self.set_ioport(W_RFPins, RF_PINS[(status as usize).min(RF_PINS.len() - 1)]);
     }
 
     /// Sets `W_IF` bit `irq` and raises the ARM7 Wi-Fi interrupt request on
@@ -447,6 +651,31 @@ impl Wifi {
         snapshot.is_mp_client = self.is_mp_client;
         snapshot.aid = self.ioport(W_AIDLow);
         snapshot.transport_installed = self.transport.is_some();
+        let m0 = self.ioport(W_MACAddr0);
+        let m1 = self.ioport(W_MACAddr1);
+        let m2 = self.ioport(W_MACAddr2);
+        snapshot.mac =
+            [m0 as u8, (m0 >> 8) as u8, m1 as u8, (m1 >> 8) as u8, m2 as u8, (m2 >> 8) as u8];
+        snapshot.rf_version = self.rf_version;
+        snapshot.rf_channel_index = self.rf_channel_index;
+        snapshot.rf_table_empty = self.rf_channel_data.iter().all(|&[a, b]| a == 0 && b == 0);
+        let idx0 = self.rf_channel_index[0] as usize % self.rf_regs.len();
+        let idx1 = self.rf_channel_index[1] as usize % self.rf_regs.len();
+        snapshot.rf_regs_now = [self.rf_regs[idx0], self.rf_regs[idx1]];
+
+        // The five most-read registers, descending. A driver blocked in a
+        // polling loop shows up here unmistakably.
+        let mut ranked: Vec<(u32, usize)> = self
+            .reg_read_counts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &n)| n > 0)
+            .map(|(i, &n)| (n, i << 1))
+            .collect();
+        ranked.sort_unstable_by_key(|&(count, _)| std::cmp::Reverse(count));
+        for (slot, &(count, reg)) in ranked.iter().take(5).enumerate() {
+            snapshot.top_reads[slot] = (reg as u16, count);
+        }
         snapshot
     }
 
@@ -486,6 +715,11 @@ impl Wifi {
     pub(crate) fn tick(&mut self, scheduler: &mut Scheduler, request: &mut InterruptRequest) {
         self.us_timestamp += Self::TIMER_INTERVAL_US;
 
+        if self.pending_irq11 {
+            self.pending_irq11 = false;
+            self.raise_irq(11, request);
+        }
+
         // Keep the diagnostic summary's live fields current and let it decide
         // whether this tick crosses a dump boundary. See [`diag`].
         if diag::diag_enabled() {
@@ -502,7 +736,31 @@ impl Wifi {
         // is unconditional hardware state and always ticks.
         if self.ioport(W_USCountCnt) != 0 {
             self.us_counter += Self::TIMER_INTERVAL_US;
-            if self.us_counter & 0x3FF == 0 {
+            // Pre-beacon wake-up: when the time remaining until the next
+            // beacon matches `W_PreBeacon`, raise IRQ 15 (and wake the
+            // transceiver). Ported from `Wifi.cpp:1801-1806`.
+            if self.ioport(W_USCompareCnt) != 0 {
+                let uspart = (self.us_counter & 0x3FF) as u32;
+                let beaconus = (u32::from(self.ioport(W_BeaconCount1)) << 10) | (0x3FF - uspart);
+                let mask = !(Self::TIMER_INTERVAL_US as u32 - 1);
+                if beaconus & mask == u32::from(self.ioport(W_PreBeacon)) & mask {
+                    self.set_irq15(request);
+                }
+            }
+
+            // melonDS fires the millisecond timer whenever the low 10 bits
+            // of `USCounter` fall inside the first timer interval of a
+            // 1024µs window (`!(uspart & kTimeCheckMask)` with
+            // `kTimeCheckMask = ~(kTimerInterval - 1)`, `Wifi.cpp:1799-1809`),
+            // not only on an exact multiple of 1024.
+            //
+            // The difference is load-bearing: `USCounter` is *assigned* from
+            // a received beacon's timestamp (`Wifi::step_rx`), which is not
+            // generally a multiple of the 8µs interval. With an equality
+            // test the counter could then step past the boundary forever
+            // without ever landing on it, silently stopping beacons,
+            // IRQ 14 and the whole beacon-interval state machine.
+            if self.us_counter & 0x3FF < Self::TIMER_INTERVAL_US {
                 self.ms_timer(request);
             }
         }
@@ -526,6 +784,8 @@ impl Wifi {
             if self.us_until_power_on >= 0 {
                 self.us_until_power_on = 0;
                 self.set_ioport(W_PowerState, 0);
+                self.set_status(1);
+                self.update_power_status(0);
             }
         }
 
@@ -611,8 +871,43 @@ impl Wifi {
             let count2 = count2 - 1;
             self.set_ioport(W_BeaconCount2, count2);
             if count2 == 0 {
-                self.raise_irq(13, request);
+                self.set_irq13(request);
             }
+        }
+    }
+
+    /// Post-beacon auto power-down. Ported from `SetIRQ13`
+    /// (`Wifi.cpp:392-409`).
+    ///
+    /// The power-down is gated on automatic power-saving mode
+    /// (`W_ModeWEP & 7 == 0`) and on `W_PowerTX` bit 1 being clear, for the
+    /// reason melonDS spells out: a station with power saving disabled does
+    /// not service IRQ13/IRQ15, so powering the transceiver down from the
+    /// one-shot `W_BeaconCount2` countdown would leave nothing to wake it
+    /// up again.
+    fn set_irq13(&mut self, request: &mut InterruptRequest) {
+        self.raise_irq(13, request);
+        if self.ioport(W_ModeWEP) & 0x7 == 0 && self.ioport(W_PowerTX) & (1 << 1) == 0 {
+            self.update_power_status(-1);
+        }
+    }
+
+    /// Pre-beacon auto wake-up. Ported from `SetIRQ15`
+    /// (`Wifi.cpp:441-450`).
+    ///
+    /// A client in power-saving mode sleeps between beacons and relies on
+    /// this to be awake again in time for the next one. Unlike the
+    /// auto-sleep above, it applies under every power-management mode.
+    ///
+    /// Leaving this unported (it was previously dismissed as
+    /// infrastructure-mode power saving) meant a client that powered down
+    /// after receiving a beacon never woke up: it spun on
+    /// `W_PowerState`/`W_RFStatus` forever and never transmitted the
+    /// association request that local play starts with.
+    fn set_irq15(&mut self, request: &mut InterruptRequest) {
+        self.raise_irq(15, request);
+        if self.ioport(W_PowerTX) & (1 << 0) != 0 {
+            self.update_power_status(1);
         }
     }
 
@@ -846,6 +1141,346 @@ mod tests {
         assert_eq!(wifi.ioport(W_CMDStat0), 0x0100, "client 1 = high byte of 1D0h");
         assert_eq!(wifi.ioport(W_CMDStat0 + 2), 0x0001, "client 2 = low byte of 1D2h");
         assert_eq!(wifi.ioport(W_CMDStat0 + 4), 0x0000, "no other client's byte moved");
+    }
+
+    /// Builds a synthetic firmware Wi-Fi config block (starting at firmware
+    /// offset `02Ch`) with a recognisable RF channel table planted at the
+    /// offsets melonDS's `FirmwareHeader` puts them at, so
+    /// `Wifi::load_firmware_config` is checked against the real layout rather
+    /// than against itself.
+    fn synthetic_wifi_config(rf_chip_type: u8) -> Vec<u8> {
+        // Long enough for the whole Type-2 table (config 0xC6 + 84 = 0x11A)
+        // and the Type-3 one (config 0xFA + 14 = 0x108).
+        let mut cfg = vec![0u8; 0x140];
+        cfg[0x14] = rf_chip_type; // RFChipType, firmware 040h.
+
+        if rf_chip_type == 3 {
+            cfg[0xEA] = 0x0A; // RFIndex1, firmware 116h.
+            cfg[0xF9] = 0x0B; // RFIndex2, firmware 125h.
+            for i in 0..14 {
+                cfg[0xEB + i] = 0x21 + i as u8; // RFData1, firmware 117h.
+                cfg[0xFA + i] = 0x41 + i as u8; // RFData2, firmware 126h.
+            }
+        } else {
+            // InitialRF56Values, firmware 0F2h: 14 channels x 6 bytes, each
+            // channel two 18-bit values.
+            let base = 0xC6;
+            for i in 0..14 {
+                let o = base + i * 6;
+                cfg[o] = 0x21 + i as u8;
+                cfg[o + 1] = 0x00;
+                cfg[o + 2] = 0x01; // Bits 16-17 of value 1; bits 2..7 index 1.
+                cfg[o + 3] = 0x41 + i as u8;
+                cfg[o + 4] = 0x00;
+                cfg[o + 5] = 0x02; // Bits 16-17 of value 2; bits 2..7 index 2.
+            }
+            // The index registers are the top six bits of each third byte.
+            cfg[base + 2] = 0x0A << 2;
+            cfg[base + 5] = 0x0B << 2;
+        }
+        cfg
+    }
+
+    /// A Type-3 firmware's channel table must be read from `RFIndex1`/
+    /// `RFData1`/`RFIndex2`/`RFData2`, and a channel the game selects must
+    /// then resolve.
+    #[test]
+    fn type3_firmware_config_resolves_a_channel() {
+        let mut wifi = Wifi::new();
+        wifi.load_firmware_config(&synthetic_wifi_config(3));
+
+        assert_eq!(wifi.rf_version, 3);
+        assert_eq!(wifi.rf_channel_index, [0x0A, 0x0B]);
+        assert_eq!(wifi.rf_channel_data[6], [0x21 + 6, 0x41 + 6]);
+
+        // The game selects channel 7 by writing that entry's two values.
+        wifi.rf_regs[0x0A] = 0x21 + 6;
+        wifi.rf_regs[0x0B] = 0x41 + 6;
+        wifi.change_channel();
+        assert_eq!(wifi.cur_channel, 7);
+    }
+
+    /// Regression test for the channel-detection failure that made local play
+    /// impossible with a Type-2 firmware: `InitialRF56Values` lives at
+    /// firmware `0F2h` (config `0xC6`), but the parser read config `0x38`
+    /// (firmware `064h`, `InitialBBValues`). The table was therefore garbage,
+    /// no channel ever matched, `cur_channel` stayed `0`, and both
+    /// `Wifi::send_slot_frame` and `Wifi::check_rx` discarded every frame.
+    #[test]
+    fn type2_firmware_config_resolves_a_channel() {
+        let mut wifi = Wifi::new();
+        wifi.load_firmware_config(&synthetic_wifi_config(2));
+
+        assert_eq!(wifi.rf_version, 2);
+        assert_eq!(
+            wifi.rf_channel_index,
+            [0x0A, 0x0B],
+            "index registers come from InitialRF56Values[2]/[5] >> 2"
+        );
+        // Channel 7's pair: 18-bit values assembled from three bytes each.
+        assert_eq!(wifi.rf_channel_data[6], [(0x21 + 6) | (1 << 16), (0x41 + 6) | (2 << 16)]);
+
+        wifi.rf_regs[0x0A] = (0x21 + 6) | (1 << 16);
+        wifi.rf_regs[0x0B] = (0x41 + 6) | (2 << 16);
+        wifi.change_channel();
+        assert_eq!(wifi.cur_channel, 7);
+    }
+
+    /// A config block too short for the table it claims must leave the table
+    /// alone rather than panicking or filling it with out-of-range reads.
+    #[test]
+    fn truncated_firmware_config_is_rejected() {
+        let mut wifi = Wifi::new();
+        let mut cfg = synthetic_wifi_config(3);
+        cfg.truncate(0x80);
+        wifi.load_firmware_config(&cfg);
+        assert!(wifi.rf_channel_data.iter().all(|&[a, b]| a == 0 && b == 0));
+
+        let mut cfg2 = synthetic_wifi_config(2);
+        cfg2.truncate(0x80);
+        wifi.load_firmware_config(&cfg2);
+        assert!(wifi.rf_channel_data.iter().all(|&[a, b]| a == 0 && b == 0));
+    }
+
+    /// The `W_RFPins` lookup must match melonDS's table exactly, and must not
+    /// panic for any state this port passes in.
+    #[test]
+    fn rf_pins_table_matches_melonds() {
+        let mut wifi = Wifi::new();
+        for (status, expected) in
+            [(0u32, 0x04u16), (1, 0x84), (3, 0x46), (5, 0x84), (6, 0x87), (8, 0x46), (9, 0x04)]
+        {
+            wifi.set_status(status);
+            assert_eq!(wifi.ioport(W_RFStatus), status as u16, "status {status}");
+            assert_eq!(wifi.ioport(W_RFPins), expected, "rfpins[{status}]");
+        }
+    }
+
+    /// A baseband register transfer is committed by the `W_BBCnt` write, not
+    /// by the `W_BBWrite` write that stages the value. The driver uploads its
+    /// baseband table as `W_BBWrite = value; W_BBCnt = 0x5000 | id;` and then
+    /// reads each register back through `W_BBRead` to verify -- so committing
+    /// on the wrong write put every value in the previous register's slot,
+    /// the verification never matched, and the driver re-uploaded the table
+    /// forever instead of moving on to RF channel selection.
+    /// Ported from `Wifi.cpp:2309-2317`.
+    #[test]
+    fn baseband_write_commits_on_the_bbcnt_write() {
+        let mut wifi = Wifi::new();
+        let mut scheduler = Scheduler::new();
+        let mut request = InterruptRequest::empty();
+
+        // Upload two consecutive writable registers, driver-style: stage the
+        // byte in `W_BBWrite`, then commit it with `W_BBCnt`.
+        wifi.write16(W_BBWrite as u32, 0xAA, &mut scheduler, &mut request);
+        wifi.write16(W_BBCnt as u32, 0x5000 | 0x20, &mut scheduler, &mut request);
+        wifi.write16(W_BBWrite as u32, 0xBB, &mut scheduler, &mut request);
+        wifi.write16(W_BBCnt as u32, 0x5000 | 0x21, &mut scheduler, &mut request);
+
+        // Read them back the way the driver verifies its upload.
+        wifi.write16(W_BBCnt as u32, 0x6000 | 0x20, &mut scheduler, &mut request);
+        assert_eq!(wifi.read16(W_BBRead as u32, &mut request), 0xAA);
+        wifi.write16(W_BBCnt as u32, 0x6000 | 0x21, &mut scheduler, &mut request);
+        assert_eq!(wifi.read16(W_BBRead as u32, &mut request), 0xBB);
+
+        // A hardwired register ignores the write and keeps its fixed value
+        // (`BBREG_FIXED(0x00, 0x6D)`).
+        wifi.write16(W_BBWrite as u32, 0x12, &mut scheduler, &mut request);
+        wifi.write16(W_BBCnt as u32, 0x5000, &mut scheduler, &mut request);
+        wifi.write16(W_BBCnt as u32, 0x6000, &mut scheduler, &mut request);
+        assert_eq!(wifi.read16(W_BBRead as u32, &mut request), 0x6D);
+
+        // A read with the wrong command nibble returns 0, as on hardware.
+        wifi.write16(W_BBCnt as u32, 0x1000 | 0x20, &mut scheduler, &mut request);
+        assert_eq!(wifi.read16(W_BBRead as u32, &mut request), 0);
+    }
+
+    /// The driver powers the transceiver up by first parking it in the
+    /// powered-down state, then requesting power-on through `W_PowerState`
+    /// (only writable in `W_ModeWEP` mode 3). It then polls
+    /// `W_PowerState`/`W_RFStatus` until the radio reports ready.
+    ///
+    /// With `UpdatePowerStatus` unported both registers were frozen, so a
+    /// real game spun on them forever after uploading its baseband/RF tables
+    /// and never selected an RF channel. Ported from `Wifi.cpp:462-567`.
+    #[test]
+    fn driver_power_up_handshake_completes() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
+        wifi.set_power_cnt(true, &mut sc);
+        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        wifi.write16(W_ModeWEP as u32, 0x0003, &mut sc, &mut rq);
+
+        // Park the radio down first (bit 9), the state the driver requests
+        // power-on out of.
+        wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
+        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "parked powered-down");
+        wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+
+        // Request power-on: with bit 9 set and bit 8 clear, bit 1 survives
+        // the write mask and `W_PowerState` reads back 0x0202.
+        wifi.write16(W_PowerState as u32, 0x0002, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_PowerState) & 0x0202, 0x0202, "power-on requested");
+        assert_ne!(wifi.ioport(W_PowerState) & (1 << 8), 0, "transceiver coming up");
+        assert!(wifi.us_until_power_on < 0, "power-on delay armed");
+        assert_eq!(wifi.ioport(W_TRXPower), 1);
+        assert_eq!(wifi.ioport(W_RFStatus), 1, "radio reports idle/ready");
+
+        // Run out the ~2ms power-up delay.
+        for _ in 0..512 {
+            wifi.tick(&mut sc, &mut rq);
+        }
+        assert_eq!(wifi.us_until_power_on, 0, "power-up completes");
+        assert_eq!(wifi.ioport(W_PowerState) & (1 << 9), 0, "not powered down");
+    }
+
+    /// `W_PowerForce` bit 15 overrides every other power input; bit 0
+    /// selects off. `Wifi.cpp:477-480`.
+    #[test]
+    fn power_force_overrides_everything() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
+        wifi.set_power_cnt(true, &mut sc);
+        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+
+        wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
+        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "forced power-down");
+        assert_eq!(wifi.ioport(W_RFStatus), 9);
+        assert_eq!(wifi.ioport(W_TRXPower), 0);
+
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        assert_ne!(wifi.ioport(W_PowerState) & (1 << 8), 0, "forced power-up");
+        assert_eq!(wifi.ioport(W_RFStatus), 1);
+        assert_eq!(wifi.ioport(W_TRXPower), 1);
+    }
+
+    /// Clearing `W_ModeReset` bit 0 forcibly powers the transceiver down,
+    /// whatever `W_PowerState` says. `Wifi.cpp:481-483`.
+    #[test]
+    fn mode_reset_bit0_forces_power_down() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
+        wifi.set_power_cnt(true, &mut sc);
+        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 1);
+
+        wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+        wifi.write16(W_ModeReset as u32, 0x0000, &mut sc, &mut rq);
+        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "master enable cleared");
+        assert_eq!(wifi.ioport(W_RFStatus), 9);
+    }
+
+    /// The millisecond timer must keep firing after `USCounter` is assigned
+    /// a value that is not a multiple of the 8µs timer interval -- which is
+    /// exactly what happens when a beacon's timestamp is adopted
+    /// (`Wifi::step_rx`).
+    ///
+    /// An equality test against the 1024µs boundary lets the counter step
+    /// straight past it forever, which silently stopped beacons, IRQ 14 and
+    /// the whole beacon-interval state machine. melonDS instead fires
+    /// whenever the low bits land inside the first interval of the window
+    /// (`Wifi.cpp:1799-1809`).
+    #[test]
+    fn ms_timer_survives_a_misaligned_us_counter() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_IE, 1 << 14);
+        wifi.set_ioport(W_BeaconInterval, 2);
+
+        // Adopt a beacon timestamp that is deliberately not 8-aligned.
+        wifi.us_counter = 1_234_567;
+
+        let ticks_per_ms = 1024 / Wifi::TIMER_INTERVAL_US as usize;
+        for _ in 0..(ticks_per_ms * 6) {
+            wifi.tick(&mut sc, &mut rq);
+        }
+
+        assert_ne!(
+            wifi.ioport(W_IF) & (1 << 14),
+            0,
+            "the beacon-interval IRQ must still fire with a misaligned USCounter"
+        );
+    }
+
+    /// A client that powers the transceiver down between beacons must be
+    /// woken again by the pre-beacon IRQ 15. Without it the radio stayed off
+    /// forever: the guest spun on `W_PowerState`/`W_RFStatus` and never
+    /// transmitted the association request local play starts with.
+    /// Ported from `SetIRQ15` (`Wifi.cpp:441-450`) and the `W_PreBeacon`
+    /// comparison in `USTimer` (`Wifi.cpp:1801-1806`).
+    #[test]
+    fn pre_beacon_irq15_wakes_a_sleeping_client() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
+        wifi.set_power_cnt(true, &mut sc);
+        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        // Auto wake-up is enabled by `W_PowerTX` bit 0.
+        wifi.write16(W_PowerTX as u32, 0x0001, &mut sc, &mut rq);
+        wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_USCompareCnt, 1);
+        wifi.set_ioport(W_IE, 1 << 15);
+
+        // Park the radio powered-down, the state a sleeping client is in.
+        wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
+        wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "asleep");
+
+        // Arm a pre-beacon threshold the running counter will cross.
+        wifi.set_ioport(W_BeaconCount1, 1);
+        wifi.set_ioport(W_PreBeacon, 0x0400);
+
+        for _ in 0..4096 {
+            wifi.tick(&mut sc, &mut rq);
+            if wifi.ioport(W_PowerState) & (1 << 9) == 0 {
+                break;
+            }
+        }
+
+        assert_ne!(wifi.ioport(W_IF) & (1 << 15), 0, "IRQ 15 must fire");
+        assert_eq!(wifi.ioport(W_PowerState) & (1 << 9), 0, "the client must wake back up");
+        assert_eq!(wifi.ioport(W_RFStatus), 1);
+    }
+
+    /// Auto power-down must only happen in automatic power-saving mode. A
+    /// station with power saving disabled does not service IRQ13/IRQ15, so
+    /// powering down there would strand the transceiver with nothing to
+    /// wake it. `Wifi.cpp:392-409`.
+    #[test]
+    fn auto_power_down_only_in_power_saving_mode() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
+        wifi.set_power_cnt(true, &mut sc);
+        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+
+        // Mode 2 = power saving disabled: IRQ 13 must not power down.
+        wifi.write16(W_ModeWEP as u32, 0x0002, &mut sc, &mut rq);
+        wifi.set_irq13(&mut rq);
+        assert_eq!(
+            wifi.ioport(W_PowerState) & (1 << 9),
+            0,
+            "must stay awake with power saving disabled"
+        );
     }
 
     /// Regression test for the Union Room symptom (design doc §17, fixed
