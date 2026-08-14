@@ -53,6 +53,8 @@ pub struct RxDrops {
     pub filtered: u32,
     /// The RX ring was full: the driver has not drained the previous frame.
     pub ring_full: u32,
+    /// A WEP frame arrived while WEP processing is disabled.
+    pub wep_off: u32,
 }
 
 /// Counters describing how far the MP handshake progressed.
@@ -145,6 +147,16 @@ pub struct MpDiag {
     /// duplicates, so every frame arriving flagged as a retry stalls a
     /// handshake while the frame counters still look healthy.
     pub rx_retry_flagged: u32,
+    /// The association response's AID field and the guards around it, from
+    /// the last one received. `Wifi::check_rx` only promotes this instance to
+    /// an MP client when the frame is tagged `Packet`, carries a non-zero
+    /// sender timestamp, is addressed to us, *and* grants a non-zero AID --
+    /// so when an `assoc-resp` arrives and `is_mp` stays false, these say
+    /// which of the four failed.
+    pub last_assoc_aid: u16,
+    pub last_assoc_mac_good: bool,
+    pub last_assoc_is_packet: bool,
+    pub last_assoc_timestamp: u64,
 
     /// Non-zero `answered` masks returned by the transport's reply collection.
     pub replies_answered: u32,
@@ -152,6 +164,54 @@ pub struct MpDiag {
     pub replies_empty: u32,
     /// IRQ 12 (MP CMD transaction complete) raises.
     pub irq12: u32,
+    /// IRQ 13 (post-beacon auto power-down) raises, and how many of those
+    /// actually powered the transceiver down.
+    pub irq13: u32,
+    pub irq13_powered_down: u32,
+    /// IRQ 15 (pre-beacon auto wake-up) raises, and how many actually woke
+    /// the transceiver. A client that sleeps but is never woken shows
+    /// `irq13_powered_down > 0` alongside `irq15_woke == 0` -- which is
+    /// exactly the state that leaves it spinning on `W_PowerState` forever.
+    pub irq15: u32,
+    pub irq15_woke: u32,
+    /// Times [`super::Wifi::update_power_status`] took its power-*off*
+    /// branch, and the reason it did. `W_ModeReset` bit 0 is the
+    /// transceiver's master enable: with it clear, melonDS forces power off
+    /// unconditionally (`Wifi.cpp:481-483`), and nothing short of the driver
+    /// setting that bit brings the radio back.
+    pub power_off_events: u32,
+    pub power_off_by_mode_reset: u32,
+    /// Live `W_ModeReset` value and whether the radio currently reads as
+    /// powered down (`W_PowerState` bit 9).
+    pub mode_reset_reg: u16,
+    pub powered_down: bool,
+    /// `W_ModeWEP` and `W_PowerDownCtrl`. Between them these decide whether a
+    /// powered-down radio can ever be asked to come back: `W_PowerState` is
+    /// writable only in `W_ModeWEP` mode 3, and `W_PowerDownCtrl` bit 1 is
+    /// the only other request path besides IRQ 15.
+    pub mode_wep_reg: u16,
+    pub power_down_ctrl_reg: u16,
+    /// Live `W_TXSlotCmd`, `W_TXReqRead` and `W_RXCnt`. `Wifi::fire_tx`
+    /// starts the MP command slot only when `W_RXCnt` bit 15 is set, the
+    /// slot register has bit 15 set, and the matching `W_TXReqRead` bit is
+    /// set. With CMD rounds stuck at zero these three say which of those the
+    /// driver never satisfied.
+    /// Writes to `W_TXSlotCmd`, and how many had their bit 15 silently
+    /// dropped because `CmdCounter` was zero (`Wifi.cpp:2425-2427`). That
+    /// rule is the one way an armed CMD slot can vanish without a trace, and
+    /// with CMD rounds stuck at zero it is the first thing to rule out.
+    pub tx_slot_cmd_writes: u32,
+    pub tx_slot_cmd_bit15_dropped: u32,
+    /// Writes to `W_CmdCount`, which is the only thing that makes
+    /// `CmdCounter` non-zero.
+    pub cmd_count_writes: u32,
+    pub tx_slot_cmd_reg: u16,
+    pub tx_req_read_reg: u16,
+    pub rx_cnt_reg: u16,
+    /// `Wifi::fire_tx` calls, and how many returned early because reception
+    /// was not armed.
+    pub fire_tx_calls: u32,
+    pub fire_tx_rx_disabled: u32,
 
     /// `true` once this instance believes it is in an MP session.
     pub is_mp: bool,
@@ -308,7 +368,22 @@ impl MpDiag {
                     no W_RXBufBegin/End writes) -- reception cannot start."
                 .to_string();
         }
-        if self.beacon_tx == 0 && self.cmd_tx == 0 && self.reply_tx == 0 && self.blank_reply_tx == 0
+        // A powered-down radio cannot transmit at all, so say that rather
+        // than blaming the driver for not arming a slot.
+        if self.powered_down {
+            return format!(
+                "VERDICT: the transceiver is powered down (W_PowerState bit 9) and nothing is \
+                 bringing it back. W_ModeWEP=0x{:04X} (W_PowerState is writable only in mode 3), \
+                 W_PowerDownCtrl=0x{:04X}, W_ModeReset=0x{:04X}. Until it powers up this \
+                 instance cannot transmit.",
+                self.mode_wep_reg, self.power_down_ctrl_reg, self.mode_reset_reg
+            );
+        }
+        if self.loc_tx == 0
+            && self.beacon_tx == 0
+            && self.cmd_tx == 0
+            && self.reply_tx == 0
+            && self.blank_reply_tx == 0
         {
             return "VERDICT: nothing has been transmitted. The game's driver has not armed any \
                     TX slot; look upstream of the Wi-Fi hardware."

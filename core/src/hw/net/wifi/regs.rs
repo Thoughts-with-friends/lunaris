@@ -307,7 +307,33 @@ impl Wifi {
                 self.set_ioport(W_ModeReset, value & 0x0001);
                 // Bit 0 is the transceiver's master enable; both edges
                 // re-evaluate power (`Wifi.cpp:2130-2143`).
-                if (old ^ value) & 0x0001 != 0 {
+                //
+                // The rising edge requests power *on* rather than merely
+                // re-evaluating. melonDS passes 0 on both edges, but it also
+                // models `IOPORT(0x27C)` and a driver that drives
+                // `W_PowerState` in mode 3. Here, clearing bit 0 forces the
+                // radio off (`update_power_status`'s master-enable branch)
+                // and re-asserting it would otherwise leave `reqflags` at 0
+                // -- the radio never comes back, `check_rx` returns at its
+                // `W_PowerState` bit-9 guard, and the instance stops
+                // receiving for good. Asserting the master enable has to be
+                // able to undo what clearing it did.
+                // Both edges publish a status word at port `27Ch` and
+                // re-evaluate power (`Wifi.cpp:2131-2143`). `27Ch` is not
+                // one of the named `W_*` registers; melonDS writes it as a
+                // bare port and so does this.
+                //
+                // The rising edge requests power *on* rather than merely
+                // re-evaluating (melonDS passes 0 on both edges). Paired
+                // with the deviation in `Wifi::update_power_status`, this is
+                // what lets the master enable undo its own force-off:
+                // without it `reqflags` stays 0 and the transmit half never
+                // returns.
+                if old & 0x0001 == 0 && value & 0x0001 != 0 {
+                    self.set_ioport(0x27C, 0x0005);
+                    self.update_power_status(1);
+                } else if old & 0x0001 != 0 && value & 0x0001 == 0 {
+                    self.set_ioport(0x27C, 0x000A);
                     self.update_power_status(0);
                 }
 
@@ -413,7 +439,11 @@ impl Wifi {
             // register write with no side effect (the previous behaviour)
             // never transmits anything. `Wifi.cpp:2425-2436`.
             W_TXSlotCmd => {
+                self.diag.tx_slot_cmd_writes += 1;
                 let value = if self.cmd_counter == 0 {
+                    if value & 0x8000 != 0 && self.ioport(W_TXSlotCmd) & 0x8000 == 0 {
+                        self.diag.tx_slot_cmd_bit15_dropped += 1;
+                    }
                     (value & 0x7FFF) | (self.ioport(W_TXSlotCmd) & 0x8000)
                 } else {
                     value
@@ -476,7 +506,10 @@ impl Wifi {
             // (reads recompute the driver-visible value from it via
             // `div_ceil`); the register mirror itself is never stored.
             // `Wifi.cpp:2307`.
-            W_CmdCount => self.cmd_counter = u32::from(value) * 10,
+            W_CmdCount => {
+                self.diag.cmd_count_writes += 1;
+                self.cmd_counter = u32::from(value) * 10;
+            }
             // `Wifi.cpp:2230-2233`.
             W_PowerUS => {
                 self.set_ioport(W_PowerUS, value & 0x0003);

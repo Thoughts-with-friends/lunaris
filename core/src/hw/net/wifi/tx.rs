@@ -148,7 +148,9 @@ impl Wifi {
     /// slot (Gap 1.1) -- without this, `mp_client_mask` is always `0` and
     /// the host never expects a single reply.
     pub(super) fn fire_tx(&mut self) {
+        self.diag.fire_tx_calls += 1;
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
+            self.diag.fire_tx_rx_disabled += 1;
             return;
         }
 
@@ -603,6 +605,20 @@ impl Wifi {
                 self.set_ram_u16(addr + 0xC + 22, seq);
             }
             self.set_ioport(W_TXSeqNo, (self.ioport(W_TXSeqNo) + 1) & 0x0FFF);
+        }
+
+        // WEP frame: plant a nonzero WEP FCS. melonDS does no real WEP
+        // processing either, but notes that "some games require it"
+        // (`Wifi.cpp:627-640`) -- shared-key authentication carries an
+        // encrypted challenge, and a zero FCS makes the peer reject the
+        // exchange. Without this the handshake reaches sequence 3 and then
+        // fails.
+        let frame_ctl = self.ram_u16(addr + 0xC);
+        if frame_ctl & (1 << 14) != 0 && self.ioport(W_WEPCnt) & (1 << 15) != 0 {
+            let fcs = (addr + 0xC + s.length as usize).saturating_sub(7) & !0x1;
+            if fcs + 3 < self.ram.len() {
+                self.ram[fcs..fcs + 4].copy_from_slice(&0x2233_4466u32.to_le_bytes());
+            }
         }
 
         let max_len = 0x1FF4usize.saturating_sub(addr);

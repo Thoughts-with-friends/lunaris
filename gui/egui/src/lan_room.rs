@@ -432,6 +432,46 @@ impl LanRoomState {
                 ));
             }
 
+            if d.irq13 + d.irq15 > 0 {
+                ui.weak(format!(
+                    "power irq  13 fired {} (slept {})  \u{b7}  15 fired {} (woke {})",
+                    d.irq13, d.irq13_powered_down, d.irq15, d.irq15_woke
+                ));
+            }
+
+            if d.powered_down || d.power_off_events > 0 {
+                ui.weak(format!(
+                    "power  down now {} \u{b7} W_ModeReset 0x{:04X} \u{b7} W_ModeWEP 0x{:04X} \u{b7} W_PowerDownCtrl 0x{:04X} \u{b7} off events {} (by mode-reset {})",
+                    d.powered_down,
+                    d.mode_reset_reg,
+                    d.mode_wep_reg,
+                    d.power_down_ctrl_reg,
+                    d.power_off_events,
+                    d.power_off_by_mode_reset
+                ));
+            }
+
+            ui.weak(format!(
+                "tx arm  W_TXSlotCmd 0x{:04X} \u{b7} W_TXReqRead 0x{:04X} \u{b7} W_RXCnt 0x{:04X} \u{b7} fire_tx {} (rx-off {})",
+                d.tx_slot_cmd_reg, d.tx_req_read_reg, d.rx_cnt_reg, d.fire_tx_calls,
+                d.fire_tx_rx_disabled
+            ));
+
+            if d.rx_mgmt_subtype[1] > 0 {
+                ui.weak(format!(
+                    "last assoc-resp  aid 0x{:04X} / mac_good {} / is_packet {} / timestamp {}",
+                    d.last_assoc_aid,
+                    d.last_assoc_mac_good,
+                    d.last_assoc_is_packet,
+                    d.last_assoc_timestamp
+                ));
+            }
+
+            ui.weak(format!(
+                "cmd slot  writes {} (bit15 dropped {}) / W_CmdCount writes {}",
+                d.tx_slot_cmd_writes, d.tx_slot_cmd_bit15_dropped, d.cmd_count_writes
+            ));
+
             // What the driver is polling. A Wi-Fi init that stalls spins on
             // one register; naming it turns "nothing happens" into a
             // specific unimplemented behaviour.

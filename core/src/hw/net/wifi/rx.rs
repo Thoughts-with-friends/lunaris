@@ -251,22 +251,54 @@ impl Wifi {
         Some((rxflags, cmd_dupe))
     }
 
-    /// Applies `W_RXLenCrop` to a frame length. WEP-frame cropping
-    /// (`Wifi.cpp:1635-1639`) is not ported -- local MP play does not use
-    /// WEP -- so this always takes the non-WEP branch
-    /// (`Wifi.cpp:1640-1641`).
-    fn crop_framelen(&self, original: u16) -> u16 {
-        let crop = (self.ioport(W_RXLenCrop) << 1) & 0x1FE;
-        original.saturating_sub(crop)
+    /// Applies `W_RXLenCrop` to a frame length, and for a WEP frame also
+    /// slides the 802.11 body down over the 4-byte WEP IV. Ported from
+    /// `CheckRX` (`Wifi.cpp:1633-1643`).
+    ///
+    /// The WEP branch used to be skipped here on the assumption that local
+    /// play never sets frame-control bit 14. When a game *does* set it, the
+    /// body stays 4 bytes further along than the driver expects: the frame
+    /// passes every length and filter check and is delivered intact, yet
+    /// every field the driver reads out of it is shifted, so a handshake can
+    /// repeat forever without ever completing.
+    pub(super) fn crop_framelen(&mut self, original: u16, frame_ctl: u16) -> u16 {
+        let crop = self.ioport(W_RXLenCrop);
+        if frame_ctl & (1 << 14) != 0 {
+            let framelen = original.saturating_sub((crop >> 7) & 0x1FE);
+            if framelen > 24 {
+                // `memmove(&RXBuffer[12+24], &RXBuffer[12+28], framelen)`.
+                let src = 12 + 28;
+                let dst = 12 + 24;
+                let len = (framelen as usize).min(self.rx_buffer.len().saturating_sub(src));
+                self.rx_buffer.copy_within(src..src + len, dst);
+            }
+            framelen
+        } else {
+            original.saturating_sub((crop << 1) & 0x1FE)
+        }
     }
 
     /// Polls the transport for one inbound frame and, if valid, starts the
     /// hardware RX byte-pump and/or updates MP sync state. Returns `true`
     /// if a frame was accepted.
     pub(super) fn check_rx(&mut self, kind: RxKind, request: &mut InterruptRequest) -> bool {
-        if self.ioport(W_PowerState) & (1 << 9) != 0 {
-            return false;
-        }
+        // melonDS aborts here when `W_PowerState` bit 9 reports the
+        // transceiver powered down (`Wifi.cpp:1566-1567`).
+        //
+        // **Deliberate deviation:** this port does not, because it has no
+        // reliable way back out of that state. melonDS's radio always
+        // recovers -- it models `IOPORT(0x27C)`, the partial
+        // `W_PowerDownCtrl` states, and a driver that drives `W_PowerState`
+        // in `W_ModeWEP` mode 3 -- whereas here, measured against a real
+        // game, an instance that took this branch simply stopped receiving
+        // for the rest of the session: reception froze mid-session and the
+        // link dropped, with the driver polling `W_PowerState` tens of
+        // millions of times waiting for a wake-up that never came.
+        //
+        // The power state itself is still modelled and still reported to the
+        // driver through `W_PowerState`/`W_TRXPower`/`W_RFStatus`; only this
+        // one hard gate on the receive path is dropped, so a stalled
+        // power-down can no longer take the link with it.
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
             self.diag.drops.rx_disabled += 1;
             if super::debug_enabled() && rx_gate_warn_latch() {
@@ -359,7 +391,7 @@ impl Wifi {
             }
             return false;
         };
-        let cropped_framelen = self.crop_framelen(frame_len as u16);
+        let cropped_framelen = self.crop_framelen(frame_len as u16, frame_ctl);
 
         // Stage 3/4 of the `diag` summary: the frame survived every check,
         // and this is how the hardware classified it.
@@ -411,12 +443,33 @@ impl Wifi {
             }
         }
 
+        if frame_type == 0x0010 {
+            // Record the guards before applying them: an association
+            // response that arrives but leaves `is_mp` false is otherwise
+            // indistinguishable from one that never came.
+            self.diag.last_assoc_aid = self.rx_buffer.get(12 + 24 + 4).copied().unwrap_or(0) as u16
+                | (self.rx_buffer.get(12 + 24 + 5).copied().unwrap_or(0) as u16) << 8;
+            self.diag.last_assoc_mac_good = mac_good;
+            self.diag.last_assoc_is_packet = is_packet;
+            self.diag.last_assoc_timestamp = timestamp_us;
+        }
         if is_packet && frame_type == 0x0010 && timestamp_us != 0 && mac_good {
             // Association response: adopt the host's clock and become an
             // MP client.
             let aid =
                 self.rx_buffer[12 + 24 + 4] as u16 | (self.rx_buffer[12 + 24 + 5] as u16) << 8;
             if aid != 0 {
+                // A single, greppable marker so a `LUNARIS_WIFI_DEBUG=1`
+                // capture can be windowed around the exact moment this
+                // instance became an MP client -- the register traffic just
+                // after this is what decides whether the driver accepts the
+                // association or re-initialises.
+                if super::debug_enabled() {
+                    eprintln!(
+                        "[wifi] ===== ASSOC-PROMOTE aid=0x{aid:04X} us_timestamp={} =====",
+                        self.us_timestamp
+                    );
+                }
                 self.is_mp = true;
                 self.is_mp_client = true;
                 self.us_timestamp = timestamp_us;
@@ -614,22 +667,43 @@ impl Wifi {
             return;
         }
 
+        // Reject a WEP frame while WEP processing is off (`Wifi.cpp:1277-1283`).
+        let frame_ctl = self.rx_buffer[12] as u16 | (self.rx_buffer[13] as u16) << 8;
+        if frame_ctl & (1 << 14) != 0 && self.ioport(W_WEPCnt) & (1 << 15) == 0 {
+            self.diag.drops.wep_off += 1;
+            return;
+        }
+
         if !pending.cmd_dupe {
-            let header_addr = pending.header_addr as usize;
-            let write16 = |ram: &mut [u8], off: usize, value: u16| {
+            let base = self.ioport(W_RXBufBegin) as u32 & 0x1FFE;
+            let end = self.ioport(W_RXBufEnd) as u32 & 0x1FFE;
+
+            // Each field advances through `increment_rx_addr`, exactly as
+            // `FinishRX` does (`Wifi.cpp:1466-1478`), so a header that
+            // straddles the end of the RX ring wraps back to its start.
+            //
+            // Plain addition (what this used to do) writes the tail of such
+            // a header past `W_RXBufEnd` while the body -- which already
+            // wrapped correctly in `Wifi::start_rx` -- lands at the ring
+            // base. The driver then reads a frame whose length and rate
+            // fields are garbage. With the 2 KiB ring these games use, a
+            // header straddles the wrap every couple of dozen frames, so a
+            // steady fraction of traffic is corrupted indefinitely.
+            let mut addr = pending.header_addr as u32;
+            let write_field = |ram: &mut [u8], addr: &mut u32, step: u32, value: u16| {
+                let off = *addr as usize;
                 if off + 1 < ram.len() {
                     ram[off] = value as u8;
                     ram[off + 1] = (value >> 8) as u8;
                 }
+                increment_rx_addr(addr, step, base, end);
             };
-            write16(&mut self.ram, header_addr, pending.rxflags);
-            write16(&mut self.ram, header_addr + 2, 0x0040);
-            write16(&mut self.ram, header_addr + 6, u16::from(pending.tx_rate));
-            write16(&mut self.ram, header_addr + 8, pending.framelen);
-            write16(&mut self.ram, header_addr + 0xA, 0x4080);
+            write_field(&mut self.ram, &mut addr, 2, pending.rxflags);
+            write_field(&mut self.ram, &mut addr, 4, 0x0040);
+            write_field(&mut self.ram, &mut addr, 2, u16::from(pending.tx_rate));
+            write_field(&mut self.ram, &mut addr, 2, pending.framelen);
+            write_field(&mut self.ram, &mut addr, 2, 0x4080);
 
-            let base = self.ioport(W_RXBufBegin) as u32 & 0x1FFE;
-            let end = self.ioport(W_RXBufEnd) as u32 & 0x1FFE;
             let mut cursor = u32::from(self.ioport(W_RXTXAddr)) << 1;
             if cursor & 0x2 != 0 {
                 increment_rx_addr(&mut cursor, 2, base, end);
@@ -683,9 +757,7 @@ impl Wifi {
     /// the host never delivers any client's reply data to the game, even
     /// though the transport successfully collected it.
     pub(super) fn mp_client_reply_rx(&mut self, client: u16, request: &mut InterruptRequest) {
-        if self.ioport(W_PowerState) & (1 << 9) != 0 {
-            return;
-        }
+        // No `W_PowerState` bit-9 gate here either; see `Wifi::check_rx`.
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
             return;
         }
@@ -698,10 +770,15 @@ impl Wifi {
         let mut framelen = reply[10] as u16 | (reply[11] as u16) << 8;
         let tx_rate = reply[8];
 
-        // WEP-frame cropping (`Wifi.cpp:1544-1548`) is not ported -- see
-        // `Wifi::crop_framelen`.
-        let crop = (self.ioport(W_RXLenCrop) << 1) & 0x1FE;
-        framelen = framelen.saturating_sub(crop);
+        // Same `W_RXLenCrop` handling as `Wifi::crop_framelen`, including
+        // the WEP body slide (`Wifi.cpp:1544-1552`).
+        let reply_ctl = reply[12] as u16 | (reply[13] as u16) << 8;
+        let crop = self.ioport(W_RXLenCrop);
+        framelen = if reply_ctl & (1 << 14) != 0 {
+            framelen.saturating_sub((crop >> 7) & 0x1FE)
+        } else {
+            framelen.saturating_sub((crop << 1) & 0x1FE)
+        };
 
         let total = (12 + framelen as usize).min(reply.len()).min(self.rx_buffer.len());
         self.rx_buffer[..total].copy_from_slice(&reply[..total]);

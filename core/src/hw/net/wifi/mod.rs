@@ -484,6 +484,7 @@ impl Wifi {
     /// which it leaves as a TODO too.
     pub(super) fn update_power_status(&mut self, power: i32) {
         let mut power = power;
+        let mut mode_reset_forced = false;
         let mut curflags = 0;
         if self.ioport(W_TRXPower) == 1 {
             curflags |= 1;
@@ -496,7 +497,27 @@ impl Wifi {
         if self.ioport(W_PowerForce) & (1 << 15) != 0 {
             reqflags = if self.ioport(W_PowerForce) & 1 != 0 { 0 } else { 3 };
         } else if self.ioport(W_ModeReset) & 1 == 0 {
-            reqflags = 0;
+            // melonDS forces the transceiver off here (`Wifi.cpp:481-483`).
+            //
+            // **Deliberate deviation:** this port leaves the power state
+            // unchanged instead.
+            //
+            // The master enable is clear for a stretch of every driver
+            // re-initialisation, and forcing off during it deadlocks this
+            // port: the branch outranks every power-*on* request, so once
+            // the radio is down with `W_ModeReset` clear, neither
+            // `W_PowerState` bit 1, nor `W_PowerDownCtrl` bit 1, nor IRQ 15
+            // can bring it back -- the driver is left polling
+            // `W_PowerState`/`W_RFStatus` tens of millions of times while
+            // the link dies. melonDS escapes because it models the partial
+            // power states and `W_RFStatus` states 2/4/7, neither of which
+            // exists here (nor in melonDS's own TODO list).
+            //
+            // Leaving the state alone keeps every other power path
+            // faithful, and is the narrowest change that removes the
+            // deadlock.
+            reqflags = curflags;
+            mode_reset_forced = true;
         } else {
             if power == 0 {
                 if self.ioport(W_PowerState) & 0x0202 == 0x0202 {
@@ -539,6 +560,13 @@ impl Wifi {
             }
         }
 
+        if reqflags & 2 == 0 {
+            self.diag.power_off_events += 1;
+            if mode_reset_forced {
+                self.diag.power_off_by_mode_reset += 1;
+            }
+        }
+
         if reqflags & 2 != 0 {
             self.set_ioport(W_PowerState, self.ioport(W_PowerState) | (1 << 8));
             if curflags & 2 == 0 && self.us_until_power_on == 0 {
@@ -551,6 +579,16 @@ impl Wifi {
             let mut state = self.ioport(W_PowerState);
             state &= !(1 << 0);
             state &= !(1 << 8);
+            // Bit 9 is how the driver observes that the power-down it asked
+            // for actually happened; it polls this register waiting for it.
+            // Leaving it clear stalls the driver even earlier than a
+            // power-down does -- measured against a real game, reception was
+            // never even armed (`W_RXCnt` stayed 0) and both instances spun
+            // here tens of millions of times.
+            //
+            // It is cleared again by `Wifi::tick`'s `us_until_power_on`
+            // countdown, which writes `W_PowerState = 0` on completion
+            // (`Wifi.cpp:1789-1793`) -- that is the intended way out.
             state |= 1 << 9;
             self.set_ioport(W_PowerState, state);
             self.us_until_power_on = 0;
@@ -656,6 +694,13 @@ impl Wifi {
         let m2 = self.ioport(W_MACAddr2);
         snapshot.mac =
             [m0 as u8, (m0 >> 8) as u8, m1 as u8, (m1 >> 8) as u8, m2 as u8, (m2 >> 8) as u8];
+        snapshot.mode_reset_reg = self.ioport(W_ModeReset);
+        snapshot.mode_wep_reg = self.ioport(W_ModeWEP);
+        snapshot.power_down_ctrl_reg = self.ioport(W_PowerDownCtrl);
+        snapshot.tx_slot_cmd_reg = self.ioport(W_TXSlotCmd);
+        snapshot.tx_req_read_reg = self.ioport(W_TXReqRead);
+        snapshot.rx_cnt_reg = self.ioport(W_RXCnt);
+        snapshot.powered_down = self.ioport(W_PowerState) & (1 << 9) != 0;
         snapshot.rf_version = self.rf_version;
         snapshot.rf_channel_index = self.rf_channel_index;
         snapshot.rf_table_empty = self.rf_channel_data.iter().all(|&[a, b]| a == 0 && b == 0);
@@ -1295,16 +1340,17 @@ mod tests {
         assert_eq!(wifi.read16(W_BBRead as u32, &mut request), 0);
     }
 
-    /// The driver powers the transceiver up by first parking it in the
-    /// powered-down state, then requesting power-on through `W_PowerState`
-    /// (only writable in `W_ModeWEP` mode 3). It then polls
-    /// `W_PowerState`/`W_RFStatus` until the radio reports ready.
+    /// A power-down must be observable *both* as `W_PowerState` bit 9 --
+    /// which the driver polls to confirm the power-down it requested -- and
+    /// through `W_TRXPower`/`W_RFStatus`.
     ///
-    /// With `UpdatePowerStatus` unported both registers were frozen, so a
-    /// real game spun on them forever after uploading its baseband/RF tables
-    /// and never selected an RF channel. Ported from `Wifi.cpp:462-567`.
+    /// Suppressing bit 9 stalls the driver earlier than a power-down does:
+    /// measured against a real game it never even armed reception
+    /// (`W_RXCnt` stayed 0) and spun here tens of millions of times. It is
+    /// cleared again by [`Wifi::tick`]'s power-on countdown
+    /// (`Wifi.cpp:1789-1793`).
     #[test]
-    fn driver_power_up_handshake_completes() {
+    fn power_down_is_observable_to_the_driver() {
         let mut wifi = Wifi::new();
         let mut sc = Scheduler::new();
         let mut rq = InterruptRequest::empty();
@@ -1312,29 +1358,32 @@ mod tests {
         wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
         wifi.set_power_cnt(true, &mut sc);
         wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
-        wifi.write16(W_ModeWEP as u32, 0x0003, &mut sc, &mut rq);
 
-        // Park the radio down first (bit 9), the state the driver requests
-        // power-on out of.
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "forced on");
+        assert_eq!(wifi.ioport(W_RFStatus), 1);
+
         wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
-        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "parked powered-down");
-        wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 0, "forced off");
+        assert_eq!(wifi.ioport(W_RFStatus), 9);
+        assert_ne!(
+            wifi.ioport(W_PowerState) & (1 << 9),
+            0,
+            "the driver polls bit 9 to confirm the power-down"
+        );
 
-        // Request power-on: with bit 9 set and bit 8 clear, bit 1 survives
-        // the write mask and `W_PowerState` reads back 0x0202.
-        wifi.write16(W_PowerState as u32, 0x0002, &mut sc, &mut rq);
-        assert_eq!(wifi.ioport(W_PowerState) & 0x0202, 0x0202, "power-on requested");
-        assert_ne!(wifi.ioport(W_PowerState) & (1 << 8), 0, "transceiver coming up");
-        assert!(wifi.us_until_power_on < 0, "power-on delay armed");
+        // Forcing back on arms the power-up countdown, which clears the
+        // whole register when it completes.
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
         assert_eq!(wifi.ioport(W_TRXPower), 1);
-        assert_eq!(wifi.ioport(W_RFStatus), 1, "radio reports idle/ready");
-
-        // Run out the ~2ms power-up delay.
         for _ in 0..512 {
             wifi.tick(&mut sc, &mut rq);
         }
-        assert_eq!(wifi.us_until_power_on, 0, "power-up completes");
-        assert_eq!(wifi.ioport(W_PowerState) & (1 << 9), 0, "not powered down");
+        assert_eq!(
+            wifi.ioport(W_PowerState) & (1 << 9),
+            0,
+            "the power-up countdown must clear the power-down bit again"
+        );
     }
 
     /// `W_PowerForce` bit 15 overrides every other power input; bit 0
@@ -1347,80 +1396,56 @@ mod tests {
 
         wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
         wifi.set_power_cnt(true, &mut sc);
-        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        // Master enable clear: normally that alone forces the transmit half
+        // off, but `W_PowerForce` outranks it.
+        wifi.write16(W_ModeReset as u32, 0x0000, &mut sc, &mut rq);
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "forced on despite master enable clear");
+        assert_eq!(wifi.ioport(W_RFStatus), 1);
 
         wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
-        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "forced power-down");
+        assert_eq!(wifi.ioport(W_TRXPower), 0, "forced off");
         assert_eq!(wifi.ioport(W_RFStatus), 9);
-        assert_eq!(wifi.ioport(W_TRXPower), 0);
-
-        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
-        assert_ne!(wifi.ioport(W_PowerState) & (1 << 8), 0, "forced power-up");
-        assert_eq!(wifi.ioport(W_RFStatus), 1);
-        assert_eq!(wifi.ioport(W_TRXPower), 1);
     }
 
-    /// Clearing `W_ModeReset` bit 0 forcibly powers the transceiver down,
-    /// whatever `W_PowerState` says. `Wifi.cpp:481-483`.
+    /// Both edges of `W_ModeReset` bit 0 publish a status word at port
+    /// `27Ch` (`Wifi.cpp:2131-2143`).
+    ///
+    /// The power state is deliberately left unchanged by the master-enable
+    /// branch itself -- see the deviation note on
+    /// [`Wifi::update_power_status`] -- so a driver re-initialisation, which
+    /// clears this bit for a stretch, cannot strand the radio.
     #[test]
-    fn mode_reset_bit0_forces_power_down() {
+    fn mode_reset_bit0_publishes_port_27c_without_stranding_power() {
         let mut wifi = Wifi::new();
         let mut sc = Scheduler::new();
         let mut rq = InterruptRequest::empty();
 
         wifi.write16(W_PowerUS as u32, 0, &mut sc, &mut rq);
         wifi.set_power_cnt(true, &mut sc);
+
         wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(0x27C), 0x0005, "rising edge publishes 0005h");
         wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
-        assert_eq!(wifi.ioport(W_TRXPower), 1);
-
         wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "precondition: transceiver up");
+
         wifi.write16(W_ModeReset as u32, 0x0000, &mut sc, &mut rq);
-        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "master enable cleared");
-        assert_eq!(wifi.ioport(W_RFStatus), 9);
+        assert_eq!(wifi.ioport(0x27C), 0x000A, "falling edge publishes 000Ah");
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "clearing it must not force the radio off");
+
+        // And with the master enable clear, an explicit power request still
+        // works -- the branch must not outrank it.
+        wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 0, "explicit force-off still applies");
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "and the radio can still be brought back");
     }
 
-    /// The millisecond timer must keep firing after `USCounter` is assigned
-    /// a value that is not a multiple of the 8µs timer interval -- which is
-    /// exactly what happens when a beacon's timestamp is adopted
-    /// (`Wifi::step_rx`).
-    ///
-    /// An equality test against the 1024µs boundary lets the counter step
-    /// straight past it forever, which silently stopped beacons, IRQ 14 and
-    /// the whole beacon-interval state machine. melonDS instead fires
-    /// whenever the low bits land inside the first interval of the window
-    /// (`Wifi.cpp:1799-1809`).
-    #[test]
-    fn ms_timer_survives_a_misaligned_us_counter() {
-        let mut wifi = Wifi::new();
-        let mut sc = Scheduler::new();
-        let mut rq = InterruptRequest::empty();
-
-        wifi.set_ioport(W_USCountCnt, 1);
-        wifi.set_ioport(W_IE, 1 << 14);
-        wifi.set_ioport(W_BeaconInterval, 2);
-
-        // Adopt a beacon timestamp that is deliberately not 8-aligned.
-        wifi.us_counter = 1_234_567;
-
-        let ticks_per_ms = 1024 / Wifi::TIMER_INTERVAL_US as usize;
-        for _ in 0..(ticks_per_ms * 6) {
-            wifi.tick(&mut sc, &mut rq);
-        }
-
-        assert_ne!(
-            wifi.ioport(W_IF) & (1 << 14),
-            0,
-            "the beacon-interval IRQ must still fire with a misaligned USCounter"
-        );
-    }
-
-    /// A client that powers the transceiver down between beacons must be
-    /// woken again by the pre-beacon IRQ 15. Without it the radio stayed off
-    /// forever: the guest spun on `W_PowerState`/`W_RFStatus` and never
-    /// transmitted the association request local play starts with.
-    /// Ported from `SetIRQ15` (`Wifi.cpp:441-450`) and the `W_PreBeacon`
-    /// comparison in `USTimer` (`Wifi.cpp:1801-1806`).
+    /// A client whose transceiver is down between beacons must be brought
+    /// back by the pre-beacon IRQ 15. Ported from `SetIRQ15`
+    /// (`Wifi.cpp:441-450`) and the `W_PreBeacon` comparison in `USTimer`
+    /// (`Wifi.cpp:1801-1806`).
     #[test]
     fn pre_beacon_irq15_wakes_a_sleeping_client() {
         let mut wifi = Wifi::new();
@@ -1436,31 +1461,28 @@ mod tests {
         wifi.set_ioport(W_USCompareCnt, 1);
         wifi.set_ioport(W_IE, 1 << 15);
 
-        // Park the radio powered-down, the state a sleeping client is in.
         wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
         wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
-        assert_ne!(wifi.ioport(W_PowerState) & (1 << 9), 0, "asleep");
+        assert_eq!(wifi.ioport(W_TRXPower), 0, "transceiver down");
 
-        // Arm a pre-beacon threshold the running counter will cross.
         wifi.set_ioport(W_BeaconCount1, 1);
         wifi.set_ioport(W_PreBeacon, 0x0400);
 
         for _ in 0..4096 {
             wifi.tick(&mut sc, &mut rq);
-            if wifi.ioport(W_PowerState) & (1 << 9) == 0 {
+            if wifi.ioport(W_TRXPower) == 1 {
                 break;
             }
         }
 
         assert_ne!(wifi.ioport(W_IF) & (1 << 15), 0, "IRQ 15 must fire");
-        assert_eq!(wifi.ioport(W_PowerState) & (1 << 9), 0, "the client must wake back up");
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "the client must come back up");
         assert_eq!(wifi.ioport(W_RFStatus), 1);
     }
 
     /// Auto power-down must only happen in automatic power-saving mode. A
     /// station with power saving disabled does not service IRQ13/IRQ15, so
-    /// powering down there would strand the transceiver with nothing to
-    /// wake it. `Wifi.cpp:392-409`.
+    /// powering down there would strand the transceiver. `Wifi.cpp:392-409`.
     #[test]
     fn auto_power_down_only_in_power_saving_mode() {
         let mut wifi = Wifi::new();
@@ -1476,11 +1498,101 @@ mod tests {
         // Mode 2 = power saving disabled: IRQ 13 must not power down.
         wifi.write16(W_ModeWEP as u32, 0x0002, &mut sc, &mut rq);
         wifi.set_irq13(&mut rq);
-        assert_eq!(
-            wifi.ioport(W_PowerState) & (1 << 9),
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "must stay awake with power saving disabled");
+    }
+
+    /// The millisecond timer must keep firing after `USCounter` is assigned a
+    /// value that is not a multiple of the 8µs timer interval -- which is
+    /// what happens when a beacon's timestamp is adopted. melonDS fires
+    /// whenever the low bits land inside the first interval of the window
+    /// (`Wifi.cpp:1799-1809`), not only on an exact multiple.
+    #[test]
+    fn ms_timer_survives_a_misaligned_us_counter() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_IE, 1 << 14);
+        wifi.set_ioport(W_BeaconInterval, 2);
+        wifi.us_counter = 1_234_567;
+
+        let ticks_per_ms = 1024 / Wifi::TIMER_INTERVAL_US as usize;
+        for _ in 0..(ticks_per_ms * 6) {
+            wifi.tick(&mut sc, &mut rq);
+        }
+
+        assert_ne!(
+            wifi.ioport(W_IF) & (1 << 14),
             0,
-            "must stay awake with power saving disabled"
+            "the beacon-interval IRQ must still fire with a misaligned USCounter"
         );
+    }
+
+    /// An RX header that straddles the end of the ring must wrap back to the
+    /// ring base, field by field, as `FinishRX` does (`Wifi.cpp:1466-1478`).
+    #[test]
+    fn rx_header_wraps_at_the_ring_end() {
+        let mut wifi = Wifi::new();
+        let mut rq = InterruptRequest::empty();
+        wifi.set_ioport(W_RXCnt, 0x8000);
+        wifi.set_ioport(W_RXBufBegin, 0x0000);
+        wifi.set_ioport(W_RXBufEnd, 0x0800);
+        wifi.set_ioport(W_RXBufReadCursor, 0x0010);
+        wifi.set_ioport(W_RXBufWriteCursor, (0x07FC / 2) as u16);
+
+        wifi.rx_buffer[..12 + 16].fill(0xAA);
+        wifi.start_rx(&mut rq, true, false, 0x8008, 0x14, 16);
+        for _ in 0..64 {
+            if wifi.com_status & 0x1 == 0 {
+                break;
+            }
+            wifi.step_rx(&mut rq);
+        }
+
+        let rd = |a: usize| wifi.ram[a] as u16 | (wifi.ram[a + 1] as u16) << 8;
+        assert_eq!(rd(0x07FC), 0x8008, "rxflags");
+        assert_eq!(rd(0x07FE), 0x0040);
+        // The 4-byte skip steps twice: 0x7FE -> 0x800 (the ring end, wrapping
+        // to 0x000) -> 0x002.
+        assert_eq!(rd(0x0002), 0x0014, "TX rate must land inside the ring");
+        assert_eq!(rd(0x0004), 16, "frame length");
+        assert_eq!(rd(0x0006), 0x4080, "RSSI");
+    }
+
+    /// A WEP frame's body sits 4 bytes further along, past the WEP IV.
+    /// `CheckRX` slides it back down over the IV (`Wifi.cpp:1635-1639`) so
+    /// everything downstream reads the body at its usual offset. Skipping
+    /// that delivers an intact frame whose every field is shifted by 4.
+    #[test]
+    fn wep_frame_body_slides_over_the_iv() {
+        let mut wifi = Wifi::new();
+        let fc: u16 = 1 << 14;
+        wifi.rx_buffer[12] = fc as u8;
+        wifi.rx_buffer[13] = (fc >> 8) as u8;
+        wifi.rx_buffer[12 + 24..12 + 28].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        wifi.rx_buffer[12 + 28..12 + 32].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+
+        let len = wifi.crop_framelen(64, fc);
+
+        assert_eq!(len, 64, "no crop configured, so the length is unchanged");
+        assert_eq!(
+            &wifi.rx_buffer[12 + 24..12 + 28],
+            &[0x11, 0x22, 0x33, 0x44],
+            "the real body must now start where the IV was"
+        );
+    }
+
+    /// An unencrypted frame must not be slid (`Wifi.cpp:1640-1641`).
+    #[test]
+    fn non_wep_frame_body_is_left_alone() {
+        let mut wifi = Wifi::new();
+        wifi.rx_buffer[12 + 24..12 + 28].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let len = wifi.crop_framelen(64, 0x0000);
+
+        assert_eq!(len, 64);
+        assert_eq!(&wifi.rx_buffer[12 + 24..12 + 28], &[0xDE, 0xAD, 0xBE, 0xEF]);
     }
 
     /// Regression test for the Union Room symptom (design doc §17, fixed
