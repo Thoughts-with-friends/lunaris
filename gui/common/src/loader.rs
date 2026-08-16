@@ -185,29 +185,31 @@ fn crc16(data: &[u8], seed: u16) -> u16 {
 
 /// The `.sav` path instance `instance` writes.
 ///
-/// Instance `0` uses [`create_save_path`] unchanged; later instances get a
-/// `.inst<n>.sav` sibling so two emulators in one process never write one file.
-/// Exposed because callers that act on a running instance's save (importing,
-/// exporting) need the same answer [`load_rom_for_instance`] used to boot it.
+/// Separation now comes from `config.save_dir`, which
+/// [`Config::load_for_instance`] points at `instances/instance<N>/saves`, so the
+/// filename itself needs no instance marker. Callers that act on a running
+/// instance's save (importing, exporting) use this to get the same answer
+/// [`load_rom_for_instance`] used to boot it.
+///
+/// `config` must be the instance's own configuration. Passing another
+/// instance's would aim this at that instance's save file — which is why
+/// [`Config::load_for_instance`] rewrites the directories on every load rather
+/// than trusting what the JSON happens to contain.
 #[must_use]
-pub fn save_path_for_instance(config: &Config, instance: u8) -> Option<PathBuf> {
-    let base = create_save_path(config)?;
-    if instance == 0 {
-        return Some(base);
-    }
-    let stem = base.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into());
-    Some(base.with_file_name(format!("{stem}.inst{instance}.sav")))
+pub fn save_path_for_instance(config: &Config, _instance: u8) -> Option<PathBuf> {
+    create_save_path(config)
 }
 
 /// The savestate directory instance `instance` uses.
 ///
-/// Slot numbering is per instance: the guest's "State 1" must not overwrite the
-/// host's, since the two are running independent timelines of the same ROM.
+/// As with [`save_path_for_instance`], the separation lives in
+/// `config.save_state_dir`. Slot numbering is therefore per instance already:
+/// the guest's "State 1" cannot overwrite the host's, since the two run
+/// independent timelines of the same ROM.
 #[must_use]
-pub fn state_dir_for_instance(config: &Config, instance: u8) -> Option<PathBuf> {
+pub fn state_dir_for_instance(config: &Config, _instance: u8) -> Option<PathBuf> {
     let rom_stem = config.last_rom_path.as_ref()?.file_stem()?;
-    let dir = config.save_state_dir.join(rom_stem);
-    Some(if instance == 0 { dir } else { dir.join(format!("inst{instance}")) })
+    Some(config.save_state_dir.join(rom_stem))
 }
 
 /// <save_dir>/<rom_name>.sav
@@ -261,20 +263,42 @@ mod tests {
     /// Two instances must never write one another's `.sav` or savestate slots:
     /// they run independent timelines of the same ROM, so a shared path means
     /// one silently destroys the other's progress.
+    ///
+    /// Separation comes from the per-instance directory tree rather than from
+    /// decorated filenames, so this drives the two instance *configurations* —
+    /// the same thing the emulator does.
     #[test]
     fn instances_get_separate_save_and_state_paths() {
-        let config =
-            Config { last_rom_path: Some(PathBuf::from("/roms/game.nds")), ..Config::default() };
+        let instance_config = |instance: u8| {
+            let mut config = Config {
+                last_rom_path: Some(PathBuf::from("/roms/game.nds")),
+                ..Config::default()
+            };
+            let dir = Config::instance_dir(instance);
+            config.save_dir = dir.join("saves");
+            config.save_state_dir = dir.join("states");
+            config
+        };
+        let (host, guest) = (instance_config(0), instance_config(1));
 
-        let host_sav = save_path_for_instance(&config, 0).unwrap();
-        let guest_sav = save_path_for_instance(&config, 1).unwrap();
-        assert_ne!(host_sav, guest_sav);
-        assert_eq!(host_sav, create_save_path(&config).unwrap(), "instance 0 is unchanged");
+        assert_ne!(
+            save_path_for_instance(&host, 0).unwrap(),
+            save_path_for_instance(&guest, 1).unwrap(),
+        );
+        assert_ne!(
+            state_dir_for_instance(&host, 0).unwrap(),
+            state_dir_for_instance(&guest, 1).unwrap(),
+        );
+    }
 
-        let host_states = state_dir_for_instance(&config, 0).unwrap();
-        let guest_states = state_dir_for_instance(&config, 1).unwrap();
-        assert_ne!(host_states, guest_states);
-        assert!(guest_states.starts_with(&host_states), "the guest nests under the ROM's dir");
+    /// Instances are numbered from 1 on disk, so the main window is
+    /// `instance1` and Thread Mode's guest is `instance2`. The directory names
+    /// read the way a person counts, not the way the code indexes.
+    #[test]
+    fn instance_directories_are_numbered_from_one() {
+        assert!(Config::instance_dir(0).ends_with("instance1"));
+        assert!(Config::instance_dir(1).ends_with("instance2"));
+        assert!(Config::instance_config_path(1).ends_with("instance2/config.json"));
     }
 
     /// Instance 0 is the main window's emulator and must boot the image exactly

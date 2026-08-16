@@ -322,7 +322,7 @@ impl LunarisApp {
         self.lan_room.on_rom_changed(&self.nds);
 
         // Save config
-        self.config.save();
+        self.config.save_for_instance(MAIN_INSTANCE);
         self.paused = false;
         self.screens_dirty = true;
     }
@@ -345,7 +345,7 @@ impl LunarisApp {
             self.config.last_rom_path = Some(p);
             self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
             self.lan_room.on_rom_changed(&self.nds);
-            self.config.save();
+            self.config.save_for_instance(MAIN_INSTANCE);
             self.paused = false;
             self.screens_dirty = true;
         }
@@ -581,13 +581,13 @@ impl LunarisApp {
                         .changed()
                     {
                         self.nds.set_audio_sync(is_native_speed(self.config.emu_speed));
-                        self.config.save();
+                        self.config.save_for_instance(MAIN_INSTANCE);
                     }
 
                     if ui.button("Reset to 1.0x").clicked() {
                         self.config.emu_speed = 1.0;
                         self.nds.set_audio_sync(true);
-                        self.config.save();
+                        self.config.save_for_instance(MAIN_INSTANCE);
                     }
                 });
 
@@ -618,7 +618,7 @@ impl LunarisApp {
         // button stuck down.
         self.keyboard_keys = input::keyboard_keys(&self.config.input_bindings);
         self.input_state = crate::input::InputState::default();
-        self.config.save();
+        self.config.save_for_instance(MAIN_INSTANCE);
     }
 
     fn audio_window(&mut self, ctx: &egui::Context) {
@@ -631,7 +631,7 @@ impl LunarisApp {
                 egui::Slider::new(&mut self.config.audio_volume, 0.0..=100.0).text("Volume");
             if ui.add(slider).changed() {
                 self.nds.set_audio_volume(self.config.audio_volume);
-                self.config.save();
+                self.config.save_for_instance(MAIN_INSTANCE);
             }
         });
         self.show_video_window_close_guard(open, |s| &mut s.show_audio_window);
@@ -759,7 +759,7 @@ impl LunarisApp {
         });
         if changed {
             self.screens_dirty = true;
-            self.config.save();
+            self.config.save_for_instance(MAIN_INSTANCE);
         }
         self.show_video_window_close_guard(open, |s| &mut s.show_video_window);
     }
@@ -1031,7 +1031,7 @@ impl eframe::App for LunarisApp {
             self.lan_room.show(ctx, &mut self.config, &mut self.nds),
             crate::lan_room::LanUiAction::SaveConfig
         ) {
-            self.config.save();
+            self.config.save_for_instance(MAIN_INSTANCE);
         }
     }
 
@@ -1040,15 +1040,24 @@ impl eframe::App for LunarisApp {
         // chip-select before the window closed. See
         // `docs/design/sav-backup-redesign.md` §4.1.
         self.nds.flush_save();
-        self.config.save();
+        self.config.save_for_instance(MAIN_INSTANCE);
     }
 }
 
-fn main() -> eframe::Result<()> {
-    #[cfg(not(feature = "release"))]
-    let _ = lunaris_gui_common::log::setup_logging();
+/// The main window's instance index, i.e. `instances/instance1/`.
+///
+/// Thread Mode's guest is instance 1 (`instance2`); see
+/// `crate::thread_mode::GUEST_INSTANCE`.
+pub const MAIN_INSTANCE: u8 = 0;
 
-    let mut config = lunaris_gui_common::config::Config::load();
+fn main() -> eframe::Result<()> {
+    // The main window is instance 0, i.e. `instances/instance1/`. Loading its
+    // configuration first is what decides where the log files go.
+    let mut config = lunaris_gui_common::config::Config::load_for_instance(MAIN_INSTANCE);
+
+    #[cfg(not(feature = "release"))]
+    let _ = lunaris_gui_common::log::setup_logging_in(&config.log_dir);
+
     let rom = resolve_rom_path(&config).expect("ROM required");
     config.last_rom_path = Some(rom);
 

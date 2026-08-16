@@ -646,6 +646,18 @@ impl Wifi {
 
         if matches!(slot, 0 | 2 | 3) && copy_len >= 0xE {
             let fc = self.tx_buffer[0xC] as u16 | (self.tx_buffer[0xD] as u16) << 8;
+            // A deauthentication is the visible end of a session. Traced on the
+            // way out because it names *which side* gave up, which the frame
+            // lengths alone cannot: both peers send one, microseconds apart.
+            if super::assoc_trace_enabled() && fc & 0x00FF == 0x00C0 {
+                eprintln!(
+                    "[assoc-trace][{:04X}] TX DEAUTH (was_mp_client={}, aid={}, us_timestamp={})",
+                    self.ioport(W_MACAddr2),
+                    self.is_mp_client,
+                    self.ioport(W_AIDLow),
+                    self.us_timestamp,
+                );
+            }
             if fc & 0x00FF == 0x00C0 && self.is_mp_client {
                 self.is_mp = false;
                 self.is_mp_client = false;

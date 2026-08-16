@@ -46,8 +46,10 @@ use std::{
 };
 
 use lunaris_gui_common::{
-    config::Config,
-    framebuffer::{PlacementRect, abgr1555_to_rgba8, layout_screens, point_to_touch_coords},
+    config::{Config, ScreenFilter},
+    framebuffer::{
+        PlacementRect, ScreenLayout, abgr1555_to_rgba8, layout_screens, point_to_touch_coords,
+    },
     input::enums::KeyboardKey,
     loader,
 };
@@ -59,12 +61,15 @@ use nds_core::{
 
 use crate::input::InputState;
 
-/// Instance index the Thread Mode guest boots as.
+/// Instance index the Thread Mode guest boots as, i.e.
+/// `instances/instance2/`.
 ///
-/// Must not be `0`: [`loader::load_rom_for_instance`] derives the Wi-Fi MAC and
-/// the save-file name from it, and instance `0` is the main window's emulator.
-/// Two instances sharing a MAC can never associate with each other.
-const GUEST_INSTANCE: u8 = 1;
+/// Must not be [`crate::MAIN_INSTANCE`]: the index selects both the Wi-Fi MAC
+/// perturbation and the whole per-instance directory tree (its own
+/// `config.json`, `saves/`, `states/`, `cheats/`, `logs/`). Two instances
+/// sharing a MAC can never associate with each other, and two sharing a save
+/// directory would overwrite each other's progress.
+pub const GUEST_INSTANCE: u8 = 1;
 
 /// Nominal DS frame rate, used to pace the worker.
 const NDS_FPS: f64 = 59.8261;
@@ -85,6 +90,11 @@ enum GuestCommand {
     ExportSave(PathBuf),
     Reset,
     SetPaused(bool),
+    /// Audio output level, 0..=100, mirroring the main window's Audio window.
+    SetVolume(f32),
+    /// Emulation speed multiplier. Also decides audio-clock pacing: only
+    /// native speed can stay synchronised to the audio device.
+    SetSpeed(f32),
 }
 
 /// Input the guest viewport collected, for the worker to apply.
@@ -141,6 +151,19 @@ pub struct ThreadMode {
     /// Where the guest's bottom screen was drawn last repaint, for mapping a
     /// pointer position to touch coordinates.
     bottom_placement: Option<(egui::Pos2, PlacementRect)>,
+    /// Mirrors the process-wide association trace flag. See
+    /// [`nds_core::net::set_assoc_trace`].
+    assoc_trace: bool,
+    /// The guest's own configuration (`instances/instance2/config.json`).
+    ///
+    /// Held on the UI thread as well as by the worker because the video
+    /// settings are consumed *here*, when painting the guest's screens, while
+    /// audio and speed have to be forwarded as commands. Loaded when the guest
+    /// starts so the window always edits the instance that is actually running.
+    config: Config,
+    show_emu_window: bool,
+    show_audio_window: bool,
+    show_video_window: bool,
 }
 
 impl Default for ThreadMode {
@@ -163,6 +186,11 @@ impl ThreadMode {
             is_open: false,
             textures: None,
             bottom_placement: None,
+            assoc_trace: false,
+            config: Config::default(),
+            show_emu_window: false,
+            show_audio_window: false,
+            show_video_window: false,
         }
     }
 
@@ -185,11 +213,11 @@ impl ThreadMode {
     /// `host` is the main window's emulator; it joins the same hub as instance
     /// `0`. Both sides call `begin` immediately, because the Wi-Fi hardware
     /// only does so on a radio power-on edge that may already have happened.
-    fn start(&mut self, host: &mut NDS, config: &Config) {
+    fn start(&mut self, host: &mut NDS, host_config: &Config) {
         if self.is_running() {
             return;
         }
-        if config.last_rom_path.is_none() {
+        if host_config.last_rom_path.is_none() {
             self.last_error = Some("Load a ROM before starting Thread Mode".to_owned());
             return;
         }
@@ -210,7 +238,21 @@ impl ThreadMode {
         let input = Arc::clone(&self.input);
         let commands = Arc::clone(&self.commands);
         let hub_for_worker = Arc::clone(&hub);
-        let config = config.clone();
+
+        // The guest runs from `instances/instance2/config.json`, not from a
+        // copy of the host's: it owns its own saves, savestates, cheats, logs
+        // and key bindings. Separate bindings are the point, not an accident --
+        // two players sharing one keyboard need different keys.
+        //
+        // The ROM is the one exception. Local wireless play only means anything
+        // if both instances run the same title, so the host's choice is
+        // authoritative and is copied over whatever the guest's file records.
+        let mut config = Config::load_for_instance(GUEST_INSTANCE);
+        config.last_rom_path.clone_from(&host_config.last_rom_path);
+        // The UI thread keeps its own copy: the video settings are consumed
+        // when painting the guest's screens, which happens here, not on the
+        // worker.
+        self.config = config.clone();
 
         self.worker = Some(std::thread::spawn(move || {
             guest_main(&config, &hub_for_worker, &stop, &frame, &input, &commands);
@@ -236,7 +278,7 @@ impl ThreadMode {
     pub fn show(&mut self, ctx: &egui::Context, config: &Config, host: &mut NDS) {
         self.control_panel(ctx, config, host);
         if self.is_running() {
-            self.guest_viewport(ctx, config);
+            self.guest_viewport(ctx);
         }
     }
 
@@ -265,6 +307,16 @@ impl ThreadMode {
                 ui.colored_label(egui::Color32::from_rgb(220, 120, 120), err);
             }
 
+            if ui
+                .checkbox(&mut self.assoc_trace, "Trace association responses (stderr)")
+                .on_hover_text(
+                    "Prints what each instance commits to its RX ring for an association                      response, then every W_RXBufDataRead the driver performs afterwards. Use                      it to tell 'the driver never read the frame' from 'it read the wrong                      place' from 'it read the right bytes and rejected them'.",
+                )
+                .changed()
+            {
+                nds_core::net::set_assoc_trace(self.assoc_trace);
+            }
+
             ui.separator();
             ui.strong("guest");
             let diag = self.frame.lock().unwrap_or_else(|e| e.into_inner()).diag.clone();
@@ -283,7 +335,7 @@ impl ThreadMode {
     /// render closure has to borrow `self` (for the textures and the published
     /// frame); a deferred viewport's callback must be `Send + Sync + 'static`
     /// and could not.
-    fn guest_viewport(&mut self, ctx: &egui::Context, config: &Config) {
+    fn guest_viewport(&mut self, ctx: &egui::Context) {
         let viewport_id = egui::ViewportId::from_hash_of("lunaris_thread_mode_guest");
         let builder = egui::ViewportBuilder::default()
             .with_title("lunaris - Thread Mode guest (instance 1)")
@@ -336,10 +388,11 @@ impl ThreadMode {
                         ui.centered_and_justified(|ui| ui.weak("booting guest instance..."));
                         return;
                     }
-                    self.paint_screens(ui, config, &screens);
+                    self.paint_screens(ui, &screens);
                 },
             );
 
+            self.settings_windows(ctx);
             self.collect_input(ctx);
         });
 
@@ -426,6 +479,21 @@ impl ThreadMode {
                     }
                 });
 
+                ui.menu_button("Config", |ui| {
+                    if ui.button("Emu Settings").clicked() {
+                        self.show_emu_window = true;
+                        ui.close();
+                    }
+                    if ui.button("Audio").clicked() {
+                        self.show_audio_window = true;
+                        ui.close();
+                    }
+                    if ui.button("Video").clicked() {
+                        self.show_video_window = true;
+                        ui.close();
+                    }
+                });
+
                 ui.menu_button("Emulation", |ui| {
                     if ui.selectable_label(!paused, "Run").clicked() {
                         self.send(GuestCommand::SetPaused(false));
@@ -444,16 +512,113 @@ impl ThreadMode {
         });
     }
 
+    /// The guest's Emu / Audio / Video windows.
+    ///
+    /// They edit **this instance's** configuration
+    /// (`instances/instance2/config.json`), not the host's, and each change is
+    /// persisted immediately as the main window does. Audio and speed reach the
+    /// emulator as [`GuestCommand`]s because it lives on the worker thread;
+    /// video settings need no round trip, since the screens are painted here.
+    ///
+    /// Input Settings is deliberately absent: the guest's key bindings live in
+    /// its own `config.json`, and the capture UI is built around the main
+    /// window's gamepad handle, which the guest does not share.
+    fn settings_windows(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_emu_window;
+        egui::Window::new("Guest: Emu Settings").open(&mut open).show(ctx, |ui| {
+            let slider = egui::Slider::new(
+                &mut self.config.emu_speed,
+                lunaris_gui_common::config::MIN_EMU_SPEED
+                    ..=lunaris_gui_common::config::MAX_EMU_SPEED,
+            )
+            .step_by(0.25)
+            .suffix("x")
+            .text("Speed");
+            let mut changed = ui.add(slider).changed();
+            if ui.button("Reset to 1.0x").clicked() {
+                self.config.emu_speed = 1.0;
+                changed = true;
+            }
+            if changed {
+                self.send(GuestCommand::SetSpeed(self.config.emu_speed));
+                self.config.save_for_instance(GUEST_INSTANCE);
+            }
+            ui.weak(
+                "Running the guest off native speed desynchronises it from the host: the MP                  clock only tolerates the run-ahead the host's ack frames grant.",
+            );
+        });
+        self.show_emu_window = open;
+
+        let mut open = self.show_audio_window;
+        egui::Window::new("Guest: Audio").open(&mut open).show(ctx, |ui| {
+            let slider =
+                egui::Slider::new(&mut self.config.audio_volume, 0.0..=100.0).text("Volume");
+            if ui.add(slider).changed() {
+                self.send(GuestCommand::SetVolume(self.config.audio_volume));
+                self.config.save_for_instance(GUEST_INSTANCE);
+            }
+            ui.weak("Both instances output audio; set this to 0 to hear only the host.");
+        });
+        self.show_audio_window = open;
+
+        let mut open = self.show_video_window;
+        let mut changed = false;
+        egui::Window::new("Guest: Video").open(&mut open).show(ctx, |ui| {
+            egui::ComboBox::from_label("Layout")
+                .selected_text(match self.config.video.screen_layout {
+                    ScreenLayout::Vertical => "Vertical",
+                    ScreenLayout::Horizontal => "Horizontal (Horizon)",
+                })
+                .show_ui(ui, |ui| {
+                    changed |= ui
+                        .selectable_value(
+                            &mut self.config.video.screen_layout,
+                            ScreenLayout::Vertical,
+                            "Vertical",
+                        )
+                        .changed();
+                    changed |= ui
+                        .selectable_value(
+                            &mut self.config.video.screen_layout,
+                            ScreenLayout::Horizontal,
+                            "Horizontal (Horizon)",
+                        )
+                        .changed();
+                });
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut self.config.video.screen_gap, 0.0..=64.0)
+                        .text("Screen gap"),
+                )
+                .changed();
+            changed |=
+                ui.checkbox(&mut self.config.video.integer_scaling, "Integer scaling").changed();
+            let mut linear = self.config.video.filter == ScreenFilter::Linear;
+            if ui.checkbox(&mut linear, "Linear filter").changed() {
+                self.config.video.filter =
+                    if linear { ScreenFilter::Linear } else { ScreenFilter::Nearest };
+                changed = true;
+            }
+        });
+        self.show_video_window = open;
+        if changed {
+            self.config.save_for_instance(GUEST_INSTANCE);
+        }
+    }
+
     /// Uploads the guest's screens and paints them using the same layout rules
     /// as the main window, so the two instances look and touch alike.
-    fn paint_screens(&mut self, ui: &mut egui::Ui, config: &Config, screens: &[Vec<u16>; 2]) {
+    fn paint_screens(&mut self, ui: &mut egui::Ui, screens: &[Vec<u16>; 2]) {
+        // The *guest's* video settings, not the host's: each instance has its
+        // own `config.json`.
+        let video = self.config.video.clone();
         let avail = ui.available_size();
         let (top_rect, bottom_rect) = layout_screens(
             avail.x,
             avail.y,
-            config.video.screen_layout,
-            config.video.screen_gap,
-            config.video.integer_scaling,
+            video.screen_layout,
+            video.screen_gap,
+            video.integer_scaling,
         );
 
         let size = [
@@ -464,9 +629,13 @@ impl ThreadMode {
             egui::ColorImage::from_rgba_unmultiplied(size, &abgr1555_to_rgba8(&screens[0])),
             egui::ColorImage::from_rgba_unmultiplied(size, &abgr1555_to_rgba8(&screens[1])),
         ];
-        // Nearest, unscaled: this window exists to verify multiplayer, not to
-        // look good, and it must not compete with the host for GPU time.
-        let options = egui::TextureOptions::NEAREST;
+        // Honours the guest's own Video settings. Unscaled regardless: this
+        // window exists to verify multiplayer, and an upscaler here would
+        // compete with the host for GPU time on the same machine.
+        let options = match video.filter {
+            ScreenFilter::Nearest => egui::TextureOptions::NEAREST,
+            ScreenFilter::Linear => egui::TextureOptions::LINEAR,
+        };
         match &mut self.textures {
             Some([top, bottom]) => {
                 top.set(images[0].clone(), options);
@@ -572,15 +741,15 @@ fn guest_main(
 ) {
     let mut nds = boot_guest(config, hub);
 
-    let frame_time = Duration::from_secs_f64(1.0 / NDS_FPS);
     let mut next = Instant::now();
     let mut frames = 0u64;
     let mut paused = false;
+    let mut speed = config.emu_speed.max(0.05);
 
     while !stop.load(Ordering::Relaxed) {
         let queued = std::mem::take(&mut *commands.lock().unwrap_or_else(|e| e.into_inner()));
         for command in queued {
-            let status = apply_command(&mut nds, config, hub, command, &mut paused);
+            let status = apply_command(&mut nds, config, hub, command, &mut paused, &mut speed);
             let mut slot = frame.lock().unwrap_or_else(|e| e.into_inner());
             slot.status = status;
             slot.paused = paused;
@@ -617,8 +786,9 @@ fn guest_main(
 
         // Pace to real time. A guest that free-ran would race far ahead of the
         // host, and the MP sync clock only tolerates the run-ahead window the
-        // host's ack frames actually grant.
-        next += frame_time;
+        // host's ack frames actually grant. Recomputed each frame so a speed
+        // change from the Emu Settings window takes effect immediately.
+        next += Duration::from_secs_f64(1.0 / (NDS_FPS * f64::from(speed.max(0.05))));
         match next.checked_duration_since(Instant::now()) {
             Some(remaining) => std::thread::sleep(remaining),
             // Fell behind: give up the debt rather than sprint to catch up.
@@ -654,6 +824,7 @@ fn apply_command(
     hub: &Arc<LocalMpHub>,
     command: GuestCommand,
     paused: &mut bool,
+    speed: &mut f32,
 ) -> String {
     let state_path = |slot: usize| {
         loader::state_dir_for_instance(config, GUEST_INSTANCE).map(|dir| {
@@ -709,6 +880,18 @@ fn apply_command(
         GuestCommand::SetPaused(value) => {
             *paused = value;
             if value { "paused".to_owned() } else { "running".to_owned() }
+        }
+        GuestCommand::SetVolume(volume) => {
+            nds.set_audio_volume(volume);
+            format!("volume {volume:.0}")
+        }
+        GuestCommand::SetSpeed(value) => {
+            // Only native speed can stay locked to the audio clock; anything
+            // else has to free-run or the device starves. Mirrors
+            // `is_native_speed` in the main window.
+            nds.set_audio_sync((value - 1.0).abs() < f32::EPSILON);
+            *speed = value;
+            format!("speed {value:.2}x")
         }
     }
 }

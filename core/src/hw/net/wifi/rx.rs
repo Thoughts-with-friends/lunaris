@@ -830,11 +830,21 @@ impl Wifi {
                 );
                 let body: Vec<String> =
                     (0..16).map(|i| format!("{:02X}", self.rx_buffer[12 + i])).collect();
+                let field = |off: usize| -> u16 {
+                    u16::from(self.rx_buffer[12 + 24 + off])
+                        | u16::from(self.rx_buffer[12 + 24 + off + 1]) << 8
+                };
+                // The association-response body is capability / status / AID.
+                // **Status is what decides acceptance**: a nonzero code is a
+                // refusal the host itself sent, which would mean the fault is
+                // on the host's side of the handshake, not in this RX path.
                 eprintln!(
-                    "[assoc-trace][{who:04X}]   body[0..16] = {} (aid at +24+4 = 0x{:04X})",
+                    "[assoc-trace][{who:04X}]   body[0..16] = {} (capability=0x{:04X} \
+                     status=0x{:04X} aid=0x{:04X})",
                     body.join(" "),
-                    u16::from(self.rx_buffer[12 + 24 + 4])
-                        | u16::from(self.rx_buffer[12 + 24 + 5]) << 8,
+                    field(0),
+                    field(2),
+                    field(4),
                 );
                 self.assoc_trace_reads = Wifi::ASSOC_TRACE_READS;
             }

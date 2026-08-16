@@ -3,22 +3,18 @@ docs/icon.drawio.svg
 *.bin
 
 .tanstack/
-dist/
-node_modules/
 
 *.nds
 *.sav
 *.log
 *.bak
-logs/
 
-*config.json*
+# Per-instance user data: config, saves, savestates, cheats, logs.
+instances/
 .continue/
 .claude/
 .serena/
 docs/design/
-cheats/
-states/
 
 core/examples/
 core/lunaris_emu/examples/

@@ -19,13 +19,24 @@ use nds_core::log;
 /// log::warn!(target: "nds_core", "hello {world}");
 /// ```
 pub fn setup_logging() -> Result<(), SetLoggerError> {
-    create_dir_all("logs").ok();
+    setup_logging_in(std::path::Path::new("logs"))
+}
 
-    let logger = Logger {
-        arm7: File::create("logs/arm7.log").ok().map(|f| Mutex::new(BufWriter::new(f))),
-        arm9: File::create("logs/arm9.log").ok().map(|f| Mutex::new(BufWriter::new(f))),
-        savedata: File::create("logs/savedata.log").ok().map(|f| Mutex::new(BufWriter::new(f))),
-    };
+/// Installs the logger, writing its files into `dir`.
+///
+/// Takes the directory so each emulator instance can log into its own
+/// `instances/instance<N>/logs`. The logger itself is process-global — only one
+/// can be installed — so with several instances in one process the *first* to
+/// call this wins and the others share its files. That is deliberate: the
+/// alternative is interleaved writes to one file from several threads, which is
+/// worse than a single well-defined destination.
+pub fn setup_logging_in(dir: &std::path::Path) -> Result<(), SetLoggerError> {
+    create_dir_all(dir).ok();
+    let open =
+        |name: &str| File::create(dir.join(name)).ok().map(|f| Mutex::new(BufWriter::new(f)));
+
+    let logger =
+        Logger { arm7: open("arm7.log"), arm9: open("arm9.log"), savedata: open("savedata.log") };
 
     log::set_boxed_logger(Box::new(logger))?;
     // NOTE: `LevelFilter::Trace` causes severe emulator slowdown.

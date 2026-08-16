@@ -86,9 +86,33 @@ pub(super) fn debug_enabled() -> bool {
 /// the two tells you whether the driver is reading the frame, reading the wrong
 /// place, or not reading at all -- three very different faults that look
 /// identical from the counters. See `docs/design/review_mp_local2.md` §7.1d.
+/// Process-wide so both instances trace together: the whole point is to
+/// compare what one wrote against what the other read.
+static ASSOC_TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Seeded from the environment once, then owned by [`set_assoc_trace`].
+static ASSOC_TRACE_INIT: std::sync::Once = std::sync::Once::new();
+
 pub(super) fn assoc_trace_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("LUNARIS_MP_ASSOC_TRACE").is_some())
+    ASSOC_TRACE_INIT.call_once(|| {
+        if std::env::var_os("LUNARIS_MP_ASSOC_TRACE").is_some() {
+            ASSOC_TRACE.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    ASSOC_TRACE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Turns the association-response trace on or off at runtime.
+///
+/// Exposed as well as the environment variable because the variable is easy to
+/// get wrong: `VAR=1 cmd` is bash syntax and silently does nothing in
+/// PowerShell, which is this project's primary shell. A UI toggle cannot be
+/// mistyped, and lets a trace be armed at the moment of reproduction rather
+/// than for a whole session.
+pub fn set_assoc_trace(enabled: bool) {
+    // Run the environment seed first, so a later `set_assoc_trace(false)` is
+    // not undone by lazy initialisation on the next read.
+    let _ = assoc_trace_enabled();
+    ASSOC_TRACE.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// One hardware TX slot (LOC1-3, CMD, beacon, or MP reply).
@@ -182,6 +206,15 @@ pub struct Wifi {
     /// RX-ring header build awaiting the simulated transfer time to
     /// elapse. See [`rx::PendingRxHeader`].
     rx_pending: PendingRxHeader,
+
+    /// Whether the beacon-interval source of IRQ 14 is currently suppressed.
+    ///
+    /// Set by a `W_USCompare0` write with bit 0, cleared when `USCOUNTER`
+    /// reaches `USCompare`. The driver uses it to swap the free-running beacon
+    /// interrupt for a one-shot wake-up at an exact timestamp -- which is how a
+    /// host schedules its own beacon and MP timing. Ported from melonDS's
+    /// `BlockBeaconIRQ14` (`Wifi.cpp:411-421`, `1735-1743`, `2300-2302`).
+    block_beacon_irq14: bool,
 
     /// Whether the driver has ever written `W_RXBufReadCursor`.
     ///
@@ -285,6 +318,7 @@ impl Wifi {
             mp_last_seqno: 0xFFFF,
             rx_deferred: DeferredRxParams::default(),
             rx_pending: PendingRxHeader::default(),
+            block_beacon_irq14: false,
             rx_read_cursor_written: false,
             assoc_trace_reads: 0,
             pending_irq11: false,
@@ -340,6 +374,7 @@ impl Wifi {
         self.random = 1;
         // The register file was just zeroed, so `W_RXBufReadCursor` is back to
         // "never published by the driver". See [`Wifi::rx_read_cursor_written`].
+        self.block_beacon_irq14 = false;
         self.rx_read_cursor_written = false;
         self.assoc_trace_reads = 0;
         self.bb_regs.iter_mut().for_each(|b| *b = 0);
@@ -1017,6 +1052,9 @@ impl Wifi {
     /// long for an association response").
     fn ms_timer(&mut self, request: &mut InterruptRequest) {
         if self.ioport(W_USCompareCnt) != 0 && (self.us_counter & !0x3FF) == self.us_compare {
+            // The timestamp the driver asked to be woken at has arrived, so the
+            // beacon-interval source is released (`Wifi.cpp:1737-1742`).
+            self.block_beacon_irq14 = false;
             self.set_irq14(0, request);
         }
 
@@ -1107,6 +1145,26 @@ impl Wifi {
         if source != 2 {
             self.set_ioport(W_BeaconCount1, self.ioport(W_BeaconInterval));
         }
+
+        // Two gates this port used to be missing entirely, both from
+        // `Wifi.cpp:411-421`. Everything below them -- the interrupt, the
+        // `W_BeaconCount2` reload, the `W_TXReqRead` mask and the beacon
+        // transmission -- was previously unconditional.
+        //
+        // `block_beacon_irq14` is the driver saying "stop waking me every
+        // beacon interval; wake me at the timestamp I just programmed
+        // instead" (see the `W_USCompare0` write in [`super::regs`]). Ignoring
+        // it means the free-running beacon interrupt keeps preempting a driver
+        // that asked for silence, and -- because the mask below clears the
+        // LOC1/2/3 transmit requests -- keeps cancelling transmissions it
+        // staged in the meantime.
+        if self.block_beacon_irq14 && source == 1 {
+            return;
+        }
+        if self.ioport(W_USCompareCnt) & 0x0001 == 0 {
+            return;
+        }
+
         self.raise_irq(14, request);
         self.set_ioport(W_BeaconCount2, 0xFFFF);
         self.set_ioport(W_TXReqRead, self.ioport(W_TXReqRead) & 0xFFF2);
@@ -1720,7 +1778,11 @@ mod tests {
         let mut sc = Scheduler::new();
         let mut rq = InterruptRequest::empty();
 
+        // IRQ 14 is gated on `W_USCompareCnt` bit 0, as on hardware
+        // (`Wifi.cpp:419-420`), so a driver that has not enabled the compare
+        // counter gets no beacon interrupt at all.
         wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_USCompareCnt, 1);
         wifi.set_ioport(W_IE, 1 << 14);
         wifi.set_ioport(W_BeaconInterval, 2);
         wifi.us_counter = 1_234_567;
@@ -1735,6 +1797,53 @@ mod tests {
             0,
             "the beacon-interval IRQ must still fire with a misaligned USCounter"
         );
+    }
+
+    /// A `W_USCompare0` write with bit 0 means "stop waking me every beacon
+    /// interval; wake me at this timestamp instead". While suppressed, the
+    /// beacon source of IRQ 14 must do *nothing* -- no interrupt, no
+    /// `W_BeaconCount2` reload, no beacon transmission, and crucially no
+    /// `W_TXReqRead` mask, which would cancel LOC transmissions the driver
+    /// staged during the window it asked to be quiet. Ported from
+    /// `Wifi.cpp:411-421`; see `docs/design/review_mp_local2.md` §7.1f.
+    #[test]
+    fn us_compare_bit0_suppresses_the_beacon_interrupt_until_the_target_time() {
+        let mut wifi = Wifi::new();
+        let mut sc = Scheduler::new();
+        let mut rq = InterruptRequest::empty();
+
+        wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_USCompareCnt, 1);
+        wifi.set_ioport(W_IE, 1 << 14);
+        wifi.set_ioport(W_BeaconInterval, 2);
+        // Arm the beacon slot, so a beacon would be transmitted if IRQ 14 fired.
+        wifi.set_ioport(W_TXSlotBeacon, 0x8000);
+        // A LOC1 transmit request, which the IRQ-14 path would clear.
+        wifi.set_ioport(W_TXReqRead, 0x0001);
+
+        // Ask for silence until a timestamp far beyond this test's run.
+        wifi.write16(W_USCompare0 as u32, 0xFC01, &mut sc, &mut rq);
+        wifi.write16(W_USCompare1 as u32, 0xFFFF, &mut sc, &mut rq);
+        assert!(wifi.block_beacon_irq14, "bit 0 must arm the suppression");
+
+        let ticks_per_ms = 1024 / Wifi::TIMER_INTERVAL_US as usize;
+        for _ in 0..(ticks_per_ms * 8) {
+            wifi.tick(&mut sc, &mut rq);
+        }
+
+        assert_eq!(wifi.ioport(W_IF) & (1 << 14), 0, "no beacon IRQ while suppressed");
+        assert_eq!(wifi.diag.beacon_tx, 0, "no beacon may be transmitted while suppressed");
+        assert_eq!(
+            wifi.ioport(W_TXReqRead) & 0x0001,
+            0x0001,
+            "the staged LOC1 request must survive the window the driver asked to be quiet"
+        );
+
+        // Reaching the programmed timestamp releases it and fires IRQ 14.
+        wifi.us_compare = wifi.us_counter & !0x3FF;
+        wifi.ms_timer(&mut rq);
+        assert!(!wifi.block_beacon_irq14, "reaching USCompare releases the suppression");
+        assert_ne!(wifi.ioport(W_IF) & (1 << 14), 0, "the one-shot wake-up fires");
     }
 
     /// An RX header that straddles the end of the ring must wrap back to the
@@ -1818,7 +1927,11 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let mut request = InterruptRequest::empty();
 
+        // IRQ 14 is gated on `W_USCompareCnt` bit 0, as on hardware
+        // (`Wifi.cpp:419-420`), so a driver that has not enabled the compare
+        // counter gets no beacon interrupt at all.
         wifi.set_ioport(W_USCountCnt, 1);
+        wifi.set_ioport(W_USCompareCnt, 1);
         wifi.set_ioport(W_IE, 1 << 14);
         wifi.set_ioport(W_BeaconInterval, 5);
 

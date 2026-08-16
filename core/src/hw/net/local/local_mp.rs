@@ -272,14 +272,21 @@ impl LocalMpHub {
             return 0;
         }
 
-        log::info!(
-            target: "nds_core",
-            "MP SEND type={:?} inst={} len={} ts={}",
-            frame_type.category(),
-            inst,
-            len,
-            timestamp
-        );
+        // Gated on the MP trace rather than logged unconditionally. This fires
+        // for every frame on the wire, several times per emulated video frame:
+        // at `info` it floods the console and, worse, the synchronous writes
+        // perturb the microsecond-scale timing this backend exists to
+        // reproduce -- the logging changes the thing being measured.
+        //
+        // Sharing the association trace's switch is deliberate: frame flow and
+        // the association/CMD events only answer anything when read together,
+        // and one toggle cannot be half-enabled.
+        if crate::hw::net::wifi::assoc_trace_enabled() {
+            eprintln!(
+                "[mp-trace] SEND inst={inst} type={:?} len={len} ts={timestamp}",
+                frame_type.category(),
+            );
+        }
 
         let category = frame_type.category();
         let fifo =
@@ -362,20 +369,26 @@ impl LocalMpHub {
                 return MpRecvResult::None;
             };
 
-            log::info!(
-                target: "nds_core",
-                "MP RECV inst={} sender={} type={:?} len={} ts={}",
-                index,
-                header.sender_id,
-                header.frame_type.category(),
-                header.length,
-                header.timestamp
-            );
-
             if header.sender_id == index as u32 {
                 // Our own broadcast came back around; drop it.
                 queues.skip(index, Fifo::Packet, header.length);
                 continue;
+            }
+
+            // Printed *after* the self-frame filter. Logging before it emitted
+            // a "RECV inst=0 sender=0" line for every frame an instance sent
+            // itself, which reads exactly like the self-delivery bug this
+            // filter exists to prevent -- a diagnostic that manufactures the
+            // fault it is meant to detect. See the `SEND` note above for why
+            // this shares the trace switch.
+            if crate::hw::net::wifi::assoc_trace_enabled() {
+                eprintln!(
+                    "[mp-trace] RECV inst={index} from={} type={:?} len={} ts={}",
+                    header.sender_id,
+                    header.frame_type.category(),
+                    header.length,
+                    header.timestamp,
+                );
             }
 
             let mut body = [0u8; MAX_FRAME_SIZE];

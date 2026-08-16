@@ -127,6 +127,62 @@ pub mod names {
 }
 pub use names::*;
 
+/// Registers on the path from "a client associated" to "an MP command round is
+/// running". Traced as a group by the association trace; see [`write16`].
+///
+/// Deliberately excludes the RX ring and the BB/RF registers: those are busy
+/// during normal operation and would bury the handful of writes that mark
+/// actual progress.
+///
+/// [`write16`]: Wifi::write16
+const MP_SETUP_REGS: [usize; 16] = [
+    W_ModeWEP,
+    W_BSSID0,
+    W_AIDFull,
+    W_TXSlotBeacon,
+    W_TXBeaconTIM,
+    W_ListenCount,
+    W_BeaconInterval,
+    // All three general-purpose slots, not just the first. The previous trace
+    // covered only `W_TXSlotLoc1` and showed no writes at all, which reads as
+    // "the driver never arms a slot" -- but the driver was arming LOC2/LOC3,
+    // which the trace could not see. A partial view of a register group
+    // invites exactly that conclusion.
+    W_TXSlotLoc1,
+    W_TXSlotLoc2,
+    W_TXSlotLoc3,
+    W_TXSlotReset,
+    W_TXReqSet,
+    W_TXReqReset,
+    W_RXCnt,
+    W_CmdTotalTime,
+    W_CmdReplyTime,
+];
+
+/// Short label for a [`MP_SETUP_REGS`] entry, so the trace reads as register
+/// names rather than offsets.
+fn mp_setup_reg_name(reg: usize) -> &'static str {
+    match reg {
+        W_ModeWEP => "W_ModeWEP",
+        W_BSSID0 => "W_BSSID0",
+        W_AIDFull => "W_AIDFull",
+        W_TXSlotBeacon => "W_TXSlotBeacon",
+        W_TXBeaconTIM => "W_TXBeaconTIM",
+        W_ListenCount => "W_ListenCount",
+        W_BeaconInterval => "W_BeaconInterval",
+        W_TXSlotLoc1 => "W_TXSlotLoc1",
+        W_TXSlotLoc2 => "W_TXSlotLoc2",
+        W_TXSlotLoc3 => "W_TXSlotLoc3",
+        W_TXSlotReset => "W_TXSlotReset",
+        W_RXCnt => "W_RXCnt",
+        W_TXReqSet => "W_TXReqSet",
+        W_TXReqReset => "W_TXReqReset",
+        W_CmdTotalTime => "W_CmdTotalTime",
+        W_CmdReplyTime => "W_CmdReplyTime",
+        _ => "?",
+    }
+}
+
 impl Wifi {
     /// 16-bit read from Wi-Fi address space (`addr` relative to
     /// `4800000h`). Implements the mirroring rules of
@@ -307,6 +363,23 @@ impl Wifi {
         if super::debug_enabled() {
             eprintln!("[wifi] reg write 0x{reg:03X} <- 0x{value:04X}");
         }
+
+        // Every register the driver touches on the way to an MP round, traced
+        // as one stream. Reads are far too numerous to log and say little --
+        // a driver polling a status register looks identical whether it is
+        // making progress or spinning. *Writes* are rare and each one marks a
+        // step its state machine actually completed, so the last write before
+        // a teardown names how far it got. See
+        // `docs/design/review_mp_local2.md` §7.1g.
+        if super::assoc_trace_enabled() && MP_SETUP_REGS.contains(&reg) {
+            eprintln!(
+                "[assoc-trace][{:04X}] W[{}] = 0x{value:04X} (us_timestamp={})",
+                self.ioport(W_MACAddr2),
+                mp_setup_reg_name(reg),
+                self.us_timestamp,
+            );
+        }
+
         self.write_register(reg, value, scheduler, request);
     }
 
@@ -331,6 +404,19 @@ impl Wifi {
             // design document's Appendix C).
             W_ModeReset => {
                 let old = self.ioport(W_ModeReset);
+                // Bit 14 restores the register defaults, which includes zeroing
+                // `W_AIDLow`. Logged so a trace shows the *order*: association
+                // accepted, then torn down, is a completely different fault
+                // from association never accepted.
+                if super::assoc_trace_enabled() && value & 0x4000 != 0 {
+                    eprintln!(
+                        "[assoc-trace][{:04X}] driver re-initialised (W_ModeReset=0x{value:04X}), \
+                         clearing W_AIDLow (was {}) (us_timestamp={})",
+                        self.ioport(W_MACAddr2),
+                        self.ioport(W_AIDLow),
+                        self.us_timestamp,
+                    );
+                }
                 self.set_ioport(W_ModeReset, value & 0x0001);
                 // Bit 0 is the transceiver's master enable; both edges
                 // re-evaluate power (`Wifi.cpp:2130-2143`).
@@ -415,7 +501,22 @@ impl Wifi {
                 self.set_ioport(W_IF, self.ioport(W_IF) | (value & 0xFBFF));
                 self.check_irq_edge(old_flags, request);
             }
-            W_AIDLow => self.set_ioport(W_AIDLow, value & 0x000F),
+            // The single fact that splits "the driver rejected the association"
+            // from "the driver accepted it and the link died later": after a
+            // re-initialisation, `W_ModeReset` bit 14 zeroes `W_AIDLow`, so a
+            // diagnostic snapshot reading `aid 0` proves nothing on its own.
+            // Only the write itself does. See [`super::assoc_trace_enabled`].
+            W_AIDLow => {
+                if super::assoc_trace_enabled() {
+                    eprintln!(
+                        "[assoc-trace][{:04X}] driver wrote W_AIDLow = {} (us_timestamp={})",
+                        self.ioport(W_MACAddr2),
+                        value & 0x000F,
+                        self.us_timestamp,
+                    );
+                }
+                self.set_ioport(W_AIDLow, value & 0x000F);
+            }
             W_AIDFull => self.set_ioport(W_AIDFull, value & 0x07FF),
             W_TXBufDataWrite => self.tx_buf_data_write(value, request),
             // `W_BBWrite` only stages the value; the transfer is committed by
@@ -467,6 +568,19 @@ impl Wifi {
             // never transmits anything. `Wifi.cpp:2425-2436`.
             W_TXSlotCmd => {
                 self.diag.tx_slot_cmd_writes += 1;
+                // The host arming an MP command round is the first thing that
+                // should happen once a client has associated. If association
+                // succeeds but this never fires, the link is dying between the
+                // two, not at either end.
+                if super::assoc_trace_enabled() {
+                    eprintln!(
+                        "[assoc-trace][{:04X}] driver wrote W_TXSlotCmd = 0x{value:04X} \
+                         (cmd_counter={}, us_timestamp={})",
+                        self.ioport(W_MACAddr2),
+                        self.cmd_counter,
+                        self.us_timestamp,
+                    );
+                }
                 let value = if self.cmd_counter == 0 {
                     if value & 0x8000 != 0 && self.ioport(W_TXSlotCmd) & 0x8000 == 0 {
                         self.diag.tx_slot_cmd_bit15_dropped += 1;
@@ -542,7 +656,20 @@ impl Wifi {
             // (reads recompute the driver-visible value from it via
             // `div_ceil`); the register mirror itself is never stored.
             // `Wifi.cpp:2307`.
+            // The host programming the CMD-round budget. Traced alongside
+            // `W_TXSlotCmd` because these two are the last steps before MP
+            // rounds begin: seeing this but not `W_TXSlotCmd` means the driver
+            // got part-way and stopped, which is a different fault from never
+            // starting at all.
             W_CmdCount => {
+                if super::assoc_trace_enabled() {
+                    eprintln!(
+                        "[assoc-trace][{:04X}] driver wrote W_CmdCount = {value} \
+                         (us_timestamp={})",
+                        self.ioport(W_MACAddr2),
+                        self.us_timestamp,
+                    );
+                }
                 self.diag.cmd_count_writes += 1;
                 self.cmd_counter = u32::from(value) * 10;
             }
@@ -639,6 +766,17 @@ impl Wifi {
             W_USCompare0 => {
                 self.set_ioport(reg, value & 0xFC00);
                 self.us_compare = (self.us_compare & !0xFFFF) | u64::from(value & 0xFC00);
+                // Bit 0 is not part of the compare value: it suppresses the
+                // beacon-interval source of IRQ 14 until `USCOUNTER` reaches
+                // the timestamp being programmed here. The driver uses it to
+                // replace the free-running beacon interrupt with a one-shot
+                // wake-up, which is how a host schedules its beacon and MP
+                // timing. Ported from `Wifi.cpp:2300-2302`; leaving it
+                // unimplemented meant the beacon interrupt kept firing through
+                // a window the driver had explicitly asked to be quiet.
+                if value & 0x0001 != 0 {
+                    self.block_beacon_irq14 = true;
+                }
             }
             W_USCompare1 => {
                 self.set_ioport(reg, value);
