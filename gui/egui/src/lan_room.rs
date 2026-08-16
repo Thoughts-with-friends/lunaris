@@ -300,6 +300,16 @@ impl LanRoomState {
             link.recv_timeout.as_millis()
         ));
 
+        // Frames the transport threw away because the emulator did not consume
+        // them within one video frame, or because they overflowed the queue
+        // bound. Occasional evictions are the mechanism working; a number that
+        // climbs without bound means an RX backlog is poisoning the MP sync
+        // clock. See `docs/design/review_mp_local2.md` P0-3.
+        let evicted = handle.dropped_stale();
+        if evicted > 0 {
+            ui.weak(format!("stale/overflow frames dropped  {evicted}"));
+        }
+
         ui.separator();
         Self::show_mp_status(ui, nds);
 
@@ -490,19 +500,24 @@ impl LanRoomState {
                 + drops.too_short
                 + drops.bad_length
                 + drops.channel_mismatch
+                + drops.foreign_mp
                 + drops.filtered
-                + drops.ring_full;
+                + drops.ring_full
+                + drops.wep_off;
             if total_drops > 0 {
                 ui.weak(format!(
                     "dropped {total_drops}: rx_disabled {} / ring_unconfigured {} / too_short {} \
-                     / bad_length {} / channel_mismatch {} / filtered {} / ring_full {}",
+                     / bad_length {} / channel_mismatch {} / foreign_mp {} / filtered {} \
+                     / ring_full {} / wep_off {}",
                     drops.rx_disabled,
                     drops.ring_unconfigured,
                     drops.too_short,
                     drops.bad_length,
                     drops.channel_mismatch,
+                    drops.foreign_mp,
                     drops.filtered,
                     drops.ring_full,
+                    drops.wep_off,
                 ));
             }
 

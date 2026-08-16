@@ -221,6 +221,22 @@ impl Wifi {
         let mut rdaddr = self.ioport(W_RXBufReadAddr) as u32 & 0x1FFE;
         let ret = self.ram[rdaddr as usize] as u16 | (self.ram[rdaddr as usize + 1] as u16) << 8;
 
+        // Armed by `Wifi::step_rx` when an association response is committed:
+        // this is the driver reading it back, and the addresses say whether it
+        // is looking where the frame actually landed. See
+        // [`super::assoc_trace_enabled`].
+        if self.assoc_trace_reads > 0 {
+            self.assoc_trace_reads -= 1;
+            eprintln!(
+                "[assoc-trace][{:04X}]   driver read @0x{rdaddr:04X} -> 0x{ret:04X} \
+                 (count={}, gap@0x{:04X} size={})",
+                self.ioport(W_MACAddr2),
+                self.ioport(W_RXBufCount),
+                self.ioport(W_RXBufGapAddr),
+                self.ioport(W_RXBufGapSize),
+            );
+        }
+
         rdaddr += 2;
         if rdaddr == end {
             rdaddr = begin;
@@ -229,6 +245,17 @@ impl Wifi {
             rdaddr += (self.ioport(W_RXBufGapSize) as u32) << 1;
             if rdaddr >= end {
                 rdaddr = rdaddr + begin - end;
+            }
+            // On the later Wi-Fi variant (DS Lite / DSi, `W_ID == 0xC340`) the
+            // gap is consumed by crossing it once: the hardware clears
+            // `W_RXBufGapSize` so the *next* pass over the same address reads
+            // straight through. Ported from `Wifi.cpp:2072-2073`.
+            //
+            // Leaving it set makes every later read skip the gap again, so
+            // from the second frame onward the driver is handed bytes from the
+            // wrong offset while every length and filter check still passes.
+            if self.is_modern_wifi() {
+                self.set_ioport(W_RXBufGapSize, 0);
             }
         }
         self.set_ioport(W_RXBufReadAddr, (rdaddr & 0x1FFE) as u16);
@@ -491,8 +518,17 @@ impl Wifi {
             W_RXBufReadAddr | W_TXBufWriteAddr | W_RXBufGapAddr => {
                 self.set_ioport(reg, value & 0x1FFE);
             }
-            W_RXBufGapSize | W_RXBufCount | W_RXBufWriteAddr | W_RXBufReadCursor
-            | W_TXBufGapSize | W_TXBufCount => {
+            // The driver has now told the hardware where it has read up to, so
+            // `Wifi::start_rx`'s ring-overrun check has a meaningful cursor to
+            // compare against. Before this first write the register reads zero,
+            // which after the halfword shift is also the ring base -- see
+            // [`Wifi::rx_read_cursor_written`] and
+            // `docs/design/review_mp_local2.md` P0-4.
+            W_RXBufReadCursor => {
+                self.rx_read_cursor_written = true;
+                self.set_ioport(reg, value & 0x0FFF);
+            }
+            W_RXBufGapSize | W_RXBufCount | W_RXBufWriteAddr | W_TXBufGapSize | W_TXBufCount => {
                 self.set_ioport(reg, value & 0x0FFF);
             }
             // Counted for the `diag` summary: if neither this nor a

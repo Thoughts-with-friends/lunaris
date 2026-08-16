@@ -15,13 +15,22 @@ pub enum DSType {
 }
 
 impl DSType {
+    /// The firmware header's `ConsoleType` byte (offset `01Dh`).
+    ///
+    /// Values are melonDS's `FirmwareConsoleType`
+    /// (`docs/design/melonds/SPI_Firmware.h:167-175`). `Ique`, `IqueLite` and
+    /// `Dsi` used to be assigned each other's codes -- `Dsi` claimed `63h`
+    /// (iQue DS Lite), `Ique` claimed `57h` (DSi) and `IqueLite` claimed `43h`
+    /// (iQue DS). An emulator reading this byte back therefore identified the
+    /// wrong console, and since the byte decides which Wi-Fi variant `W_ID`
+    /// reports, it selected the wrong radio behaviour too.
     const fn model_spec(&self) -> u8 {
         match self {
             Self::Ds => 0xFF,
             Self::Lite => 0x20,
-            Self::Ique => 0x57,
-            Self::IqueLite => 0x43,
-            Self::Dsi => 0x63,
+            Self::Dsi => 0x57,
+            Self::Ique => 0x43,
+            Self::IqueLite => 0x63,
         }
     }
 }
@@ -384,6 +393,21 @@ mod wifi_calibration_tests {
         assert_eq!(&fw[0x0F8..0x0F8 + CHAN_DATA.len()], &CHAN_DATA[..]);
         assert_eq!(fw[0x116], 0x01, "RFIndex1");
         assert_eq!(fw[0x125], 0x02, "RFIndex2");
+    }
+
+    /// The header's `ConsoleType` byte must use melonDS's
+    /// `FirmwareConsoleType` codes (`SPI_Firmware.h:167-175`), because an
+    /// emulator reads it back to decide which console -- and therefore which
+    /// Wi-Fi variant -- it is emulating. Three of the five used to be assigned
+    /// each other's codes.
+    #[test]
+    fn console_type_codes_match_the_firmware_header_spec() {
+        assert_eq!(DSType::Ds.model_spec(), 0xFF);
+        assert_eq!(DSType::Lite.model_spec(), 0x20);
+        assert_eq!(DSType::Dsi.model_spec(), 0x57);
+        assert_eq!(DSType::Ique.model_spec(), 0x43);
+        assert_eq!(DSType::IqueLite.model_spec(), 0x63);
+        assert_eq!(FIRMWARE_DS[0x1D], 0xFF, "the DS image must declare ConsoleType DS");
     }
 
     /// Every channel's `(RFData1, RFData2)` pair must be distinct, or

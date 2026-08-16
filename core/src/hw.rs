@@ -238,6 +238,11 @@ impl HW {
             // Misc
             scheduler,
         };
+        // `ConsoleType` decides which Wi-Fi hardware revision `W_ID` reports,
+        // so it must be applied before anything reads that register.
+        if let Some(console_type) = hw.spi.firmware_console_type() {
+            hw.wifi.set_console_type(console_type);
+        }
         if let Some(config) = hw.spi.wifi_config_bytes() {
             hw.wifi.load_firmware_config(config);
         }

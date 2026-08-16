@@ -14,7 +14,7 @@ use std::{
     net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         mpsc::Sender,
     },
     time::Duration,
@@ -73,6 +73,9 @@ struct RoomState {
 pub struct RoomHandle {
     state: Arc<Mutex<RoomState>>,
     hints: Arc<SharedHints>,
+    /// Shared with the [`NetTransport`] this room built. See
+    /// [`RoomHandle::dropped_stale`].
+    dropped_stale: Arc<AtomicU32>,
     rom_fingerprint: Arc<Mutex<[u8; 16]>>,
     outbound: Sender<ControlMessage>,
     self_id: u8,
@@ -80,6 +83,21 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
+    /// How many inbound MP frames the transport has discarded for being stale
+    /// or for overflowing its bound.
+    ///
+    /// A steadily climbing value means the emulator is not consuming frames as
+    /// fast as they arrive. That is the condition that poisons an MP client's
+    /// sync clock: it derives its sync points from the timestamps of the frames
+    /// it receives, so a backlog leaves it computing sync points already in the
+    /// past. Occasional evictions are normal and are the mechanism working; a
+    /// number that grows without bound is the fault. See
+    /// `docs/design/review_mp_local2.md` P0-3.
+    #[must_use]
+    pub fn dropped_stale(&self) -> u32 {
+        self.dropped_stale.load(Ordering::Relaxed)
+    }
+
     pub fn players(&self) -> Vec<PlayerView> {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).players.clone()
     }
@@ -167,12 +185,14 @@ impl Room {
         let hints_shared = Arc::new(SharedHints::default());
         hints_shared.set(Controller::new().hints());
 
+        let dropped_stale = Arc::new(AtomicU32::new(0));
         let transport = NetTransport::from_socket(
             udp_socket,
             0,
             0,
             Arc::clone(&peers),
             Arc::clone(&hints_shared),
+            Arc::clone(&dropped_stale),
         )?;
 
         let state = Arc::new(Mutex::new(RoomState {
@@ -218,6 +238,7 @@ impl Room {
             handle: RoomHandle {
                 state,
                 hints: hints_shared,
+                dropped_stale,
                 rom_fingerprint,
                 outbound: outbound_tx,
                 self_id: 0,
@@ -280,12 +301,14 @@ impl Room {
         let hints_shared = Arc::new(SharedHints::default());
         hints_shared.set(link.to_hints());
 
+        let dropped_stale = Arc::new(AtomicU32::new(0));
         let transport = NetTransport::from_socket(
             udp_socket,
             player_id,
             0,
             Arc::clone(&peers),
             Arc::clone(&hints_shared),
+            Arc::clone(&dropped_stale),
         )?;
 
         let state = Arc::new(Mutex::new(RoomState {
@@ -338,6 +361,7 @@ impl Room {
             handle: RoomHandle {
                 state,
                 hints: hints_shared,
+                dropped_stale,
                 rom_fingerprint,
                 outbound: outbound_tx,
                 self_id: player_id,

@@ -61,6 +61,11 @@ pub(super) enum RxKind {
 
 /// The RX-ring header build, computed at reception start and applied once
 /// the simulated transfer time elapses. See the module-level doc comment.
+///
+/// Deliberately carries no `rxflags`/`cmd_dupe`: frame classification and the
+/// `W_RXFilter`/`W_RXFilter2` drop decisions happen at *completion*, in
+/// [`Wifi::step_rx`], exactly as melonDS runs them in `FinishRX`. See
+/// `docs/design/review_mp_local2.md` P0-1.
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Default)]
 pub(super) struct PendingRxHeader {
@@ -69,16 +74,9 @@ pub(super) struct PendingRxHeader {
     /// MP-reply/beacon triggers are all skipped. Ported from `FinishRX`'s
     /// early return (`Wifi.cpp:1270-1275`).
     pub keep: bool,
-    /// `true` for a CMD frame whose sequence number repeats the last one
-    /// seen: the header and cursor advance are skipped, but the
-    /// MP-reply/beacon triggers still fire. Ported from `FinishRX`'s
-    /// `cmd_dupe` handling (`Wifi.cpp:1393-1399`, `1463`).
-    pub cmd_dupe: bool,
     /// Byte address (already masked into the RX ring) the header should be
     /// written at.
     pub header_addr: u16,
-    /// Classified per `docs/design/local-mp-melonds-parity.md` §3.3.
-    pub rxflags: u16,
     /// Original (pre-crop) TX rate byte (`0x0A` or `0x14`).
     pub tx_rate: u8,
     /// Cropped frame length, per `W_RXLenCrop`.
@@ -92,13 +90,14 @@ pub(super) struct PendingRxHeader {
 /// `CheckRX` (which only records `RXTimestamp`/`NextSync` here, without
 /// calling `StartRX`) and `USTimer`'s later, unconditional `StartRX()` call
 /// once `USTimestamp >= RXTimestamp` (`Wifi.cpp:1696-1720`, `1765-1769`).
+///
+/// Like [`PendingRxHeader`], this carries no classification: the frame is
+/// classified once, at completion, in [`Wifi::step_rx`].
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Default)]
 pub(super) struct DeferredRxParams {
     pub armed: bool,
     pub keep: bool,
-    pub cmd_dupe: bool,
-    pub rxflags: u16,
     pub tx_rate: u8,
     pub framelen: u16,
 }
@@ -319,82 +318,134 @@ impl Wifi {
         }
 
         self.diag.rx_polls += 1;
-        let Some(mut transport) = self.transport.take() else { return false };
         let mut buf = vec![0u8; Wifi::RX_BUFFER_SIZE];
-        let recv = match kind {
-            RxKind::Regular => transport.recv_packet(&mut buf),
-            RxKind::HostFrames => {
-                transport.recv_host_packet(&mut buf, self.link_hints().recv_timeout)
-            }
-        };
-        self.transport = Some(transport);
 
-        let (len, frame_kind, timestamp_us, runahead_us) = match recv {
-            MpRecv::Frame { len, kind, timestamp_us, runahead_us } => {
-                (len, kind, timestamp_us, runahead_us)
-            }
-            MpRecv::HostGone => {
-                self.is_mp = false;
-                self.is_mp_client = false;
+        // melonDS's `CheckRX` validation section is a `for (;;)` loop: a frame
+        // that is too short, whose length field disagrees, or that arrived on
+        // another channel is skipped with `continue`, pulling the *next* frame
+        // off the transport within the same call (`Wifi.cpp:1581-1645`). Only
+        // "nothing available" ends the call.
+        //
+        // Returning on the first rejection -- what this used to do -- cost an
+        // entire polling opportunity per bad frame. On the regular path that is
+        // one opportunity per 512µs; on the client's host-frame path each miss
+        // additionally burns a full blocking `recv_host_packet` timeout. During
+        // association the peers exchange beacons on possibly-mismatched
+        // channels while the client races a `W_BeaconCount2` timeout, so
+        // rejections arrive in runs and the handshake stalls. See
+        // `docs/design/review_mp_local2.md` P0-2.
+        //
+        // The iteration bound has no melonDS counterpart (melonDS's transports
+        // are in-process and drain quickly); it exists so a peer flooding
+        // invalid frames cannot hold the 8µs tick indefinitely.
+        //
+        // It bounds *iterations*, not wall-clock cost. On [`RxKind::HostFrames`]
+        // every iteration re-enters `recv_host_packet`, which blocks for up to
+        // `link_hints().recv_timeout`; invalid frames that trickle in one at a
+        // time therefore cost that timeout each, up to 32 times, inside a single
+        // tick. melonDS's loop has exactly this shape, so the behaviour is
+        // faithful rather than accidental -- but note that only a frame that
+        // *arrived and was rejected* iterates. "Nothing available" returns
+        // immediately, which is the common case.
+        const MAX_DRAIN_PER_CALL: u32 = 32;
+        let mut drained = 0u32;
+        let (len, frame_kind, timestamp_us) = loop {
+            if drained >= MAX_DRAIN_PER_CALL {
                 return false;
             }
-            MpRecv::None => {
-                self.diag.rx_empty += 1;
-                return false;
-            }
-        };
+            drained += 1;
 
-        if len < 12 + 24 {
-            self.diag.drops.too_short += 1;
-            return false; // Too short to contain a valid 802.11 header.
-        }
-        let frame_len = buf[10] as usize | (buf[11] as usize) << 8;
-        if frame_len != len - 12 {
-            self.diag.drops.bad_length += 1;
-            warn!("wifi: bad MP frame length {frame_len}/{}", len - 12);
-            return false;
-        }
-        let channel = buf[9];
-        if channel as i32 != self.cur_channel || self.cur_channel == 0 {
-            self.diag.drops.channel_mismatch += 1;
-            if super::debug_enabled() {
-                eprintln!(
-                    "[wifi] RX dropped: channel mismatch (frame channel={channel}, our \
-                     cur_channel={}) -- both peers must resolve the same channel from their \
-                     (possibly independently-generated) firmware RF calibration table",
-                    self.cur_channel
-                );
+            let Some(mut transport) = self.transport.take() else { return false };
+            let recv = match kind {
+                RxKind::Regular => transport.recv_packet(&mut buf),
+                RxKind::HostFrames => {
+                    transport.recv_host_packet(&mut buf, self.link_hints().recv_timeout)
+                }
+            };
+            self.transport = Some(transport);
+
+            let (len, frame_kind, timestamp_us) = match recv {
+                MpRecv::Frame { len, kind, timestamp_us, .. } => (len, kind, timestamp_us),
+                MpRecv::HostGone => {
+                    self.is_mp = false;
+                    self.is_mp_client = false;
+                    return false;
+                }
+                MpRecv::None => {
+                    self.diag.rx_empty += 1;
+                    return false;
+                }
+            };
+
+            if len < 12 + 24 {
+                // Too short to contain a valid 802.11 header.
+                self.diag.drops.too_short += 1;
+                continue;
             }
-            return false;
-        }
+            let frame_len = buf[10] as usize | (buf[11] as usize) << 8;
+            if frame_len != len - 12 {
+                self.diag.drops.bad_length += 1;
+                warn!("wifi: bad MP frame length {frame_len}/{}", len - 12);
+                continue;
+            }
+            let channel = buf[9];
+            if channel as i32 != self.cur_channel || self.cur_channel == 0 {
+                self.diag.drops.channel_mismatch += 1;
+                if super::debug_enabled() {
+                    eprintln!(
+                        "[wifi] RX dropped: channel mismatch (frame channel={channel}, our \
+                         cur_channel={}) -- both peers must resolve the same channel from their \
+                         (possibly independently-generated) firmware RF calibration table",
+                        self.cur_channel
+                    );
+                }
+                continue;
+            }
+
+            // Ignore MP traffic while not engaged in an MP session. Ported
+            // verbatim from `Wifi.cpp:1620-1628`, including its test of
+            // `MPReplyMAC` at *both* address 3 (`+16`) and address 1 (`+4`).
+            //
+            // Without it a non-associated instance accepts another session's
+            // CMD frames, writes them into its RX ring, and -- via
+            // `Wifi::step_rx`'s `0x800C` branch -- transmits blank replies into
+            // an exchange it is not part of, disrupting the peers that are.
+            // See `docs/design/review_mp_local2.md` P0-5.
+            if kind == RxKind::Regular
+                && !self.is_mp
+                && (mac_eq(&buf, 12 + 16, MP_REPLY_MAC)
+                    || mac_eq(&buf, 12 + 4, MP_CMD_MAC)
+                    || mac_eq(&buf, 12 + 4, MP_REPLY_MAC))
+            {
+                self.diag.drops.foreign_mp += 1;
+                continue;
+            }
+
+            break (len, frame_kind, timestamp_us);
+        };
 
         self.rx_buffer[..len].copy_from_slice(&buf[..len]);
+        let frame_len = len - 12;
         let frame_ctl = self.rx_buffer[12] as u16 | (self.rx_buffer[13] as u16) << 8;
         let frame_type = frame_ctl & 0x00FF;
         let tx_rate = self.rx_buffer[8];
         let mac_good = self.rx_buffer[16] & 0x01 != 0 || self.mac_matches(&self.rx_buffer[16..22]);
-        let is_packet = frame_kind == MpFrameKind::Packet;
 
-        // Classified from raw frame bytes (MP MAC constants), not from
-        // `frame_kind` -- this is what the game actually reads out of the
-        // RX header. See the module doc comment and
-        // `docs/design/local-mp-melonds-parity.md` §2.
-        let Some((rxflags, cmd_dupe)) = self.classify_rxflags() else {
-            self.diag.drops.filtered += 1;
-            if super::debug_enabled() {
-                eprintln!(
-                    "[wifi] RX dropped by W_RXFilter/W_RXFilter2 (filter=0x{:04X}/0x{:04X}, \
-                     frame_ctl=0x{frame_ctl:04X})",
-                    self.ioport(W_RXFilter),
-                    self.ioport(W_RXFilter2)
-                );
-            }
-            return false;
-        };
+        // `W_RXFilter`/`W_RXFilter2` are **not** consulted here. melonDS
+        // classifies and filters in `FinishRX`, after the simulated transfer
+        // time has elapsed; this port now does the same from
+        // [`Wifi::step_rx`]. Filtering here instead had two effects, both
+        // client-side: a filtered frame never reached the `next_sync` update
+        // below, so the MP clock stopped gating and `Wifi::tick` re-entered
+        // this function every tick; and `W_BSSID`/`W_RXFilter` were sampled at
+        // frame *arrival* rather than frame *completion*, dropping association
+        // traffic that raced the driver programming those registers. See
+        // `docs/design/review_mp_local2.md` P0-1.
         let cropped_framelen = self.crop_framelen(frame_len as u16, frame_ctl);
 
-        // Stage 3/4 of the `diag` summary: the frame survived every check,
-        // and this is how the hardware classified it.
+        // Stage 3/4 of the `diag` summary: the frame survived every check
+        // `check_rx` performs. Classification counters are bumped at
+        // completion instead, in [`Wifi::step_rx`].
         self.diag.rx_accepted += 1;
         if frame_ctl & (1 << 11) != 0 {
             self.diag.rx_retry_flagged += 1;
@@ -407,36 +458,21 @@ impl Wifi {
                     | (self.rx_buffer.get(o + 1).copied().unwrap_or(0) as u16) << 8;
             }
         }
-        match rxflags & 0x800F {
-            0x8001 => self.diag.rxflags_beacon += 1,
-            0x800C => self.diag.rxflags_cmd += 1,
-            0x800D => self.diag.rxflags_ack += 1,
-            0x800E | 0x800F => self.diag.rxflags_reply += 1,
-            // Management frames carry no MP MAC and land here; the
-            // association/authentication traffic is what matters.
-            _ if (frame_ctl >> 2) & 0x3 == 0 => {
-                self.diag.rxflags_mgmt += 1;
-                self.diag.rx_mgmt_subtype[((frame_ctl >> 4) & 0xF) as usize] += 1;
-            }
-            _ => {}
-        }
 
         if super::debug_enabled() {
             eprintln!(
                 "[wifi] RX accepted: kind={frame_kind:?} frame_type=0x{frame_type:04X} \
-                 mac_good={mac_good} channel={channel} is_mp_client={} len={len} \
-                 rxflags=0x{rxflags:04X} cmd_dupe={cmd_dupe}",
+                 mac_good={mac_good} is_mp_client={} len={len}",
                 self.is_mp_client
             );
         }
 
         // Extend the post-beacon window on auth/assoc/data frames so a
-        // laggy handshake still completes instead of timing out.
-        if is_packet
-            && matches!(frame_type, 0x00B0 | 0x0010 | 0x0000)
-            && timestamp_us != 0
-            && mac_good
-        {
+        // laggy handshake still completes instead of timing out
+        // (`Wifi.cpp:1660-1667`). melonDS gates this on the frame type, the
+        // timestamp and `macgood` only; the transport's frame tag is
+        // deliberately not consulted -- see the MP dispatch below.
+        if matches!(frame_type, 0x00B0 | 0x0010 | 0x0000) && timestamp_us != 0 && mac_good {
             let count2 = self.ioport(W_BeaconCount2);
             if count2 != 0 {
                 self.set_ioport(W_BeaconCount2, count2.wrapping_add(10));
@@ -450,10 +486,10 @@ impl Wifi {
             self.diag.last_assoc_aid = self.rx_buffer.get(12 + 24 + 4).copied().unwrap_or(0) as u16
                 | (self.rx_buffer.get(12 + 24 + 5).copied().unwrap_or(0) as u16) << 8;
             self.diag.last_assoc_mac_good = mac_good;
-            self.diag.last_assoc_is_packet = is_packet;
+            self.diag.last_assoc_is_packet = frame_kind == MpFrameKind::Packet;
             self.diag.last_assoc_timestamp = timestamp_us;
         }
-        if is_packet && frame_type == 0x0010 && timestamp_us != 0 && mac_good {
+        if frame_type == 0x0010 && timestamp_us != 0 && mac_good {
             // Association response: adopt the host's clock and become an
             // MP client.
             let aid =
@@ -477,57 +513,69 @@ impl Wifi {
                     self.rx_timestamp + frame_time_us(cropped_framelen as usize, tx_rate);
             }
             self.rx_timestamp = 0;
-            self.start_rx(request, mac_good, cmd_dupe, rxflags, tx_rate, cropped_framelen);
-        } else if is_packet
-            && frame_type == 0x00C0
-            && timestamp_us != 0
-            && mac_good
-            && self.is_mp_client
-        {
+            self.start_rx(request, mac_good, tx_rate, cropped_framelen);
+        } else if frame_type == 0x00C0 && timestamp_us != 0 && mac_good && self.is_mp_client {
             self.is_mp = false;
             self.is_mp_client = false;
             self.next_sync = 0;
             self.rx_timestamp = 0;
-            self.start_rx(request, mac_good, cmd_dupe, rxflags, tx_rate, cropped_framelen);
+            self.start_rx(request, mac_good, tx_rate, cropped_framelen);
         } else if mac_good && self.is_mp_client {
             // Delay delivery until our clock reaches the frame's
             // timestamp, and extend our next mandatory sync point. Ported
             // from `Wifi.cpp:1696-1720`: `StartRX` is *not* called here --
             // it fires later, from `Wifi::tick`'s `rx_timestamp` check,
             // once the simulated clock actually reaches this frame's
-            // timestamp. The classification computed above must survive
-            // until then, so it's stashed in `rx_deferred`.
+            // timestamp.
             self.rx_timestamp = timestamp_us.max(self.us_timestamp);
             self.next_sync = self.rx_timestamp + frame_time_us(cropped_framelen as usize, tx_rate);
 
-            match frame_kind {
-                MpFrameKind::Cmd => {
-                    let client_time =
-                        self.rx_buffer[12 + 24] as u16 | (self.rx_buffer[12 + 25] as u16) << 8;
-                    let client_mask =
-                        self.rx_buffer[12 + 26] as u16 | (self.rx_buffer[12 + 27] as u16) << 8;
-                    let num_clients = (1..16u16).filter(|i| client_mask & (1 << i) != 0).count();
-                    self.next_sync += 112 + (client_time as u64 + 10) * num_clients as u64;
-                    // The reply/blank-reply trigger itself now fires from
-                    // `step_rx` at completion, keyed off `rxflags`, not
-                    // here -- see Gap 3.1/3.2.
-                }
-                MpFrameKind::Ack => {
-                    self.next_sync += runahead_us as u64;
-                }
-                MpFrameKind::Packet | MpFrameKind::Reply => {}
+            // Which frame this is, and therefore how far the client may run
+            // before its next mandatory sync, is decided from the frame's own
+            // address-1 MAC -- never from the transport's [`MpFrameKind`] tag.
+            // melonDS has no out-of-band tag to consult and compares
+            // `MPCmdMAC`/`MPAckMAC` here (`Wifi.cpp:1701-1714`), and
+            // [`Wifi::classify_rxflags`] already derives the same distinction
+            // from the same bytes for the RX header. Trusting the tag left two
+            // consumers of one distinction free to disagree, so a mistagged
+            // frame advanced the MP clock by the wrong amount with nothing
+            // detecting the mismatch. See `docs/design/review_mp_local2.md`
+            // P1-1.
+            if mac_eq(&self.rx_buffer, 12 + 4, MP_CMD_MAC) {
+                let client_time =
+                    self.rx_buffer[12 + 24] as u16 | (self.rx_buffer[12 + 25] as u16) << 8;
+                let client_mask =
+                    self.rx_buffer[12 + 26] as u16 | (self.rx_buffer[12 + 27] as u16) << 8;
+                let num_clients = (1..16u16).filter(|i| client_mask & (1 << i) != 0).count();
+                self.next_sync += 112 + (client_time as u64 + 10) * num_clients as u64;
+                // The reply/blank-reply trigger itself fires from
+                // `step_rx` at completion, keyed off `rxflags` -- see
+                // `docs/design/local-mp-melonds-parity.md` Gap 3.1/3.2.
+            } else if mac_eq(&self.rx_buffer, 12 + 4, MP_ACK_MAC) {
+                // The run-ahead window the host granted, read out of the ack
+                // frame's own hardware header (`*(u32*)&RXBuffer[0]`,
+                // `Wifi.cpp:1712-1714`) rather than out of transport metadata.
+                // `Wifi::send_mp_ack` writes it there, so the two agree today;
+                // reading the frame keeps them from ever diverging. See
+                // `docs/design/review_mp_local2.md` P2-1.
+                let runahead = u32::from_le_bytes([
+                    self.rx_buffer[0],
+                    self.rx_buffer[1],
+                    self.rx_buffer[2],
+                    self.rx_buffer[3],
+                ]);
+                self.next_sync += u64::from(runahead);
             }
+
             self.rx_deferred = DeferredRxParams {
                 armed: true,
                 keep: mac_good,
-                cmd_dupe,
-                rxflags,
                 tx_rate,
                 framelen: cropped_framelen,
             };
         } else {
             self.rx_timestamp = 0;
-            self.start_rx(request, mac_good, cmd_dupe, rxflags, tx_rate, cropped_framelen);
+            self.start_rx(request, mac_good, tx_rate, cropped_framelen);
         }
 
         true
@@ -552,13 +600,10 @@ impl Wifi {
     /// and writes the actual header once that budget elapses. Ported from
     /// `StartRX` (`Wifi.cpp:1217-1243`); see the module doc comment for why
     /// the header write itself is deferred to [`Wifi::step_rx`].
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn start_rx(
         &mut self,
         request: &mut InterruptRequest,
         keep: bool,
-        cmd_dupe: bool,
-        rxflags: u16,
         tx_rate: u8,
         cropped_framelen: u16,
     ) {
@@ -582,16 +627,29 @@ impl Wifi {
         // melonDS's byte pump aborts the reception when the write cursor
         // catches up with `W_RXBufReadCursor` -- the driver has not drained
         // the previous frame yet, and continuing would overwrite unread data
-        // (`Wifi.cpp:1918-1938`). This port writes the body in one step rather
+        // (`Wifi.cpp:1909-1936`). This port writes the body in one step rather
         // than pumping it, so it detects the same condition up front and drops
-        // the frame instead of corrupting the ring. See
-        // `docs/design/local-mp-melonds-parity-2.md` F8e.
+        // the frame instead of corrupting the ring. Dropping the whole frame
+        // rather than keeping the bytes that fit is a deliberate and
+        // behaviourally equivalent simplification: melonDS abandons the frame
+        // without calling `FinishRX`, so the partial bytes it already wrote
+        // never gain a header, an IRQ 0, or an MP-reply trigger either.
+        // See `docs/design/local-mp-melonds-parity-2.md` F8e.
+        //
+        // The check is skipped entirely until the driver has published a read
+        // cursor. melonDS compares only *after* writing at least one halfword,
+        // so a still-zero `W_RXBufReadCursor` cannot reject a frame there; here
+        // the comparison happens up front, where a zero cursor aliases the ring
+        // base and would drop the first frames of every session -- exactly the
+        // frames that carry authentication and association. See
+        // [`Wifi::rx_read_cursor_written`] and
+        // `docs/design/review_mp_local2.md` P0-4.
         let read_cursor = ((self.ioport(W_RXBufReadCursor) as u32) << 1) & 0x1FFE;
         let body_len = cropped_framelen as usize;
         let mut probe = addr;
         let mut overruns = false;
         let mut i = 0;
-        while i < body_len {
+        while self.rx_read_cursor_written && i < body_len {
             if probe == read_cursor {
                 overruns = true;
                 break;
@@ -626,9 +684,7 @@ impl Wifi {
 
         self.rx_pending = PendingRxHeader {
             keep,
-            cmd_dupe,
             header_addr: header_addr as u16,
-            rxflags,
             tx_rate,
             framelen: cropped_framelen,
         };
@@ -674,7 +730,41 @@ impl Wifi {
             return;
         }
 
-        if !pending.cmd_dupe {
+        // Classification and the `W_RXFilter`/`W_RXFilter2` drop decisions
+        // happen *here*, at completion, exactly where melonDS runs them
+        // (`FinishRX`, `Wifi.cpp:1285-1457`) -- not at arrival in
+        // [`Wifi::check_rx`]. A rejected frame gets no RX header, no cursor
+        // advance, no IRQ 0 and no MP-reply/beacon trigger, but the timing
+        // updates `check_rx` already applied stand, so the MP sync clock keeps
+        // gating. See `docs/design/review_mp_local2.md` P0-1.
+        let Some((rxflags, cmd_dupe)) = self.classify_rxflags() else {
+            self.diag.drops.filtered += 1;
+            if super::debug_enabled() {
+                eprintln!(
+                    "[wifi] RX dropped by W_RXFilter/W_RXFilter2 (filter=0x{:04X}/0x{:04X}, \
+                     frame_ctl=0x{frame_ctl:04X})",
+                    self.ioport(W_RXFilter),
+                    self.ioport(W_RXFilter2)
+                );
+            }
+            return;
+        };
+
+        match rxflags & 0x800F {
+            0x8001 => self.diag.rxflags_beacon += 1,
+            0x800C => self.diag.rxflags_cmd += 1,
+            0x800D => self.diag.rxflags_ack += 1,
+            0x800E | 0x800F => self.diag.rxflags_reply += 1,
+            // Management frames carry no MP MAC and land here; the
+            // association/authentication traffic is what matters.
+            _ if (frame_ctl >> 2) & 0x3 == 0 => {
+                self.diag.rxflags_mgmt += 1;
+                self.diag.rx_mgmt_subtype[((frame_ctl >> 4) & 0xF) as usize] += 1;
+            }
+            _ => {}
+        }
+
+        if !cmd_dupe {
             let base = self.ioport(W_RXBufBegin) as u32 & 0x1FFE;
             let end = self.ioport(W_RXBufEnd) as u32 & 0x1FFE;
 
@@ -698,7 +788,7 @@ impl Wifi {
                 }
                 increment_rx_addr(addr, step, base, end);
             };
-            write_field(&mut self.ram, &mut addr, 2, pending.rxflags);
+            write_field(&mut self.ram, &mut addr, 2, rxflags);
             write_field(&mut self.ram, &mut addr, 4, 0x0040);
             write_field(&mut self.ram, &mut addr, 2, u16::from(pending.tx_rate));
             write_field(&mut self.ram, &mut addr, 2, pending.framelen);
@@ -711,9 +801,46 @@ impl Wifi {
             self.set_ioport(W_RXBufWriteCursor, ((cursor & !0x3) >> 1) as u16);
 
             self.raise_irq(0, request);
+
+            // An association response just became visible to the driver. Dump
+            // exactly what was committed, then arm the read trace so the next
+            // `W_RXBufDataRead` reads can be compared against it. See
+            // [`super::assoc_trace_enabled`].
+            if super::assoc_trace_enabled() && frame_ctl & 0x00FF == 0x0010 {
+                let hdr = pending.header_addr as usize;
+                let peek = |off: usize| -> u16 {
+                    let a = (hdr + off) & 0x1FFE;
+                    u16::from(self.ram[a]) | u16::from(self.ram[a + 1]) << 8
+                };
+                // Both instances share one stderr, so tag every line with the
+                // local MAC's high word -- the one value guaranteed to differ
+                // between them (see `loader::load_rom_for_instance`).
+                let who = self.ioport(W_MACAddr2);
+                eprintln!(
+                    "[assoc-trace][{who:04X}] committed assoc-resp: header@0x{hdr:04X} \
+                     rxflags=0x{:04X} rate=0x{:04X} framelen={} write_cursor=0x{:04X} \
+                     read_cursor=0x{:04X} ring=0x{:04X}..0x{:04X}",
+                    peek(0),
+                    peek(6),
+                    peek(8),
+                    self.ioport(W_RXBufWriteCursor),
+                    self.ioport(W_RXBufReadCursor),
+                    self.ioport(W_RXBufBegin),
+                    self.ioport(W_RXBufEnd),
+                );
+                let body: Vec<String> =
+                    (0..16).map(|i| format!("{:02X}", self.rx_buffer[12 + i])).collect();
+                eprintln!(
+                    "[assoc-trace][{who:04X}]   body[0..16] = {} (aid at +24+4 = 0x{:04X})",
+                    body.join(" "),
+                    u16::from(self.rx_buffer[12 + 24 + 4])
+                        | u16::from(self.rx_buffer[12 + 24 + 5]) << 8,
+                );
+                self.assoc_trace_reads = Wifi::ASSOC_TRACE_READS;
+            }
         }
 
-        match pending.rxflags & 0x800F {
+        match rxflags & 0x800F {
             0x800C => {
                 // Reply to a CMD frame addressed to our BSSID. Ported from
                 // `Wifi.cpp:1487-1504`. See
@@ -783,14 +910,148 @@ impl Wifi {
         let total = (12 + framelen as usize).min(reply.len()).min(self.rx_buffer.len());
         self.rx_buffer[..total].copy_from_slice(&reply[..total]);
 
-        let Some((rxflags, cmd_dupe)) = self.classify_rxflags() else { return };
+        // No classification here either: like the regular path, this frame is
+        // classified and filtered at completion in [`Wifi::step_rx`], matching
+        // melonDS's `MPClientReplyRX`, which likewise only calls `StartRX` and
+        // leaves `FinishRX` to do the rest (`Wifi.cpp:1554-1561`).
         let mac_good = self.rx_buffer[16] & 0x01 != 0 || self.mac_matches(&self.rx_buffer[16..22]);
 
         self.rx_timestamp = 0;
-        self.start_rx(request, mac_good, cmd_dupe, rxflags, tx_rate, framelen);
+        self.start_rx(request, mac_good, tx_rate, framelen);
     }
 }
 
 fn frame_time_us(frame_len: usize, tx_rate: u8) -> u64 {
     frame_len as u64 * if tx_rate == 0x14 { 4 } else { 8 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hw::net::wifi::mp::{LoopbackTransport, MpTransport};
+
+    /// Builds a well-formed inbound frame: the 12-byte hardware header
+    /// (rate, channel and length filled in) followed by an 802.11 frame whose
+    /// frame-control field is `frame_ctl`. `body_len` counts the 802.11 frame,
+    /// which must be at least the 24-byte header `check_rx` requires.
+    fn frame(channel: u8, frame_ctl: u16, body_len: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; 12 + body_len];
+        buf[8] = 0x14; // 2 Mbit/s.
+        buf[9] = channel;
+        buf[10] = body_len as u8;
+        buf[11] = (body_len >> 8) as u8;
+        buf[12] = frame_ctl as u8;
+        buf[13] = (frame_ctl >> 8) as u8;
+        buf
+    }
+
+    /// A `Wifi` with reception armed, a configured RX ring and a resolved
+    /// channel -- everything `check_rx` gates on before it looks at a frame --
+    /// paired with the loopback transport its peer sends on.
+    fn armed_wifi() -> (Wifi, LoopbackTransport) {
+        let (host, client) = LoopbackTransport::new_pair();
+        let mut wifi = Wifi::new();
+        wifi.set_transport(Some(Box::new(client)));
+        wifi.cur_channel = 6;
+        wifi.set_ioport(W_RXCnt, 0x8000);
+        wifi.set_ioport(W_RXBufBegin, 0x4000);
+        wifi.set_ioport(W_RXBufEnd, 0x4800);
+        (wifi, host)
+    }
+
+    /// melonDS skips MP command and reply frames on the regular RX path while
+    /// `IsMP` is false (`Wifi.cpp:1620-1628`). Without that, a non-associated
+    /// instance writes another session's CMD frames into its RX ring and --
+    /// through `Wifi::step_rx`'s `0x800C` branch -- transmits blank replies
+    /// into an exchange it is not part of. `docs/design/review_mp_local2.md`
+    /// P0-5.
+    #[test]
+    fn mp_frames_are_ignored_while_not_in_an_mp_session() {
+        let (mut wifi, mut peer) = armed_wifi();
+        let mut cmd = frame(6, 0x0008, 32);
+        cmd[12 + 4..12 + 10].copy_from_slice(&MP_CMD_MAC);
+        peer.send_packet(&cmd, 1_000);
+
+        let mut request = InterruptRequest::empty();
+        assert!(!wifi.check_rx(RxKind::Regular, &mut request), "the CMD frame must be skipped");
+        assert_eq!(wifi.diag.drops.foreign_mp, 1);
+        assert_eq!(wifi.diag.rx_accepted, 0, "it must never reach the RX pump");
+    }
+
+    /// `CheckRX` is a `for (;;)` loop: an invalid frame is skipped and the next
+    /// one is pulled within the same call (`Wifi.cpp:1581-1645`). Returning on
+    /// the first rejection cost a whole polling opportunity per bad frame,
+    /// which during association -- where channel mismatches arrive in runs --
+    /// stalls the handshake. `docs/design/review_mp_local2.md` P0-2.
+    #[test]
+    fn check_rx_drains_past_invalid_frames_within_one_call() {
+        let (mut wifi, mut peer) = armed_wifi();
+        // Three rejects, one per validation rule, then a good frame.
+        peer.send_packet(&frame(6, 0x0008, 8), 1_000); // Too short.
+        let mut bad_len = frame(6, 0x0008, 32);
+        bad_len[10] = 99; // Length field disagrees with the datagram.
+        peer.send_packet(&bad_len, 1_000);
+        peer.send_packet(&frame(11, 0x0008, 32), 1_000); // Wrong channel.
+        peer.send_packet(&frame(6, 0x0008, 32), 1_000);
+
+        let mut request = InterruptRequest::empty();
+        assert!(wifi.check_rx(RxKind::Regular, &mut request), "the valid frame must be accepted");
+        assert_eq!(wifi.diag.rx_accepted, 1);
+        assert_eq!(wifi.diag.drops.too_short, 1);
+        assert_eq!(wifi.diag.drops.bad_length, 1);
+        assert_eq!(wifi.diag.drops.channel_mismatch, 1);
+    }
+
+    /// Before the driver publishes a read cursor, `W_RXBufReadCursor` reads
+    /// zero, which after the halfword shift aliases the ring base. Testing the
+    /// overrun condition against it up front therefore rejected the opening
+    /// frames of every session -- exactly the authentication and association
+    /// traffic a link needs. `docs/design/review_mp_local2.md` P0-4.
+    #[test]
+    fn ring_overrun_check_waits_for_the_driver_to_publish_a_read_cursor() {
+        let (mut wifi, mut peer) = armed_wifi();
+        assert!(!wifi.rx_read_cursor_written, "precondition: the driver has not written it");
+        peer.send_packet(&frame(6, 0x0008, 32), 1_000);
+
+        let mut request = InterruptRequest::empty();
+        assert!(wifi.check_rx(RxKind::Regular, &mut request));
+        assert_eq!(wifi.diag.drops.ring_full, 0, "the frame must not be dropped as an overrun");
+        assert_ne!(wifi.com_status & 0x1, 0, "the RX pump must have started");
+    }
+
+    /// melonDS advances `NextSync` in `CheckRX`, before `FinishRX` ever applies
+    /// `W_RXFilter`. Filtering at arrival instead meant a filtered frame never
+    /// reached the timing update, so an MP client's clock stopped gating and
+    /// `Wifi::tick` re-entered `check_rx` every 8µs tick.
+    /// `docs/design/review_mp_local2.md` P0-1.
+    #[test]
+    fn a_filtered_frame_still_advances_the_mp_sync_clock() {
+        let (mut wifi, mut peer) = armed_wifi();
+        wifi.is_mp = true;
+        wifi.is_mp_client = true;
+        // Address 1 must match us for the client-pacing branch to be taken.
+        wifi.set_ioport(W_MACAddr0, 0x0201);
+        wifi.set_ioport(W_MACAddr1, 0x0403);
+        wifi.set_ioport(W_MACAddr2, 0x0605);
+        let mut f = frame(6, 0x0008, 32);
+        f[12 + 4..12 + 10].copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+        peer.send_packet(&f, 50_000);
+
+        let mut request = InterruptRequest::empty();
+        assert!(wifi.check_rx(RxKind::HostFrames, &mut request));
+        assert!(wifi.next_sync >= 50_000, "next_sync must be derived from the frame's timestamp");
+
+        // The frame is filtered at completion: `W_BSSID` is zero so it belongs
+        // to no network of ours, and `W_RXFilter` bit 11 is clear.
+        wifi.rx_timestamp = 0;
+        let d = wifi.rx_deferred;
+        wifi.start_rx(&mut request, d.keep, d.tx_rate, d.framelen);
+        while wifi.com_status & 0x1 != 0 {
+            wifi.step_rx(&mut request);
+        }
+        assert_eq!(
+            wifi.diag.drops.filtered, 1,
+            "the frame is dropped by the filter, at completion"
+        );
+    }
 }

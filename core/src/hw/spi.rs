@@ -91,6 +91,15 @@ impl SPI {
     pub fn wifi_config_bytes(&self) -> Option<&[u8]> {
         self.firmware.save_bytes().and_then(|b| b.get(0x2C..))
     }
+
+    /// The firmware header's `ConsoleType` byte (offset `01Dh`).
+    ///
+    /// The Wi-Fi hardware identifies itself differently per console revision,
+    /// and the DS driver reads that id during init, so it has to come from the
+    /// image rather than being assumed. See [`crate::hw::net::Wifi::reset`].
+    pub fn firmware_console_type(&self) -> Option<u8> {
+        self.firmware.save_bytes().and_then(|b| b.get(0x1D).copied())
+    }
     pub fn release_screen(&mut self) {
         self.tsc.release_screen()
     }

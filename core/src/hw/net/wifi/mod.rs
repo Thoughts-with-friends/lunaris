@@ -72,6 +72,25 @@ pub(super) fn debug_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("LUNARIS_WIFI_DEBUG").is_some())
 }
 
+/// Whether the association-response trace is enabled, cached from the
+/// environment.
+///
+/// Answers one question and then gets out of the way: when an association
+/// response reaches the RX ring but the driver never writes `W_AIDLow`, is the
+/// driver reading back the bytes we actually wrote?
+///
+/// Enable with `LUNARIS_MP_ASSOC_TRACE=1`. It prints the RX header and body
+/// this instance committed for each association response, then every
+/// `W_RXBufDataRead` the driver performs for the next
+/// [`Wifi::ASSOC_TRACE_READS`] reads, with the address each came from. Comparing
+/// the two tells you whether the driver is reading the frame, reading the wrong
+/// place, or not reading at all -- three very different faults that look
+/// identical from the counters. See `docs/design/review_mp_local2.md` §7.1d.
+pub(super) fn assoc_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("LUNARIS_MP_ASSOC_TRACE").is_some())
+}
+
 /// One hardware TX slot (LOC1-3, CMD, beacon, or MP reply).
 #[derive(emu_utils::Savestate)]
 #[derive(Clone, Copy, Default)]
@@ -109,6 +128,20 @@ pub struct Wifi {
     rf_regs: Vec<u32>,
     rf_channel_index: [u32; 2],
     rf_channel_data: [[u32; 2]; 14],
+    /// What the firmware's `InitialRFValues` block holds at the two register
+    /// indices channel selection is read from, or [`u32::MAX`] if unknown.
+    ///
+    /// Diagnostic only. When the driver re-initialises the radio it re-uploads
+    /// this block, which overwrites the channel-selection registers and drops
+    /// `cur_channel` to zero. That looks identical to "the game asked for a
+    /// channel the table does not contain", but has a completely different
+    /// cause, so the two are worth telling apart in the verdict. See
+    /// [`diag::MpDiag::verdict`].
+    rf_initial_values: [u32; 2],
+    /// Firmware header `ConsoleType` (offset `01Dh`), supplied by
+    /// [`Wifi::set_console_type`]. Decides `W_ID`, and through it the
+    /// `W_RXBufGapSize` auto-clear. Defaults to `FFh` (original DS).
+    console_type: u8,
     cur_channel: i32,
 
     tx_slots: [TxSlot; 6],
@@ -150,6 +183,26 @@ pub struct Wifi {
     /// elapse. See [`rx::PendingRxHeader`].
     rx_pending: PendingRxHeader,
 
+    /// Whether the driver has ever written `W_RXBufReadCursor`.
+    ///
+    /// [`Wifi::start_rx`] refuses to overwrite RX-ring bytes the driver has
+    /// not drained yet, which it detects by walking the write cursor towards
+    /// `W_RXBufReadCursor`. That test is only meaningful once the driver has
+    /// actually published a read cursor: until then the register reads zero,
+    /// which after the halfword shift and `0x1FFE` mask is also the ring
+    /// base, so the very first frame of a session appears to collide with it
+    /// and is dropped. melonDS never hits this because it detects the overrun
+    /// inside its byte pump (`Wifi.cpp:1909-1936`), where the comparison only
+    /// happens after at least one halfword has been written.
+    ///
+    /// See `docs/design/review_mp_local2.md` P0-4.
+    rx_read_cursor_written: bool,
+
+    /// Remaining `W_RXBufDataRead` reads to trace after an association
+    /// response was committed to the RX ring. See [`assoc_trace_enabled`].
+    #[savestate(skip)]
+    assoc_trace_reads: u32,
+
     /// Set by [`Wifi::update_power_status`] when the transceiver starts
     /// powering up, and drained by [`Wifi::tick`]. Latched rather than
     /// raised directly because power status is re-evaluated from register
@@ -180,6 +233,12 @@ pub struct Wifi {
 }
 
 impl Wifi {
+    /// How many `W_RXBufDataRead` reads to trace after an association response
+    /// lands. A DS association response is ~40 bytes plus the 12-byte RX
+    /// header, i.e. ~26 halfwords; 64 covers it with room for the driver to
+    /// walk past the end.
+    const ASSOC_TRACE_READS: u32 = 64;
+
     const RAM_SIZE: usize = 0x2000;
     const IO_WORDS: usize = 0x800;
     const TX_BUFFER_SIZE: usize = 0x2000;
@@ -201,6 +260,8 @@ impl Wifi {
             rf_regs: vec![0; 0x40],
             rf_channel_index: [0; 2],
             rf_channel_data: [[0; 2]; 14],
+            rf_initial_values: [u32::MAX; 2],
+            console_type: 0xFF,
             cur_channel: 0,
             tx_slots: [TxSlot::default(); 6],
             tx_buffer: vec![0; Self::TX_BUFFER_SIZE],
@@ -224,6 +285,8 @@ impl Wifi {
             mp_last_seqno: 0xFFFF,
             rx_deferred: DeferredRxParams::default(),
             rx_pending: PendingRxHeader::default(),
+            rx_read_cursor_written: false,
+            assoc_trace_reads: 0,
             pending_irq11: false,
             reg_read_counts: vec![0; Self::IO_WORDS],
             diag: diag::MpDiag::default(),
@@ -275,6 +338,10 @@ impl Wifi {
         self.enabled = false;
         self.power_on = false;
         self.random = 1;
+        // The register file was just zeroed, so `W_RXBufReadCursor` is back to
+        // "never published by the driver". See [`Wifi::rx_read_cursor_written`].
+        self.rx_read_cursor_written = false;
+        self.assoc_trace_reads = 0;
         self.bb_regs.iter_mut().for_each(|b| *b = 0);
         self.bb_regs_ro.iter_mut().for_each(|b| *b = 0);
 
@@ -311,6 +378,7 @@ impl Wifi {
         }
 
         self.rf_regs.iter_mut().for_each(|r| *r = 0);
+        self.rf_initial_values = [u32::MAX; 2];
         self.cur_channel = 0;
         self.tx_cur_slot = -1;
         self.com_status = 0;
@@ -324,10 +392,20 @@ impl Wifi {
         // reads during Wi-Fi init to confirm a real chip is present before
         // doing anything else; leaving it at zero looks like "no Wi-Fi
         // hardware" and can make a driver skip wireless entirely without
-        // ever touching another W_* register. Ported from melonDS
-        // `Wifi::Reset` (`docs/design/melonds/WiFi.cpp:186-197`); `0x1440`
-        // is the plain-DS value, matching this emulator's DS-only scope.
-        self.set_ioport(W_ID, 0x1440);
+        // ever touching another W_* register.
+        //
+        // The value is not a constant: melonDS derives it from the firmware
+        // header's `ConsoleType` (`Wifi.cpp:186-197`), because the DS Lite and
+        // DSi carry a later Wi-Fi variant that reports `0xC340` and behaves
+        // differently -- see the `W_RXBufGapSize` auto-clear in
+        // [`super::regs`]. Hard-coding the original-DS `0x1440`, as this used
+        // to, means a DS Lite firmware dump (a very common thing to configure)
+        // gets emulated as hardware it is not.
+        //
+        // Left at the original-DS value until [`Wifi::set_console_type`]
+        // supplies the header byte, so a `Wifi` built without firmware still
+        // identifies as *some* real chip rather than as absent hardware.
+        self.set_ioport(W_ID, Self::console_wifi_id(self.console_type));
 
         // MAC/BSSID reset to all-FF (unprogrammed), not zero -- the driver
         // itself copies the real MAC out of firmware into `W_MACAddr0..2`
@@ -372,9 +450,51 @@ impl Wifi {
     /// | Type3 `RFData1[14]` | `117h` | `0xEB` |
     /// | Type3 `RFIndex2` | `125h` | `0xF9` |
     /// | Type3 `RFData2[14]` | `126h` | `0xFA` |
+    /// `W_ID` for a firmware header `ConsoleType` byte (`SPI_Firmware.h`'s
+    /// `FirmwareConsoleType`). Ported from `Wifi::Reset`
+    /// (`docs/design/melonds/WiFi.cpp:186-197`).
+    ///
+    /// The DS Lite and the DSi carry a later Wi-Fi variant reporting `0xC340`;
+    /// the original DS and the iQue DS report `0x1440`. An unrecognised byte
+    /// falls back to `0x1440`, as melonDS does after logging.
+    const fn console_wifi_id(console_type: u8) -> u16 {
+        match console_type {
+            // `DSLite` (20h), `iQueDSLite` (63h), and `DSi` (57h).
+            0x20 | 0x63 | 0x57 => 0xC340,
+            // `DS` (FFh), `iQueDS` (43h), and anything unrecognised.
+            _ => 0x1440,
+        }
+    }
+
+    /// Supplies the firmware header's `ConsoleType` byte (offset `01Dh`) and
+    /// republishes `W_ID`.
+    ///
+    /// Separate from [`Wifi::load_firmware_config`] because that takes the
+    /// Wi-Fi calibration block from firmware `02Ch` onward, and `ConsoleType`
+    /// sits *before* it.
+    pub fn set_console_type(&mut self, console_type: u8) {
+        self.console_type = console_type;
+        self.set_ioport(W_ID, Self::console_wifi_id(console_type));
+    }
+
+    /// `true` when this instance emulates the later Wi-Fi variant found in the
+    /// DS Lite and DSi, which melonDS gates the `W_RXBufGapSize` auto-clear on
+    /// (`Wifi.cpp:2072-2073`).
+    pub(super) fn is_modern_wifi(&self) -> bool {
+        self.ioport(W_ID) == 0xC340
+    }
+
     pub fn load_firmware_config(&mut self, config: &[u8]) {
         /// `RFChipType`, firmware `040h`.
         const RF_CHIP_TYPE: usize = 0x14;
+        /// Type-3 `InitialRFValues[41]`, firmware `0CEh`.
+        ///
+        /// Derived by walking back from [`TYPE3_RF_INDEX1`] through the fields
+        /// `SPI_Firmware.h`'s `Type3Config` declares before it: `RFIndex1` at
+        /// `0xEA`, preceded by `BBData2[14]`, `BBIndex2`, `BBData1[14]`,
+        /// `BBIndex1` and `BBIndicesPerChannel`, which puts the 41-byte
+        /// `InitialRFValues` block at `0xEA - 1 - 14 - 1 - 14 - 1 - 41`.
+        const TYPE3_INITIAL_RF: usize = 0xA2;
         /// Type-3 `RFIndex1`, firmware `116h`.
         const TYPE3_RF_INDEX1: usize = 0xEA;
         /// Type-3 `RFData1[14]`, firmware `117h`.
@@ -412,6 +532,16 @@ impl Wifi {
             for i in 0..14 {
                 self.rf_channel_data[i][0] = config[TYPE3_RF_DATA1 + i] as u32;
                 self.rf_channel_data[i][1] = config[TYPE3_RF_DATA2 + i] as u32;
+            }
+            // The values the driver uploads to the RF chip during init, before
+            // it selects any channel. Recorded purely so the diagnostic can
+            // tell "the radio was re-initialised and no channel re-selected"
+            // apart from "the game picked a channel this table lacks" -- two
+            // very different faults that both surface as `cur_channel == 0`.
+            // See [`Wifi::rf_initial_values`].
+            for (i, slot) in self.rf_initial_values.iter_mut().enumerate() {
+                let idx = self.rf_channel_index[i] as usize;
+                *slot = config.get(TYPE3_INITIAL_RF + idx).map_or(u32::MAX, |&b| b as u32);
             }
         } else {
             if config.len() < TYPE2_RF56 + TYPE2_RF56_LEN {
@@ -707,6 +837,9 @@ impl Wifi {
         let idx0 = self.rf_channel_index[0] as usize % self.rf_regs.len();
         let idx1 = self.rf_channel_index[1] as usize % self.rf_regs.len();
         snapshot.rf_regs_now = [self.rf_regs[idx0], self.rf_regs[idx1]];
+        snapshot.rf_at_initial_values = self.rf_initial_values[0] != u32::MAX
+            && self.rf_regs[idx0] == self.rf_initial_values[0]
+            && self.rf_regs[idx1] == self.rf_initial_values[1];
 
         // The five most-read registers, descending. A driver blocked in a
         // polling loop shows up here unmistakably.
@@ -816,7 +949,7 @@ impl Wifi {
                 if self.rx_deferred.armed {
                     let d = self.rx_deferred;
                     self.rx_deferred = DeferredRxParams::default();
-                    self.start_rx(request, d.keep, d.cmd_dupe, d.rxflags, d.tx_rate, d.framelen);
+                    self.start_rx(request, d.keep, d.tx_rate, d.framelen);
                 }
             }
             if self.us_timestamp >= self.next_sync {
@@ -997,6 +1130,41 @@ impl Default for Wifi {
 mod tests {
     use super::*;
 
+    /// `rxflags` [`stage_plain_data_frame`] classifies to: the `0x0010` base,
+    /// `0x8000` for a matching BSSID, and `0x0008` for a data frame carrying no
+    /// MP MAC.
+    const PLAIN_DATA_RXFLAGS: u16 = 0x8018;
+
+    /// Stages an ordinary, non-MP data frame in `rx_buffer` that survives
+    /// [`Wifi::classify_rxflags`] with the register file left at its defaults.
+    ///
+    /// Classification and `W_RXFilter`/`W_RXFilter2` filtering run at frame
+    /// *completion* in [`Wifi::step_rx`] (see
+    /// `docs/design/review_mp_local2.md` P0-1), so a test that drives
+    /// [`Wifi::start_rx`] directly can no longer choose its own `rxflags`: the
+    /// bytes in `rx_buffer` decide. This helper supplies bytes that classify
+    /// deterministically to [`PLAIN_DATA_RXFLAGS`]:
+    ///
+    /// * frame control `0x0008` — a data frame (bits 2-3 = `10`) of subtype 0,
+    ///   which hardware accepts unconditionally, with `fromto` 0 and the
+    ///   retransmit flag clear;
+    /// * `W_BSSID0..2` copied out of the frame's own address 3, so the frame is
+    ///   not rejected for belonging to another network.
+    ///
+    /// Callers are expected to have filled the rest of the buffer already; the
+    /// BSSID registers are read back from the buffer rather than assumed, so a
+    /// caller that filled fewer bytes than another still gets a match.
+    fn stage_plain_data_frame(wifi: &mut Wifi) {
+        wifi.rx_buffer[12] = 0x08;
+        wifi.rx_buffer[13] = 0x00;
+        // Address 3 sits at frame offset 16, i.e. buffer offset 12 + 16.
+        for (i, reg) in [W_BSSID0, W_BSSID1, W_BSSID2].into_iter().enumerate() {
+            let o = 12 + 16 + i * 2;
+            let value = wifi.rx_buffer[o] as u16 | (wifi.rx_buffer[o + 1] as u16) << 8;
+            wifi.set_ioport(reg, value);
+        }
+    }
+
     #[test]
     fn register_mirror_does_not_double_increment() {
         let mut wifi = Wifi::new();
@@ -1098,7 +1266,8 @@ mod tests {
         wifi.set_ioport(W_RXBufWriteCursor, 0x0100); // Halfword 0x100 -> byte 0x200.
 
         wifi.rx_buffer[..12 + 32].fill(0xAA);
-        wifi.start_rx(&mut request, true, false, 0x8008, 0x14, 32);
+        stage_plain_data_frame(&mut wifi);
+        wifi.start_rx(&mut request, true, 0x14, 32);
         for _ in 0..64 {
             if wifi.com_status & 0x1 == 0 {
                 break;
@@ -1109,7 +1278,7 @@ mod tests {
         // `rxflags` was written at byte 0x200, not at 0x100.
         assert_eq!(
             wifi.ram[0x0200] as u16 | (wifi.ram[0x0201] as u16) << 8,
-            0x8008,
+            PLAIN_DATA_RXFLAGS,
             "the RX header must be written at (write cursor << 1)"
         );
         assert_eq!(wifi.ram[0x0100], 0, "nothing may be written at the unshifted offset");
@@ -1243,6 +1412,45 @@ mod tests {
         wifi.rf_regs[0x0B] = 0x41 + 6;
         wifi.change_channel();
         assert_eq!(wifi.cur_channel, 7);
+    }
+
+    /// When the driver re-uploads the firmware's `InitialRFValues`, the two
+    /// channel-selection registers go back to their power-on defaults and no
+    /// channel resolves. That is a torn-down radio, not a channel the firmware
+    /// table lacks, and the diagnostic must say so -- blaming the channel table
+    /// sends the reader to `free_bios`'s `CHAN_DATA` instead of to whatever
+    /// made the driver restart. See `docs/design/review_mp_local2.md` §7.1b.
+    #[test]
+    fn initial_rf_values_are_reported_as_a_reinitialised_radio() {
+        let mut wifi = Wifi::new();
+        wifi.load_firmware_config(&free_bios::firmware::FIRMWARE_DS[0x2C..]);
+
+        assert_eq!(wifi.rf_version, 3, "the synthetic firmware reports RFChipType 3");
+        // melonDS's `RFINIT` starts `31 4C 4F`, and the type-3 channel indices
+        // are RF registers 1 and 2, so the defaults are `0x4C`/`0x4F`.
+        assert_eq!(wifi.rf_initial_values, [0x4C, 0x4F]);
+
+        // Park the radio on exactly those values, as a driver re-init does.
+        // The transfer count only has to be nonzero: it is what tells the
+        // verdict the driver got as far as the radio at all.
+        wifi.diag.rf_transfers = 1;
+        let (i0, i1) = (wifi.rf_channel_index[0] as usize, wifi.rf_channel_index[1] as usize);
+        wifi.rf_regs[i0] = 0x4C;
+        wifi.rf_regs[i1] = 0x4F;
+        wifi.change_channel();
+        assert_eq!(wifi.cur_channel, 0, "the power-on defaults match no channel");
+
+        let snapshot = wifi.diag_snapshot();
+        assert!(snapshot.rf_at_initial_values);
+        let verdict = snapshot.verdict(true);
+        assert!(
+            verdict.contains("InitialRFValues"),
+            "the verdict must name the real cause, got: {verdict}"
+        );
+        assert!(
+            !verdict.contains("matches no entry"),
+            "it must not blame the channel table, got: {verdict}"
+        );
     }
 
     /// Regression test for the channel-detection failure that made local play
@@ -1542,7 +1750,8 @@ mod tests {
         wifi.set_ioport(W_RXBufWriteCursor, (0x07FC / 2) as u16);
 
         wifi.rx_buffer[..12 + 16].fill(0xAA);
-        wifi.start_rx(&mut rq, true, false, 0x8008, 0x14, 16);
+        stage_plain_data_frame(&mut wifi);
+        wifi.start_rx(&mut rq, true, 0x14, 16);
         for _ in 0..64 {
             if wifi.com_status & 0x1 == 0 {
                 break;
@@ -1551,7 +1760,7 @@ mod tests {
         }
 
         let rd = |a: usize| wifi.ram[a] as u16 | (wifi.ram[a + 1] as u16) << 8;
-        assert_eq!(rd(0x07FC), 0x8008, "rxflags");
+        assert_eq!(rd(0x07FC), PLAIN_DATA_RXFLAGS, "rxflags");
         assert_eq!(rd(0x07FE), 0x0040);
         // The 4-byte skip steps twice: 0x7FE -> 0x800 (the ring end, wrapping
         // to 0x000) -> 0x002.

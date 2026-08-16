@@ -115,9 +115,34 @@ pub trait MpTransport: Send {
     /// small scheduling margin.
     fn recv_host_packet(&mut self, buf: &mut [u8], timeout: Duration) -> MpRecv;
 
-    /// Host-only: collects reply frames matching `timestamp_us` (within a
-    /// tolerance window) from the clients named in `aid_mask`. Returns the
-    /// bitmask of AIDs that replied.
+    /// Host-only: collects reply frames from the clients named in `aid_mask`.
+    /// Returns the bitmask of AIDs that replied.
+    ///
+    /// # Contract
+    /// Every implementation must obey all of the following. There are three
+    /// implementations in this workspace and they diverged once already, which
+    /// is what let the headless harness report success while real play failed
+    /// (`docs/design/review_mp_local2.md` §5, P1-2):
+    ///
+    /// * **Slot addressing.** A reply from association ID `aid` is written at
+    ///   byte offset `(aid - 1) * 1024` in `buf`, at most 1024 bytes. Never at
+    ///   a running offset. This is the contract with
+    ///   [`Wifi::mp_client_reply_rx`](super::Wifi::mp_client_reply_rx), which
+    ///   reads `mp_client_replies[(aid - 1) * 1024 .. +1024]` — melonDS's
+    ///   `MPClientReplies[15][1024]`.
+    /// * **AID validity.** `aid == 0` (which would underflow the slot index)
+    ///   and `aid >= 16` are rejected without writing anything.
+    /// * **Mask filter.** A reply whose AID is not set in `aid_mask` is ignored.
+    /// * **Staleness.** One-sided: reject only a reply whose timestamp *lags*
+    ///   `timestamp_us` by more than the tolerance. A reply running ahead is
+    ///   valid — the host's own ack frame grants clients that run-ahead window.
+    ///   Use saturating arithmetic so nothing is vacuously stale at session
+    ///   start.
+    /// * **Blank keep-alive.** A zero-length reply names no AID and sets no
+    ///   bit in the result, but still counts as having heard from its sender.
+    /// * **Release condition.** Return as soon as *either* every AID in
+    ///   `aid_mask` has answered *or* every connected instance has been heard
+    ///   from; otherwise wait out [`LinkHints::recv_timeout`].
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16;
 
     /// Current adaptive link parameters (see
@@ -304,45 +329,64 @@ impl MpTransport for LoopbackTransport {
         }
     }
 
+    /// Collects client replies, following the same contract every
+    /// [`MpTransport`] implementation owes its caller — see the
+    /// [`MpTransport::recv_replies`] doc comment.
+    ///
+    /// This used to pack replies back to back from offset zero, use a
+    /// two-sided staleness test, and never wait for a reply in flight. Because
+    /// [`Wifi::mp_client_reply_rx`](super::Wifi::mp_client_reply_rx) reads
+    /// `mp_client_replies[(aid - 1) * 1024]`, the packed layout put every reply
+    /// somewhere the hardware never looks — yet the headless harness
+    /// (`core/examples/mp_loopback.rs`) read the buffer the same wrong way and
+    /// so reported success while real play failed. See
+    /// `docs/design/review_mp_local2.md` P1-2.
     fn recv_replies(&mut self, buf: &mut [u8], timestamp_us: u64, aid_mask: u16) -> u16 {
         let mut answered = 0u16;
-        let mut offset = 0usize;
-        // melonDS releases the reply wait on *either* "every addressed AID
-        // sent data" or "every connected instance has been heard from"
-        // (`docs/design/melonds/net/LocalMP.cpp:295-360`). A `LoopbackTransport`
-        // pair has exactly one peer, so hearing from it at all is the second
-        // condition. Tracked so a zero-length keep-alive reply -- which names
-        // no AID and sets no `answered` bit -- still ends the wait, matching
-        // `NetTransport::recv_replies`. See
-        // `docs/design/local-mp-melonds-parity-2.md` F5.
-        let mut heard_from_peer = false;
 
+        // **Deliberate deviation from the contract's release clause.** Every
+        // other rule is honoured; this one drains what has already arrived and
+        // never waits out [`LinkHints::recv_timeout`].
+        //
+        // Waiting presumes the replying peer runs on another thread that can
+        // post while this one blocks -- true of `LocalMp` (a semaphore posted
+        // by the other instance's thread) and of `NetTransport` (a socket RX
+        // thread), but false here. A `LoopbackTransport` pair is driven from a
+        // single thread by design, so a blocking wait cannot be satisfied: it
+        // stalls the one thread that could have produced the reply, for the
+        // full budget, on every CMD round. Adding the wait hung
+        // `core/examples/mp_loopback.rs` outright.
+        //
+        // With no wait to release there is also nothing for melonDS's
+        // "every connected instance has been heard from" condition to release,
+        // so a zero-length keep-alive is simply skipped rather than tracked.
         while let Ok(frame) = self.reply_rx.try_recv() {
-            heard_from_peer |= frame.sender_id != self.peer_id;
-
-            // A zero-length reply carries no AID; its only job is the
-            // `heard_from_peer` bookkeeping above.
-            if frame.data.is_empty() {
-                if heard_from_peer {
-                    break;
-                }
+            // A zero-length reply names no AID. `aid == 0` would underflow the
+            // slot index below, and `aid >= 16` has no slot at all.
+            if frame.data.is_empty() || frame.aid == 0 || frame.aid >= 16 {
                 continue;
             }
             if aid_mask & (1 << frame.aid) == 0 {
                 continue;
             }
 
-            // Tolerate replies from the same logical exchange
-            // (within a coarse window), mirroring melonDS's ±32ms
-            // reply-collection tolerance.
-            if frame.timestamp_us.abs_diff(timestamp_us) > 32_000 {
+            // One-sided staleness test, following melonDS's
+            // `header->Timestamp < (timestamp - 32)`: a client whose emulated
+            // clock legitimately runs *ahead* of the host — which the host's own
+            // ack frame grants it — must not have its reply discarded. Only a
+            // lagging reply is stale. Saturating rather than wrapping, so no
+            // reply is vacuously stale in the opening milliseconds of a session.
+            if frame.timestamp_us + 32_000 < timestamp_us {
                 continue;
             }
 
-            let end = (offset + frame.data.len()).min(buf.len());
-            if end > offset {
-                buf[offset..end].copy_from_slice(&frame.data[..end - offset]);
-                offset = end;
+            // Fixed 1 KiB slot per association ID, matching melonDS's
+            // `packets[(aid-1)*1024]` and what `Wifi::mp_client_reply_rx` reads
+            // back.
+            let slot = (frame.aid as usize - 1) * 1024;
+            let end = (slot + frame.data.len()).min(buf.len()).min(slot + 1024);
+            if end > slot {
+                buf[slot..end].copy_from_slice(&frame.data[..end - slot]);
             }
 
             answered |= 1 << frame.aid;
@@ -397,5 +441,62 @@ mod tests {
         let mut buf = [0u8; 64];
         let answered = host.recv_replies(&mut buf, 1_000, 1 << 1);
         assert_eq!(answered, 1 << 1);
+    }
+
+    /// Replies are addressed by association ID into fixed 1 KiB slots, exactly
+    /// as `Wifi::mp_client_reply_rx` reads them back. Packing them back to back
+    /// from offset zero — what this used to do — put every reply somewhere the
+    /// hardware never looks, while the loopback-based harness read the buffer
+    /// the same wrong way and reported success.
+    /// `docs/design/review_mp_local2.md` P1-2.
+    #[test]
+    fn recv_replies_writes_each_reply_to_its_per_aid_slot() {
+        let (mut host, mut client) = LoopbackTransport::new_pair();
+        client.send_reply(&[0xAB; 4], 100_000, 2);
+
+        let mut buf = [0u8; 15 * 1024];
+        let answered = host.recv_replies(&mut buf, 100_000, 1 << 2);
+
+        assert_eq!(answered, 1 << 2);
+        assert_eq!(&buf[1024..1028], &[0xAB; 4], "AID 2 occupies the second 1 KiB slot");
+        assert!(buf[..1024].iter().all(|&b| b == 0), "AID 1's slot must be untouched");
+    }
+
+    /// A client whose emulated clock legitimately runs ahead of the host must
+    /// still have its reply accepted — the host's ack frame is what granted it
+    /// that run-ahead. Only a lagging reply is stale. The previous two-sided
+    /// `abs_diff` test rejected exactly the case the protocol authorises.
+    #[test]
+    fn recv_replies_staleness_test_is_one_sided() {
+        let (mut host, mut client) = LoopbackTransport::new_pair();
+        let mut buf = [0u8; 15 * 1024];
+
+        client.send_reply(&[1], 1_100_000, 1);
+        assert_eq!(
+            host.recv_replies(&mut buf, 1_000_000, 1 << 1),
+            1 << 1,
+            "a reply 100ms ahead of the host is valid"
+        );
+
+        client.send_reply(&[1], 1_000, 1);
+        assert_eq!(
+            host.recv_replies(&mut buf, 1_000_000, 1 << 1),
+            0,
+            "a reply lagging far behind the host is stale"
+        );
+    }
+
+    /// `aid == 0` would underflow the slot index and `aid >= 16` has no slot;
+    /// both must be rejected without writing anything.
+    #[test]
+    fn recv_replies_rejects_out_of_range_association_ids() {
+        let (mut host, mut client) = LoopbackTransport::new_pair();
+        client.send_reply(&[0xFF; 4], 100_000, 16);
+
+        let mut buf = [0u8; 15 * 1024];
+        let answered = host.recv_replies(&mut buf, 100_000, 0xFFFF);
+
+        assert_eq!(answered, 0, "AID 16 is out of range");
+        assert!(buf.iter().all(|&b| b == 0), "nothing may be written for an invalid AID");
     }
 }

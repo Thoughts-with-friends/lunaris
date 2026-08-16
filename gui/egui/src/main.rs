@@ -9,6 +9,7 @@ mod input;
 mod input_settings;
 mod lan_room;
 mod screens;
+mod thread_mode;
 mod window;
 
 use std::path::{Path, PathBuf};
@@ -213,6 +214,7 @@ struct LunarisApp {
     last_tick: std::time::Instant,
     debug: DebugState,
     lan_room: crate::lan_room::LanRoomState,
+    thread_mode: crate::thread_mode::ThreadMode,
     /// Set whenever the displayed screens need to be re-converted/re-uploaded:
     /// a new frame was emulated, a ROM was (re)loaded, a savestate was
     /// loaded, or a video setting changed. Cleared every time
@@ -268,6 +270,7 @@ impl LunarisApp {
             last_tick: std::time::Instant::now(),
             debug: DebugState::new(),
             lan_room: crate::lan_room::LanRoomState::default(),
+            thread_mode: crate::thread_mode::ThreadMode::new(),
             screens_dirty: true,
             emulated_frames: 0,
             last_title_update: std::time::Instant::now(),
@@ -487,6 +490,7 @@ impl LunarisApp {
 
                 ui.menu_button("Multiplayer", |ui| {
                     self.lan_room.menu_item(ui);
+                    self.thread_mode.menu_item(ui);
                 });
             });
         });
@@ -1012,6 +1016,7 @@ impl eframe::App for LunarisApp {
         self.menu_bar(ctx);
         self.central_panel(ctx);
         self.debug.render(ctx, &mut self.nds);
+        self.thread_mode.show(ctx, &self.config, &mut self.nds);
         self.emu_window(ctx);
         self.audio_window(ctx);
         self.video_window(ctx);
@@ -1057,13 +1062,27 @@ fn main() -> eframe::Result<()> {
         .with_inner_size([config.window.width, config.window.height])
         .with_position([config.window.pos_x, config.window.pos_y])
         // winit's OS-level drag-and-drop registration calls `OleInitialize`,
-        // which panics with `RPC_E_CHANGED_MODE` if COM was already
-        // initialized in multithreaded mode elsewhere in the process (seen
-        // in this environment; root cause not yet isolated). Disabling it
-        // avoids the crash; ROM loading still works via "Open ROM" / CLI arg
-        // / remembered `last_rom_path`. `raw.dropped_files` drag-and-drop
-        // from Explorer is a known regression versus the imgui front end
-        // until the underlying COM conflict is root-caused.
+        // which requires the thread to be in a single-threaded COM apartment
+        // and panics with `RPC_E_CHANGED_MODE` if COM was already initialized
+        // as multithreaded.
+        //
+        // Root cause: `create_nds` above runs on this thread *before*
+        // `run_native`, and building an `NDS` constructs the SPU's audio
+        // output, whose `cpal::default_host()` selects WASAPI and initializes
+        // COM multithreaded (`core/src/hw/spu/audio.rs`). By the time winit
+        // creates the window, the apartment is already set.
+        //
+        // Disabling drag-and-drop avoids the crash; ROM loading still works
+        // via "Open ROM" / CLI arg / remembered `last_rom_path`.
+        // `raw.dropped_files` drag-and-drop from Explorer stays a known
+        // regression versus the imgui front end. Restoring it means keeping
+        // COM untouched on this thread until the window exists -- i.e.
+        // constructing the `NDS` inside the `run_native` creation closure, or
+        // opening the audio device off-thread.
+        //
+        // **Every other viewport this process opens needs the same opt-out**;
+        // see `crate::thread_mode`, whose guest window crashed the emulator
+        // until it did.
         .with_drag_and_drop(false);
 
     let options = eframe::NativeOptions { viewport, ..Default::default() };

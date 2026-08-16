@@ -4,18 +4,24 @@
 //!
 //! A dedicated background thread owns the receive side (blocking
 //! `recv_from` in a loop) and classifies each datagram by
-//! [`crate::wire::WireFrameKind`] into one of two channels: "regular"
+//! [`crate::wire::WireFrameKind`] into one of two queues: "regular"
 //! (packet/cmd/ack -- consumed by [`NetTransport::recv_packet`] and
 //! [`NetTransport::recv_host_packet`]) or "reply" (consumed only by
 //! [`NetTransport::recv_replies`]). Splitting them avoids the two callers
-//! racing to read the same frame off one channel.
+//! racing to read the same frame off one queue.
+//!
+//! Both queues are [`FrameQueue`]s: bounded, and self-evicting on age. The
+//! emulator consumes at most a couple of frames per 8µs hardware tick while
+//! the network keeps delivering, so an unbounded queue -- what this used to
+//! hand the pump -- lets a backlog form that never drains and that poisons an
+//! MP client's sync clock. See `docs/design/review_mp_local2.md` P0-3.
 
 use std::{
+    collections::VecDeque,
     net::{SocketAddr, UdpSocket},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU32, Ordering},
-        mpsc::{Receiver, Sender, TryRecvError},
     },
     time::{Duration, Instant},
 };
@@ -71,6 +77,30 @@ impl SharedHints {
     }
 }
 
+/// How long a queued frame may wait to be consumed before it is discarded.
+///
+/// Ported from melonDS's `LAN::ProcessLAN`, which stamps every queued packet
+/// with its arrival time and drops anything older than one video frame, with
+/// the rationale that *"any incoming packet should be consumed by the core
+/// quickly, so if they've been sitting in the queue for more than one frame's
+/// time, we can assume they're stale."*
+///
+/// This matters far more than a general tidiness concern. An MP client derives
+/// `next_sync` from the timestamp of each frame it receives; served a backlog,
+/// it computes sync points that are already in the past, never gates, and
+/// stamps its replies with a clock the host no longer recognises. The host's
+/// staleness test then rejects those replies, `mp_client_fail` never clears,
+/// and the link never forms. See `docs/design/review_mp_local2.md` P0-3.
+const STALE_AFTER: Duration = Duration::from_millis(16);
+
+/// Hard bound on queued frames, per queue.
+///
+/// melonDS effectively holds a single MP frame at a time (`ProcessLAN` returns
+/// as soon as it has queued one). A small ring is a safer engineering margin
+/// for a socket transport that receives on its own thread, while still ruling
+/// out the unbounded growth that made the backlog above self-sustaining.
+const QUEUE_CAPACITY: usize = 16;
+
 struct Inbound {
     kind: WireFrameKind,
     /// Room-level player id of the sender. Needed by
@@ -85,6 +115,95 @@ struct Inbound {
     payload: Vec<u8>,
 }
 
+/// A bounded, self-evicting queue of inbound frames.
+///
+/// Replaces the unbounded `std::sync::mpsc` channel this transport used to
+/// hand the RX pump. Two rules from melonDS's `LAN::ProcessLAN` are enforced
+/// here rather than at every call site: a frame older than [`STALE_AFTER`] is
+/// never served, and the queue never grows past [`QUEUE_CAPACITY`] — on
+/// overflow the *oldest* entry is dropped, since the newest frame is the one
+/// the emulator's clock is actually waiting for.
+///
+/// See `docs/design/review_mp_local2.md` P0-3.
+#[derive(Default)]
+struct FrameQueue {
+    inner: Mutex<VecDeque<(Instant, Inbound)>>,
+    ready: Condvar,
+    /// Frames discarded for being stale or for overflowing the bound.
+    ///
+    /// Shared with the owning [`Room`](crate::Room) rather than owned outright:
+    /// [`NetTransport`] is moved into a `Box<dyn MpTransport>` the moment it is
+    /// installed on the emulator, so a getter on the transport alone would be
+    /// unreachable for the whole session. The room hands the same handle to the
+    /// UI through [`RoomHandle::dropped_stale`](crate::RoomHandle::dropped_stale).
+    dropped: Arc<AtomicU32>,
+}
+
+impl FrameQueue {
+    /// Builds a queue reporting its evictions into `dropped`.
+    fn new(dropped: Arc<AtomicU32>) -> Self {
+        FrameQueue { inner: Mutex::default(), ready: Condvar::new(), dropped }
+    }
+
+    fn push(&self, frame: Inbound) {
+        let mut queue = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        while queue.len() >= QUEUE_CAPACITY {
+            queue.pop_front();
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        queue.push_back((Instant::now(), frame));
+        drop(queue);
+        self.ready.notify_one();
+    }
+
+    /// Drops every entry that has been waiting longer than [`STALE_AFTER`] and
+    /// returns the oldest survivor, if any.
+    fn pop_fresh(queue: &mut VecDeque<(Instant, Inbound)>, dropped: &AtomicU32) -> Option<Inbound> {
+        let now = Instant::now();
+        while let Some((arrived, _)) = queue.front() {
+            if now.duration_since(*arrived) <= STALE_AFTER {
+                break;
+            }
+            queue.pop_front();
+            dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        queue.pop_front().map(|(_, frame)| frame)
+    }
+
+    /// Non-blocking take of the oldest non-stale frame.
+    fn try_pop(&self) -> Option<Inbound> {
+        let mut queue = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        Self::pop_fresh(&mut queue, &self.dropped)
+    }
+
+    /// Takes the oldest non-stale frame, waiting up to `timeout` for one to
+    /// arrive.
+    fn pop_timeout(&self, timeout: Duration) -> Option<Inbound> {
+        let deadline = Instant::now() + timeout;
+        let mut queue = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(frame) = Self::pop_fresh(&mut queue, &self.dropped) {
+                return Some(frame);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            let (guard, _) =
+                self.ready.wait_timeout(queue, remaining).unwrap_or_else(|e| e.into_inner());
+            queue = guard;
+        }
+    }
+
+    /// Evictions counted so far. Test-only: production code reads the same
+    /// shared counter through
+    /// [`RoomHandle::dropped_stale`](crate::RoomHandle::dropped_stale).
+    #[cfg(test)]
+    fn dropped(&self) -> u32 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+}
+
 /// UDP-backed [`MpTransport`]. Construct via [`NetTransport::new`], which
 /// binds the socket and spawns the RX pump thread; both are torn down when
 /// this value (and its `Arc<AtomicBool>` shutdown flag) drop.
@@ -94,8 +213,8 @@ pub struct NetTransport {
     host_id: u8,
     peers: Arc<PeerTable>,
     hints: Arc<SharedHints>,
-    regular_rx: Receiver<Inbound>,
-    reply_rx: Receiver<Inbound>,
+    regular_rx: Arc<FrameQueue>,
+    reply_rx: Arc<FrameQueue>,
     host_gone: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     send_seq: AtomicU32,
@@ -111,28 +230,35 @@ impl NetTransport {
     /// # Errors
     /// Returns any error from configuring the socket (setting its read
     /// timeout).
+    ///
+    /// `dropped_stale` receives the RX queues' eviction count. It is passed in
+    /// rather than owned because this value is moved into a
+    /// `Box<dyn MpTransport>` as soon as it is installed on the emulator, after
+    /// which no getter on it can be reached; the caller keeps the handle so the
+    /// count stays observable for the life of the session.
     pub fn from_socket(
         socket: UdpSocket,
         self_id: u8,
         host_id: u8,
         peers: Arc<PeerTable>,
         hints: Arc<SharedHints>,
+        dropped_stale: Arc<AtomicU32>,
     ) -> std::io::Result<Self> {
         let socket = Arc::new(socket);
         // A read timeout lets the RX thread periodically re-check the
         // shutdown flag instead of blocking forever in `recv_from`.
         socket.set_read_timeout(Some(Duration::from_millis(200)))?;
 
-        let (regular_tx, regular_rx) = std::sync::mpsc::channel();
-        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        let regular_rx = Arc::new(FrameQueue::new(Arc::clone(&dropped_stale)));
+        let reply_rx = Arc::new(FrameQueue::new(Arc::clone(&dropped_stale)));
         let host_gone = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
 
         spawn_rx_pump(
             Arc::clone(&socket),
             self_id,
-            regular_tx,
-            reply_tx,
+            Arc::clone(&regular_rx),
+            Arc::clone(&reply_rx),
             Arc::clone(&host_gone),
             Arc::clone(&shutdown),
         );
@@ -158,6 +284,14 @@ impl NetTransport {
     /// Propagates any error from the underlying `local_addr` call.
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.socket.local_addr()
+    }
+
+    /// What a receive call reports when the queue had nothing fresh to serve.
+    ///
+    /// The RX pump sets `host_gone` on a socket error and then exits, so this
+    /// distinguishes "quiet right now" from "the socket is dead".
+    fn nothing_available(&self) -> MpRecv {
+        if self.host_gone.load(Ordering::Relaxed) { MpRecv::HostGone } else { MpRecv::None }
     }
 
     fn next_seq(&self) -> u32 {
@@ -225,26 +359,16 @@ impl MpTransport for NetTransport {
     }
 
     fn recv_packet(&mut self, buf: &mut [u8]) -> MpRecv {
-        match self.regular_rx.try_recv() {
-            Ok(frame) => deliver(buf, frame),
-            Err(TryRecvError::Empty) => {
-                if self.host_gone.load(Ordering::Relaxed) {
-                    MpRecv::HostGone
-                } else {
-                    MpRecv::None
-                }
-            }
-            Err(TryRecvError::Disconnected) => MpRecv::HostGone,
+        match self.regular_rx.try_pop() {
+            Some(frame) => deliver(buf, frame),
+            None => self.nothing_available(),
         }
     }
 
     fn recv_host_packet(&mut self, buf: &mut [u8], timeout: Duration) -> MpRecv {
-        match self.regular_rx.recv_timeout(timeout) {
-            Ok(frame) => deliver(buf, frame),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if self.host_gone.load(Ordering::Relaxed) { MpRecv::HostGone } else { MpRecv::None }
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => MpRecv::HostGone,
+        match self.regular_rx.pop_timeout(timeout) {
+            Some(frame) => deliver(buf, frame),
+            None => self.nothing_available(),
         }
     }
 
@@ -288,7 +412,7 @@ impl MpTransport for NetTransport {
             if remaining.is_zero() {
                 break;
             }
-            let Ok(frame) = self.reply_rx.recv_timeout(remaining) else { break };
+            let Some(frame) = self.reply_rx.pop_timeout(remaining) else { break };
 
             // Count the sender regardless of whether its reply carried data:
             // melonDS's `myinstmask |= (1 << pktheader.SenderID)`.
@@ -358,8 +482,8 @@ fn deliver(buf: &mut [u8], frame: Inbound) -> MpRecv {
 fn spawn_rx_pump(
     socket: Arc<UdpSocket>,
     self_id: u8,
-    regular_tx: Sender<Inbound>,
-    reply_tx: Sender<Inbound>,
+    regular_tx: Arc<FrameQueue>,
+    reply_tx: Arc<FrameQueue>,
     host_gone: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 ) {
@@ -400,12 +524,8 @@ fn spawn_rx_pump(
                         payload: dgram.payload,
                     };
                     match dgram.kind {
-                        WireFrameKind::Reply => {
-                            let _ = reply_tx.send(inbound);
-                        }
-                        _ => {
-                            let _ = regular_tx.send(inbound);
-                        }
+                        WireFrameKind::Reply => reply_tx.push(inbound),
+                        _ => regular_tx.push(inbound),
                     }
                 }
                 Err(e)
@@ -447,8 +567,10 @@ mod tests {
         let hints_b = Arc::new(SharedHints::default());
         hints_b.set(LinkHints { runahead_us: 1000, recv_timeout: Duration::from_millis(200) });
 
-        let a = NetTransport::from_socket(sock_a, 0, 0, peers_a, hints_a).unwrap();
-        let b = NetTransport::from_socket(sock_b, 1, 0, peers_b, hints_b).unwrap();
+        let dropped = Arc::new(AtomicU32::new(0));
+        let a = NetTransport::from_socket(sock_a, 0, 0, peers_a, hints_a, Arc::clone(&dropped))
+            .unwrap();
+        let b = NetTransport::from_socket(sock_b, 1, 0, peers_b, hints_b, dropped).unwrap();
         (a, b)
     }
 
@@ -460,7 +582,7 @@ mod tests {
     /// `LocalMP::RecvPacketGeneric`.
     #[test]
     fn own_frame_echoed_back_is_never_delivered() {
-        let (mut a, _b) = transport_pair();
+        let (mut a, mut b) = transport_pair();
         let addr_a = a.local_addr().unwrap();
         let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let dgram = MpDatagram {
@@ -473,10 +595,64 @@ mod tests {
             payload: vec![9, 9, 9],
         };
         echo.send_to(&dgram.encode(), addr_a).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
+        // A genuine peer frame alongside it, so the assertion below cannot pass
+        // merely because nothing arrived (or because the echoed frame aged out
+        // of the queue): `a` must serve this one and only this one.
+        b.send_packet(&[1, 2, 3], 2);
 
         let mut buf = [0u8; 16];
-        assert_eq!(a.recv_packet(&mut buf), MpRecv::None, "self-sent frame must be dropped");
+        let recv = a.recv_host_packet(&mut buf, Duration::from_millis(500));
+        assert!(matches!(recv, MpRecv::Frame { len: 3, .. }), "peer frame must arrive: {recv:?}");
+        assert_eq!(&buf[..3], &[1, 2, 3], "self-sent frame must never be delivered");
+
+        assert_eq!(
+            a.recv_packet(&mut buf),
+            MpRecv::None,
+            "nothing else may be queued -- the self-sent frame was dropped by the RX pump"
+        );
+    }
+
+    /// A frame nobody consumed within one video frame's time must be discarded,
+    /// not replayed. melonDS's `LAN::ProcessLAN` applies the same rule, because
+    /// an MP client derives its sync points from the timestamps of the frames it
+    /// receives: served a backlog, it computes sync points already in the past
+    /// and its replies stop matching the host's current round.
+    /// `docs/design/review_mp_local2.md` P0-3.
+    #[test]
+    fn stale_frames_are_evicted_instead_of_replayed() {
+        let queue = FrameQueue::default();
+        queue.push(inbound(1));
+
+        std::thread::sleep(STALE_AFTER + Duration::from_millis(4));
+
+        assert!(queue.try_pop().is_none(), "a frame older than STALE_AFTER must not be served");
+        assert_eq!(queue.dropped(), 1);
+    }
+
+    /// The queue is bounded, and overflow discards the *oldest* entries: the
+    /// newest frame is the one the emulator's clock is waiting for.
+    #[test]
+    fn queue_overflow_drops_the_oldest_frames() {
+        let queue = FrameQueue::default();
+        for i in 0..(QUEUE_CAPACITY + 3) {
+            queue.push(inbound(i as u8));
+        }
+
+        assert_eq!(queue.dropped(), 3, "exactly the three oldest entries are discarded");
+        let frame = queue.try_pop().expect("the queue still holds the newer frames");
+        assert_eq!(frame.payload, vec![3], "the oldest survivor is the fourth frame pushed");
+    }
+
+    /// A one-byte regular frame whose payload identifies it.
+    fn inbound(tag: u8) -> Inbound {
+        Inbound {
+            kind: WireFrameKind::Packet,
+            sender_id: 1,
+            aid: 0,
+            timestamp_us: 0,
+            runahead_us: 0,
+            payload: vec![tag],
+        }
     }
 
     /// Replies must land in the fixed per-AID 1 KiB slot the core reads them

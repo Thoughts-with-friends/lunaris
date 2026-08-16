@@ -21,6 +21,22 @@
 //!    types the game is waiting for?
 //! 5. `replies_answered` / `irq12` — did a full CMD round complete?
 //!
+//! # Reading stages 3 and 4 after the deferred-filtering change
+//! Frame acceptance is split across the simulated transfer time, so these two
+//! stages no longer partition the traffic between them (see
+//! `docs/design/review_mp_local2.md` P0-1):
+//!
+//! * `rx_accepted` counts frames that cleared [`super::Wifi::check_rx`]. The
+//!   `W_RXFilter`/`W_RXFilter2` decision happens later, in
+//!   [`super::Wifi::step_rx`], so **`rx_accepted` and `drops.filtered` can both
+//!   be high for the same frames**. A large `filtered` next to a healthy
+//!   `rx_accepted` means "the radio hears the peer, but the driver's filters are
+//!   rejecting it" — a very different fault from a low `rx_accepted`.
+//! * The `rxflags_*` counters are likewise bumped in `step_rx`, which
+//!   [`super::Wifi::mp_client_reply_rx`] also flows through. On a **host**,
+//!   `rxflags_reply` therefore includes the client replies the host re-injects
+//!   into its own RX path, not only replies observed on the wire.
+//!
 //! See `docs/design/local-mp-melonds-parity-2.md` §1, which this replaces
 //! with something the emulator reports about itself.
 
@@ -35,8 +51,19 @@ pub(super) fn diag_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("LUNARIS_MP_DIAG").is_some())
 }
 
-/// Reason an inbound frame was rejected, one counter per check in
-/// [`super::Wifi::check_rx`]. Ordered as the checks run.
+/// Reason an inbound frame was rejected, one counter per rejecting check.
+///
+/// Ordered as the checks run, which spans three functions since frame
+/// acceptance is split across the simulated transfer time (see
+/// `docs/design/review_mp_local2.md` P0-1):
+///
+/// * [`super::Wifi::check_rx`] — `rx_disabled` … `foreign_mp`, at arrival;
+/// * [`super::Wifi::start_rx`] — `ring_full`, when the body is written;
+/// * [`super::Wifi::step_rx`] — `wep_off` and `filtered`, at completion.
+///
+/// Note that `filtered` is **not** mutually exclusive with
+/// [`MpDiag::rx_accepted`]: a frame counts as accepted once it passes
+/// `check_rx`, and may still be filtered later. See [`MpDiag`]'s doc comment.
 #[derive(Clone, Copy, Default)]
 pub struct RxDrops {
     /// `W_RXCnt` bit 15 clear: the driver has not armed reception.
@@ -51,6 +78,11 @@ pub struct RxDrops {
     pub channel_mismatch: u32,
     /// `W_RXFilter`/`W_RXFilter2` rejected the frame.
     pub filtered: u32,
+    /// An MP command or reply frame arrived on the regular RX path while this
+    /// instance was not engaged in an MP session, and was skipped. Ported from
+    /// melonDS's "ignore MP frames if not engaged in a MP comm" check
+    /// (`Wifi.cpp:1620-1628`); see `docs/design/review_mp_local2.md` P0-5.
+    pub foreign_mp: u32,
     /// The RX ring was full: the driver has not drained the previous frame.
     pub ring_full: u32,
     /// A WEP frame arrived while WEP processing is disabled.
@@ -77,6 +109,16 @@ pub struct MpDiag {
     /// detection cannot work, and either the firmware image or the parse
     /// offsets are wrong. See [`super::Wifi::load_firmware_config`].
     pub rf_table_empty: bool,
+    /// `true` when the two channel-selection RF registers currently hold the
+    /// firmware's `InitialRFValues` — i.e. the driver has (re-)uploaded the
+    /// radio's power-on block and has not selected a channel since.
+    ///
+    /// This is the difference between "the radio was re-initialised" and "the
+    /// game asked for a channel this firmware's table does not contain". Both
+    /// leave `channel == 0`, but only the second is a channel-table problem,
+    /// and reporting the second when the first happened sends the reader
+    /// chasing the wrong thing entirely.
+    pub rf_at_initial_values: bool,
     /// Current contents of the two channel-index RF registers, i.e. what the
     /// game last asked for. Compared against the table by
     /// [`super::Wifi::change_channel`].
@@ -274,7 +316,7 @@ impl MpDiag {
              [mp-diag] 2. transmitted    : loc={} beacon={} cmd={} reply={} blank_reply={}\n\
              [mp-diag] 3. received       : accepted={} polls={} empty={}\n\
              [mp-diag]    dropped        : rx_disabled={} ring_unconfigured={} too_short={} bad_length={}\n\
-             [mp-diag]                     channel_mismatch={} filtered={} ring_full={}\n\
+             [mp-diag]                     channel_mismatch={} filtered={} foreign_mp={} ring_full={}\n\
              [mp-diag] 4. classified     : beacon={} cmd={} reply={} ack={} mgmt={}\n\
              [mp-diag] 5. round complete : replies_answered={} replies_empty={} irq12={}
              [mp-diag] most-read regs  : {}",
@@ -308,6 +350,7 @@ impl MpDiag {
             d.bad_length,
             d.channel_mismatch,
             d.filtered,
+            d.foreign_mp,
             d.ring_full,
             self.rxflags_beacon,
             self.rxflags_cmd,
@@ -340,7 +383,9 @@ impl MpDiag {
         if self.channel == 0 {
             if self.rf_transfers == 0 {
                 return format!(
-                    "VERDICT: the driver never programmed the RF chip (0 RF transfers, {} BB                      writes), so no channel was ever selected. The failure is upstream of the                      channel table -- the game's Wi-Fi init did not get as far as the radio.",
+                    "VERDICT: the driver never programmed the RF chip (0 RF transfers, {} BB \
+                     writes), so no channel was ever selected. The failure is upstream of the \
+                     channel table -- the game's Wi-Fi init did not get as far as the radio.",
                     self.bb_writes
                 );
             }
@@ -350,6 +395,22 @@ impl MpDiag {
                      zeros (RFChipType={}). The firmware image is not a usable dump, or it was \
                      parsed at the wrong offsets.",
                     self.rf_version
+                );
+            }
+            if self.rf_at_initial_values {
+                return format!(
+                    "VERDICT: the radio holds the firmware's InitialRFValues \
+                     (RF[{}]=0x{:X} RF[{}]=0x{:X}), so the driver has (re-)initialised the RF \
+                     chip and not selected a channel since. This is NOT a channel-table gap: \
+                     those two values are the power-on defaults, not a channel the game asked \
+                     for. If traffic flowed earlier in this session, the driver tore the radio \
+                     down and restarted -- look for what made it re-initialise (a rejected \
+                     association, a deauth, or a repeatedly-reprogrammed RX ring: check \
+                     rxbuf_cfg).",
+                    self.rf_channel_index[0],
+                    self.rf_regs_now[0],
+                    self.rf_channel_index[1],
+                    self.rf_regs_now[1],
                 );
             }
             return format!(
@@ -398,6 +459,7 @@ impl MpDiag {
                 (d.bad_length, "frame length field disagreed with the datagram"),
                 (d.too_short, "frames too short to be valid"),
                 (d.ring_full, "RX ring full (driver never drained it)"),
+                (d.foreign_mp, "MP frames from a session this instance is not part of"),
             ]
             .into_iter()
             .max_by_key(|&(n, _)| n);
@@ -408,7 +470,9 @@ impl MpDiag {
                     format!("VERDICT: no frame was ever accepted. Dominant reason: {why}.")
                 }
                 _ if self.rx_polls > 0 && self.rx_empty == self.rx_polls => format!(
-                    "VERDICT: reception is armed and polling ({} times), but the peer has sent                      nothing at all. The problem is on the *other* instance's transmit side, or                      in the room/UDP layer between them.",
+                    "VERDICT: reception is armed and polling ({} times), but the peer has sent \
+                     nothing at all. The problem is on the *other* instance's transmit side, or \
+                     in the room/UDP layer between them.",
                     self.rx_polls
                 ),
                 _ => "VERDICT: no frame ever reached this instance at all -- the transport is \
