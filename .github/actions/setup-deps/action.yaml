@@ -35,21 +35,23 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          libwebkit2gtk-4.1-dev \
           build-essential \
           curl \
-          wget \
           file \
-          libxdo-dev \
-          libssl-dev \
+          libasound2-dev \
           libayatana-appindicator3-dev \
-          librsvg2-dev
+          librsvg2-dev \
+          libssl-dev \
+          libwebkit2gtk-4.1-dev \
+          libxdo-dev \
+          pkg-config \
+          wget
 
     - name: Rust setup
       uses: dtolnay/rust-toolchain@stable
 
     - name: Rust cache
-      uses: Swatinem/rust-cache@v2.7.8
+      uses: Swatinem/rust-cache@v2.9.2
       with:
         prefix-key: cargo-${{ inputs.build_profile }}-${{ inputs.platform }}-${{ inputs.cache_key_suffix }}
 
