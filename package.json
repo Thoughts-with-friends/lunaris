@@ -1,6 +1,6 @@
 {
   "name": "lunaris",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A Nintendo DS emulator - Rust-based",
   "homepage": "https://github.com/Thoughts-with-friends/lunaris",
@@ -16,7 +16,10 @@
     "egui": "cargo run --release --features release --package lunaris",
     "egui:gnu": "cargo +stable-x86_64-pc-windows-gnu run --release",
     "test:back": "cargo nextest run --workspace",
-    "test:front": "npm --workspace gui/tauri run test"
+    "test:front": "npm --workspace gui/tauri run test",
+    "release:major": "node ./tools/version_up.cjs major && git push --all",
+    "release:minor": "node ./tools/version_up.cjs minor && git push --all",
+    "release:patch": "node ./tools/version_up.cjs patch && git push --all"
   },
   "workspaces": [
     "gui/tauri"

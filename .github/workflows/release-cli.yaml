@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+env:
+  CARGO_TERM_COLOR: always
+  PROFILE: release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - package: lunaris
+            app_name: lunaris
+            features: release
+
+          - package: melon_egui
+            app_name: melon_egui
+            features: release
+
+        target:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+
+    runs-on: ${{ matrix.target.os }}
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build and Compress
+        uses: ./.github/actions/build-and-compress
+        with:
+          target: ${{ matrix.target.target }}
+          package: ${{ matrix.app.package }}
+          app_name: ${{ matrix.app.app_name }}
+          profile: ${{ env.PROFILE }}
+          features: ${{ matrix.app.features }}
+          asset_name: ${{ matrix.app.app_name }}-${{ matrix.target.target }}
+
+      - name: Release
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          allowUpdates: true
+          artifacts: ${{ matrix.app.app_name }}-${{ matrix.target.target }}${{ runner.os == 'Windows' && '.zip' || '.tar.gz' }}
+          generateReleaseNotes: true

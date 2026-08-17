@@ -1,0 +1,98 @@
+name: Build and Compress
+description: Build a Rust package for a target and compress the resulting binary
+
+inputs:
+  target:
+    description: Rust target triple
+    required: true
+
+  package:
+    description: Cargo package name
+    required: true
+
+  app_name:
+    description: Output binary name
+    required: true
+
+  profile:
+    description: Cargo build profile
+    required: false
+    default: release
+
+  features:
+    description: Cargo features
+    required: false
+    default: ""
+
+  asset_name:
+    description: Output archive name without extension
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.target }}
+
+    - name: Build
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.features }}" ]; then
+          cargo build \
+            --${{ inputs.profile }} \
+            --features "${{ inputs.features }}" \
+            --package "${{ inputs.package }}" \
+            --target "${{ inputs.target }}"
+        else
+          cargo build \
+            --${{ inputs.profile }} \
+            --package "${{ inputs.package }}" \
+            --target "${{ inputs.target }}"
+        fi
+
+    - name: Prepare output
+      shell: bash
+      run: |
+        rm -rf build
+        mkdir -p build
+
+    - name: Copy binary
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        cp \
+          "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}" \
+          "build/${{ inputs.app_name }}"
+
+    - name: Copy binary
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Copy-Item `
+          "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe" `
+          "build/${{ inputs.app_name }}.exe"
+
+    - name: Compress Unix
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        tar \
+          -C build \
+          -czf "${{ inputs.asset_name }}.tar.gz" \
+          "${{ inputs.app_name }}"
+
+    - name: Compress Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $assetName = "${{ inputs.asset_name }}.zip"
+
+        if ([string]::IsNullOrWhiteSpace($assetName)) {
+          throw "asset_name is empty"
+        }
+
+        Compress-Archive `
+          -Path "build/${{ inputs.app_name }}.exe" `
+          -DestinationPath $assetName
