@@ -14,8 +14,10 @@ use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2}
 use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH, keys};
 
 use crate::{
+    config::Settings,
     emu::Emu,
     menu::{self, Action},
+    panes,
     view::{self, Rotation, ViewOptions},
 };
 
@@ -47,6 +49,11 @@ const CHROME_HEIGHT: f32 = 26.0;
 /// Numbered savestate slots, as melonDS offers.
 pub const STATE_SLOTS: u8 = 8;
 
+pub use crate::{
+    config::RECENT_LIMIT,
+    panes::{Pane, RamSearch},
+};
+
 /// The size the window opens at: both screens at 2x, which is legible without
 /// filling a modern display.
 pub fn default_window_size() -> [f32; 2] {
@@ -75,14 +82,6 @@ pub const BINDINGS: &[(egui::Key, u32, &str)] = &[
     (egui::Key::ArrowRight, keys::RIGHT, "Right"),
 ];
 
-/// An auxiliary window.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Pane {
-    RomInfo,
-    Input,
-    About,
-}
-
 pub struct MelonEgui {
     emu: Option<Emu>,
     /// Uploaded once per emulated frame; `[top, bottom]`.
@@ -95,18 +94,37 @@ pub struct MelonEgui {
     /// Whether to pace the core against wall-clock time. Off, it runs as fast
     /// as it can, matching melonDS's "Limit framerate".
     pub limit_framerate: bool,
+    /// White noise on the microphone, the only mic input this build has.
+    pub mic_static: bool,
+    pub pause_when_unfocused: bool,
+    pub confirm_on_quit: bool,
+    pub dark_theme: bool,
+    pub ui_scale: f32,
+    /// Directory overrides; `None` means "beside the ROM".
+    pub save_dir: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
+    /// The Date and time dialog's working copy, applied on its button.
+    pub clock: crate::emu::Clock,
+    pub clock_note: String,
+    pub ram_search: RamSearch,
+    /// Recently opened ROMs, newest first.
+    recents: Vec<PathBuf>,
     /// Which auxiliary windows are open.
     panes: Vec<Pane>,
+    /// Whether the second view of this console is open.
+    second_window: bool,
+    /// Whether each screen had anything on it last frame, which is what
+    /// `ScreenSizing::Auto` decides on.
+    screens_live: [bool; 2],
     /// Fractional emulated frames owed, carried across repaints so a 60 Hz
     /// display does not slowly outrun the DS's 59.83 Hz.
     frame_debt: f64,
     last_tick: Instant,
     last_save_flush: Instant,
-    /// Where the bottom screen was drawn last repaint, and how it was rotated.
-    /// Touch is sampled before this repaint's layout runs, so it uses the
-    /// previous rectangle — one repaint of latency, invisible at these sizes.
-    /// `None` when the bottom screen is not being shown, which makes it
-    /// untouchable, as it should be.
+    /// Where the bottom screen was drawn last repaint. Touch is sampled before
+    /// this repaint's layout runs, so it uses the previous rectangle — one
+    /// repaint of latency, invisible at these sizes. `None` when the bottom
+    /// screen is not shown, which makes it untouchable, as it should be.
     bottom_screen: Option<Rect>,
     /// Emulated frames run and the wall-clock window they took, for the
     /// throughput readout.
@@ -133,19 +151,29 @@ impl MelonEgui {
         rom: Option<PathBuf>,
         shot: Option<(u64, PathBuf)>,
     ) -> Self {
-        // The core's picture is nearest-neighbour art, and the default light
-        // theme's pale chrome washes it out.
-        cc.egui_ctx.set_theme(egui::Theme::Dark);
-
+        let settings = Settings::load();
         let now = Instant::now();
         let mut app = Self {
             emu: None,
             textures: None,
             paused: false,
             step_pending: false,
-            view: ViewOptions::default(),
-            limit_framerate: true,
+            view: settings.view,
+            limit_framerate: settings.limit_framerate,
+            mic_static: false,
+            pause_when_unfocused: false,
+            confirm_on_quit: false,
+            dark_theme: settings.dark_theme,
+            ui_scale: if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 },
+            save_dir: settings.save_dir,
+            state_dir: settings.state_dir,
+            clock: crate::emu::utc_clock(),
+            clock_note: String::new(),
+            ram_search: RamSearch::default(),
+            recents: settings.recents,
             panes: Vec::new(),
+            second_window: false,
+            screens_live: [true, true],
             frame_debt: 0.0,
             last_tick: now,
             last_save_flush: now,
@@ -159,6 +187,10 @@ impl MelonEgui {
             shot,
             shot_requested: false,
         };
+        app.set_theme(&cc.egui_ctx, app.dark_theme);
+        if settings.ui_scale > 0.0 {
+            cc.egui_ctx.set_zoom_factor(settings.ui_scale);
+        }
         match rom {
             Some(rom) => app.load(&rom),
             None => app.post("no cart loaded — File ▸ Open ROM..."),
@@ -166,7 +198,34 @@ impl MelonEgui {
         app
     }
 
-    // -- state the menu asks about ------------------------------------------
+    /// Record `rom` at the top of the recent list and save.
+    fn push_recent(&mut self, rom: &Path) {
+        let mut settings = self.settings();
+        settings.push_recent(rom);
+        self.recents = settings.recents.clone();
+        settings.save();
+    }
+
+    /// Collect everything worth remembering and write it out.
+    fn persist(&self) {
+        self.settings().save();
+    }
+
+    /// Everything worth remembering, gathered up.
+    fn settings(&self) -> Settings {
+        Settings {
+            recents: self.recents.clone(),
+            view: self.view,
+            limit_framerate: self.limit_framerate,
+            audio_sync: false,
+            state_dir: self.state_dir.clone(),
+            save_dir: self.save_dir.clone(),
+            ui_scale: self.ui_scale,
+            dark_theme: self.dark_theme,
+        }
+    }
+
+    // -- state the menu and the panes ask about -----------------------------
 
     pub fn is_loaded(&self) -> bool {
         self.emu.is_some()
@@ -174,6 +233,18 @@ impl MelonEgui {
 
     pub const fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    pub fn recent_roms(&self) -> &[PathBuf] {
+        &self.recents
+    }
+
+    pub fn open_panes(&self) -> Vec<Pane> {
+        self.panes.clone()
+    }
+
+    pub fn close_pane(&mut self, pane: Pane) {
+        self.panes.retain(|open| *open != pane);
     }
 
     /// What melonDS shows next to "DS slot:".
@@ -189,12 +260,111 @@ impl MelonEgui {
         )
     }
 
+    /// The ROM info pane's rows, or `None` with no cart loaded.
+    pub fn cart_info(&self) -> Option<Vec<(&'static str, String)>> {
+        let emu = self.emu.as_ref()?;
+        Some(vec![
+            ("Title", emu.info.title.clone()),
+            ("Game code", emu.info.gamecode.clone()),
+            ("Maker code", emu.info.maker.clone()),
+            ("ROM size", format!("{:.1} MiB", emu.info.size as f64 / (1024.0 * 1024.0))),
+            ("File", emu.rom_path.display().to_string()),
+        ])
+    }
+
     pub fn state_slot_exists(&self, slot: u8) -> bool {
         self.emu.as_ref().is_some_and(|emu| emu.state_path(slot).exists())
     }
 
     pub const fn can_undo_state_load(&self) -> bool {
         self.undo_state.is_some()
+    }
+
+    /// Why there is no sound, for the Audio settings pane.
+    pub fn audio_status(&self) -> &'static str {
+        "No audio output: this front end has no audio device backend yet. \
+         The core does produce sound (the FFI exposes it), so this is a gap here, \
+         not a limit of the bindings."
+    }
+
+    pub fn set_theme(&mut self, ctx: &egui::Context, dark: bool) {
+        self.dark_theme = dark;
+        ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+    }
+
+    // -- the Date and time dialog -------------------------------------------
+
+    /// Push the dialog's clock into the console.
+    pub fn apply_clock(&mut self) {
+        let clock = self.clock;
+        match &mut self.emu {
+            Some(emu) => {
+                emu.set_clock(clock);
+                self.clock_note = format!(
+                    "set to {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second
+                );
+            }
+            None => self.clock_note = "no cart loaded".to_owned(),
+        }
+    }
+
+    // -- the RAM search -----------------------------------------------------
+
+    /// Read the value at `addr` at the search's current width.
+    pub fn ram_read(&mut self, addr: u32) -> u32 {
+        let Some(emu) = &mut self.emu else { return 0 };
+        match self.ram_search.width {
+            crate::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
+            crate::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
+            crate::panes::SearchWidth::Word => emu.nds.read32(addr),
+        }
+    }
+
+    /// Scan the whole of main RAM for the value, replacing any previous results.
+    pub fn ram_first_scan(&mut self) {
+        let Some(needle) = self.ram_search.parse_needle() else { return };
+        let width = self.ram_search.width;
+        let Some(emu) = &mut self.emu else { return };
+
+        // Main RAM starts at 0200_0000h on both CPUs (GBATEK, "Memory Maps").
+        const MAIN_RAM_BASE: u32 = 0x0200_0000;
+        let len = emu.nds.main_ram().len();
+        let mut hits = Vec::new();
+        let stride = width.size();
+        for offset in (0..len.saturating_sub(stride - 1)).step_by(stride) {
+            let addr = MAIN_RAM_BASE + offset as u32;
+            let value = match width {
+                crate::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
+                crate::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
+                crate::panes::SearchWidth::Word => emu.nds.read32(addr),
+            };
+            if value == needle {
+                hits.push(addr);
+            }
+        }
+        let found = hits.len();
+        self.ram_search.hits = hits;
+        self.post(format!("RAM search: {found} addresses hold {needle}"));
+    }
+
+    /// Keep only the addresses that still hold the value.
+    pub fn ram_narrow(&mut self) {
+        let Some(needle) = self.ram_search.parse_needle() else { return };
+        let width = self.ram_search.width;
+        let Some(emu) = &mut self.emu else { return };
+
+        let before = self.ram_search.hits.len();
+        self.ram_search.hits.retain(|&addr| {
+            let value = match width {
+                crate::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
+                crate::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
+                crate::panes::SearchWidth::Word => emu.nds.read32(addr),
+            };
+            value == needle
+        });
+        let after = self.ram_search.hits.len();
+        self.post(format!("RAM search: narrowed {before} to {after}"));
     }
 
     // -- commands -----------------------------------------------------------
@@ -215,9 +385,10 @@ impl MelonEgui {
         self.undo_state = None;
         self.textures = None;
         self.frames_run = 0;
-        match Emu::boot(rom) {
+        match Emu::boot_with(rom, self.save_dir.as_ref(), self.state_dir.as_ref()) {
             Ok(emu) => {
                 self.emu = Some(emu);
+                self.push_recent(rom);
                 self.paused = false;
                 self.frame_debt = 0.0;
                 self.last_tick = Instant::now();
@@ -242,6 +413,22 @@ impl MelonEgui {
                 self.textures = None;
                 self.undo_state = None;
                 self.post("cart ejected");
+            }
+            Action::OpenRecent(index) => {
+                if let Some(rom) = self.recents.get(index).cloned() {
+                    self.load(&rom);
+                }
+            }
+            Action::ClearRecent => {
+                self.recents.clear();
+                self.persist();
+                self.post("recent list cleared");
+            }
+            Action::OpenDirectory => self.open_directory(),
+            Action::NewWindow => {
+                self.second_window = !self.second_window;
+                let opened = self.second_window;
+                self.post(if opened { "second window opened" } else { "second window closed" });
             }
             Action::ImportSavefile => self.import_savefile(),
             Action::SaveState(slot) => self.save_state(slot),
@@ -279,6 +466,28 @@ impl MelonEgui {
                     self.panes.push(pane);
                 }
             }
+        }
+    }
+
+    /// Show this front end's directory in the system file manager.
+    fn open_directory(&mut self) {
+        let dir = crate::config::config_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.post(format!("cannot create {}: {e}", dir.display()));
+            return;
+        }
+        let command = if cfg!(windows) {
+            "explorer"
+        } else if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        match std::process::Command::new(command).arg(&dir).spawn() {
+            // `explorer` exits non-zero even on success, so a spawned child is
+            // as much confirmation as there is to be had.
+            Ok(_) => self.post(format!("opened {}", dir.display())),
+            Err(e) => self.post(format!("cannot open {}: {e}", dir.display())),
         }
     }
 
@@ -387,7 +596,10 @@ impl MelonEgui {
             return;
         }
 
-        let due = if self.paused {
+        // melonDS's "pause when unfocused": the console keeps its state, it just
+        // stops advancing while the window is in the background.
+        let unfocused = self.pause_when_unfocused && !ctx.input(|i| i.focused);
+        let due = if self.paused || unfocused {
             // Debt accrued while paused is not owed: resuming should not
             // fast-forward through it.
             self.frame_debt = 0.0;
@@ -418,8 +630,10 @@ impl MelonEgui {
 
         let mut ran = 0;
         let mut stopped = false;
+        let mic_static = self.mic_static;
         if let Some(emu) = &mut self.emu {
             emu.nds.set_keys(keys);
+            emu.set_mic_static(mic_static);
             match touch {
                 Some((x, y)) => emu.nds.touch(x, y),
                 None => emu.nds.release_screen(),
@@ -477,7 +691,12 @@ impl MelonEgui {
         let Some((top, bottom)) = emu.nds.framebuffers() else {
             return;
         };
+        // What `ScreenSizing::Auto` decides on: a screen showing nothing but
+        // black is one the console is not really using.
+        let lit = |fb: &[u32]| fb.iter().any(|&px| px & 0x00FF_FFFF != 0);
+        let live = [lit(top), lit(bottom)];
         let images = [to_image(top), to_image(bottom)];
+        self.screens_live = live;
 
         match &mut self.textures {
             // The options go in on every upload, so toggling `Screen filtering`
@@ -502,7 +721,7 @@ impl MelonEgui {
     /// Lay the screens out in `area` and paint them, recording where the bottom
     /// one landed so the next repaint can map touch onto it.
     fn screens(&mut self, ui: &mut egui::Ui, area: Rect) {
-        let placed = view::layout(area, &self.view);
+        let placed = view::layout(area, &self.resolved_view());
         self.bottom_screen = placed.bottom;
 
         let Some(textures) = &self.textures else {
@@ -513,6 +732,15 @@ impl MelonEgui {
             if let Some(rect) = rect {
                 paint_screen(painter, texture.id(), rect, self.view.rotation);
             }
+        }
+    }
+
+    /// The View options with `ScreenSizing::Auto` turned into whichever concrete
+    /// sizing the console's current output calls for.
+    fn resolved_view(&self) -> ViewOptions {
+        ViewOptions {
+            sizing: self.view.sizing.resolve(self.screens_live[0], self.screens_live[1]),
+            ..self.view
         }
     }
 
@@ -554,69 +782,48 @@ impl MelonEgui {
         }
     }
 
-    /// The auxiliary windows, each toggled from the menu.
-    fn panes(&mut self, ctx: &egui::Context) {
-        let open_panes = self.panes.clone();
-        for pane in open_panes {
-            let mut open = true;
-            match pane {
-                Pane::RomInfo => {
-                    egui::Window::new("ROM info").open(&mut open).show(ctx, |ui| {
-                        let Some(emu) = &self.emu else {
-                            ui.label("no cart loaded");
-                            return;
-                        };
-                        egui::Grid::new("rom-info").show(ui, |ui| {
-                            for (label, value) in [
-                                ("Title", emu.info.title.clone()),
-                                ("Game code", emu.info.gamecode.clone()),
-                                ("Maker code", emu.info.maker.clone()),
-                                (
-                                    "ROM size",
-                                    format!("{:.1} MiB", emu.info.size as f64 / (1024.0 * 1024.0)),
-                                ),
-                                ("File", emu.rom_path.display().to_string()),
-                            ] {
-                                ui.label(label);
-                                ui.label(value);
-                                ui.end_row();
-                            }
-                        });
-                    });
-                }
-                Pane::Input => {
-                    egui::Window::new("Input and hotkeys").open(&mut open).show(ctx, |ui| {
-                        ui.label("Bindings are fixed in this front end.");
-                        ui.separator();
-                        egui::Grid::new("bindings").show(ui, |ui| {
-                            for (key, _, name) in BINDINGS {
-                                ui.label(*name);
-                                ui.label(key.name());
-                                ui.end_row();
-                            }
-                            ui.label("Touch");
-                            ui.label("click the bottom screen");
-                            ui.end_row();
-                        });
-                    });
-                }
-                Pane::About => {
-                    egui::Window::new("About melon_egui").open(&mut open).show(ctx, |ui| {
-                        ui.label("melon_egui");
-                        ui.label(concat!("version ", env!("CARGO_PKG_VERSION")));
-                        ui.separator();
-                        ui.label(
-                            "An egui front end for the melonDS core, through the melonds-rs \
-                             bindings. Built as a reference picture to compare lunaris against.",
-                        );
-                        ui.separator();
-                        ui.label("GPL-3.0-or-later, as is the melonDS core it embeds.");
-                    });
-                }
+    /// A second window showing the same console, as melonDS's "Open new window"
+    /// does. It shares the textures, so it costs a blit and no emulation.
+    fn second_view(&mut self, ctx: &egui::Context) {
+        if !self.second_window {
+            return;
+        }
+        let Some(textures) = self.textures.clone() else {
+            return;
+        };
+        let view = self.resolved_view();
+        let id = egui::ViewportId::from_hash_of("melon_egui-second-view");
+        let builder = egui::ViewportBuilder::default()
+            .with_title("melon_egui - second view")
+            .with_inner_size(default_window_size())
+            // Same reason main.rs needs it: winit's drag-and-drop support
+            // initialises COM as an STA, which conflicts with an MTA already
+            // established on this process.
+            .with_drag_and_drop(false);
+
+        let mut closed = false;
+        ctx.show_viewport_immediate(id, builder, |ctx, _class| {
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
+                ctx,
+                |ui| {
+                    let area = ui.max_rect();
+                    let placed = view::layout(area, &view);
+                    let painter = ui.painter();
+                    for (rect, texture) in
+                        [(placed.top, &textures[0]), (placed.bottom, &textures[1])]
+                    {
+                        if let Some(rect) = rect {
+                            paint_screen(painter, texture.id(), rect, view.rotation);
+                        }
+                    }
+                },
+            );
+            if ctx.input(|i| i.viewport().close_requested()) {
+                closed = true;
             }
-            if !open {
-                self.panes.retain(|p| *p != pane);
-            }
+        });
+        if closed {
+            self.second_window = false;
         }
     }
 
@@ -675,7 +882,8 @@ impl eframe::App for MelonEgui {
                 self.osd(ui, area);
             },
         );
-        self.panes(ctx);
+        panes::show(self, ctx);
+        self.second_view(ctx);
         if let Some(action) = action {
             self.apply(action, ctx);
         }
@@ -694,6 +902,7 @@ impl eframe::App for MelonEgui {
         if let Some(emu) = &self.emu {
             emu.flush_save();
         }
+        self.persist();
     }
 }
 

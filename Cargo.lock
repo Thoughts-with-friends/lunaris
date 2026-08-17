@@ -2620,6 +2620,8 @@ dependencies = [
  "image",
  "melonds",
  "rfd",
+ "serde",
+ "serde_json",
  "winres",
 ]
 

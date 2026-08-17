@@ -60,6 +60,8 @@ pub struct Emu {
     /// The other end of the [`SaveSink`] handed to the core, so the front end
     /// can flush pending backup memory on its own schedule.
     saves: Arc<SaveSink>,
+    /// Where savestates go; `None` means beside the ROM.
+    state_dir: Option<PathBuf>,
 }
 
 impl Emu {
@@ -69,8 +71,19 @@ impl Emu {
     /// No BIOS or firmware files are needed: `melonds-sys`'s shim boots
     /// FreeBIOS with generated firmware.
     pub fn boot(rom_path: &Path) -> Result<Self, String> {
+        Self::boot_with(rom_path, None, None)
+    }
+
+    /// As [`Emu::boot`], but with the save and savestate directories overridden;
+    /// `None` for either means "beside the ROM".
+    pub fn boot_with(
+        rom_path: &Path,
+        save_dir: Option<&PathBuf>,
+        state_dir: Option<&PathBuf>,
+    ) -> Result<Self, String> {
         let rom = std::fs::read(rom_path).map_err(|e| format!("cannot read ROM: {e}"))?;
-        let save_path = backup_path(rom_path);
+        let save_path = crate::config::Settings::redirect(save_dir, rom_path, "sav");
+        let state_dir = state_dir.cloned();
         let save = std::fs::read(&save_path).ok();
 
         let saves = Arc::new(SaveSink { path: save_path, pending: Mutex::new(None) });
@@ -82,7 +95,13 @@ impl Emu {
         nds.set_rtc(y, mo, d, h, mi, s);
         nds.boot();
 
-        Ok(Self { nds, rom_path: rom_path.to_owned(), info: CartInfo::parse(&rom), saves })
+        Ok(Self {
+            nds,
+            rom_path: rom_path.to_owned(),
+            info: CartInfo::parse(&rom),
+            saves,
+            state_dir,
+        })
     }
 
     /// Write out backup memory if the core has changed it since the last call.
@@ -99,10 +118,35 @@ impl Emu {
         }
     }
 
+    /// Re-set the console's real-time clock.
+    ///
+    /// The RTC keeps counting in emulated time from whatever it is set to, so
+    /// this takes effect immediately; carts that only read the clock at startup
+    /// will not notice until they next look.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.nds.set_rtc(
+            clock.year,
+            clock.month,
+            clock.day,
+            clock.hour,
+            clock.minute,
+            clock.second,
+        );
+    }
+
+    /// Hold or release white noise on the microphone.
+    pub fn set_mic_static(&mut self, on: bool) {
+        self.nds.set_mic_static(on);
+    }
+
     /// Savestate path for one of the numbered slots, following melonDS's
     /// `<rom>.mlN` convention so the two front ends do not collide.
     pub fn state_path(&self, slot: u8) -> PathBuf {
-        self.rom_path.with_extension(format!("ml{slot}"))
+        crate::config::Settings::redirect(
+            self.state_dir.as_ref(),
+            &self.rom_path,
+            &format!("ml{slot}"),
+        )
     }
 
     /// Replace the cart's backup memory with `data` and restart, which is the
@@ -114,7 +158,11 @@ impl Emu {
         // Drop whatever the core was about to write, so the old save cannot
         // land on top of the imported one.
         *self.saves.pending.lock().unwrap() = None;
-        let reloaded = Self::boot(&self.rom_path)?;
+        let reloaded = Self::boot_with(
+            &self.rom_path,
+            self.saves.path.parent().map(Path::to_path_buf).as_ref(),
+            self.state_dir.as_ref(),
+        )?;
         *self = reloaded;
         Ok(())
     }
@@ -125,11 +173,6 @@ impl Drop for Emu {
     fn drop(&mut self) {
         self.flush_save();
     }
-}
-
-/// `<rom>.sav`, the same convention melonDS and lunaris both use.
-fn backup_path(rom_path: &Path) -> PathBuf {
-    rom_path.with_extension("sav")
 }
 
 /// The newest backup-memory image the core has produced, waiting to be written.
@@ -151,6 +194,29 @@ impl melonds::Host for HostBridge {
     fn write_save(&self, data: &[u8], _writeoffset: u32, _writelen: u32) {
         *self.saves.pending.lock().unwrap() = Some(data.to_vec());
     }
+}
+
+/// A wall-clock date and time, as the DS's RTC takes it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Clock {
+    pub year: i32,
+    pub month: i32,
+    pub day: i32,
+    pub hour: i32,
+    pub minute: i32,
+    pub second: i32,
+}
+
+impl Clock {
+    const fn from_parts(parts: (i32, i32, i32, i32, i32, i32)) -> Self {
+        let (year, month, day, hour, minute, second) = parts;
+        Self { year, month, day, hour, minute, second }
+    }
+}
+
+/// The current UTC date and time, for the Date and time dialog's "Now" button.
+pub fn utc_clock() -> Clock {
+    Clock::from_parts(if deterministic_rtc() { FIXED_RTC } else { utc_now() })
 }
 
 /// The clock a deterministic run boots with. Arbitrary, but fixed: what matters

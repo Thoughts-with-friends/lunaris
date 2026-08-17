@@ -65,9 +65,13 @@
 #[cfg(feature = "melonds")]
 mod app;
 #[cfg(feature = "melonds")]
+mod config;
+#[cfg(feature = "melonds")]
 mod emu;
 #[cfg(feature = "melonds")]
 mod menu;
+#[cfg(feature = "melonds")]
+mod panes;
 #[cfg(feature = "melonds")]
 mod selftest;
 #[cfg(feature = "melonds")]

@@ -4,22 +4,46 @@
 //! `frontend/qt_sdl/Window.cpp` (the `menubar->addMenu(...)` blocks), so that
 //! someone who knows melonDS finds the same commands in the same places.
 //!
-//! Entries this front end does not implement are **shown but disabled** rather
-//! than omitted: the shape then matches melonDS's, and what is missing is
-//! visible instead of merely absent. Each disabled group carries a tooltip
-//! saying why.
+//! Every entry that *can* be backed is live. The rest are **shown but disabled**
+//! rather than omitted, each carrying the specific reason it cannot work — see
+//! [`Unavailable`]. The shape then matches melonDS's, and what is missing is
+//! visible in the UI instead of merely absent.
 
 use egui::Ui;
 
 use crate::{
-    app::{MelonEgui, Pane, STATE_SLOTS},
-    view::{Rotation, SCREEN_GAPS, ScreenLayout, ScreenSizing},
+    app::{MelonEgui, Pane, RECENT_LIMIT, STATE_SLOTS},
+    view::{AspectRatio, Rotation, SCREEN_GAPS, ScreenLayout, ScreenSizing},
 };
+
+/// Why a menu entry is disabled.
+#[derive(Clone, Copy)]
+enum Unavailable {
+    /// The melonDS core can do it, but `melonds-rs`'s FFI (`shim.h`) exposes no
+    /// entry point for it, so no front end built on these bindings can reach it.
+    Bindings,
+    /// Reachable through the bindings, but not built yet.
+    Planned,
+}
+
+impl Unavailable {
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Bindings => {
+                "Not reachable: the melonds-rs bindings expose no FFI entry point for this."
+            }
+            Self::Planned => "Not implemented yet (the bindings do support it).",
+        }
+    }
+}
 
 /// What a menu entry asks for. Returned rather than acted on so that the menu
 /// closure does not need `&mut` access to the app while egui holds it.
 pub enum Action {
     OpenRom,
+    /// One of the remembered ROMs, by index into the recent list.
+    OpenRecent(usize),
+    ClearRecent,
     InsertCart,
     EjectCart,
     ImportSavefile,
@@ -27,6 +51,8 @@ pub enum Action {
     SaveState(Option<u8>),
     LoadState(Option<u8>),
     UndoStateLoad,
+    /// Reveal the directory this front end keeps its files in.
+    OpenDirectory,
     Quit,
     TogglePause,
     Reset,
@@ -34,6 +60,8 @@ pub enum Action {
     FrameStep,
     /// Resize the window so the screens land on exactly this scale.
     ScreenSize(f32),
+    /// A second window showing the same console.
+    NewWindow,
     /// Show or hide one of the auxiliary windows.
     TogglePane(Pane),
 }
@@ -51,10 +79,10 @@ pub fn bar(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
     action
 }
 
-/// A menu entry that is present for shape but has nothing behind it.
-fn unimplemented(ui: &mut Ui, label: &str) {
-    ui.add_enabled(false, egui::Button::new(label))
-        .on_disabled_hover_text("not implemented in melon_egui");
+/// An entry that is present for shape but cannot be used, with the reason on
+/// hover.
+fn unavailable(ui: &mut Ui, label: &str, why: Unavailable) {
+    ui.add_enabled(false, egui::Button::new(label)).on_disabled_hover_text(why.reason());
 }
 
 /// An entry that runs `action` and closes the menu.
@@ -72,10 +100,36 @@ fn file_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         let loaded = app.is_loaded();
 
         action = action.take().or_else(|| entry(ui, true, "Open ROM...", Action::OpenRom));
-        unimplemented(ui, "Open recent");
-        // Booting the firmware needs a real firmware image; this build's shim
-        // always direct-boots a cart with FreeBIOS.
-        unimplemented(ui, "Boot firmware");
+        ui.menu_button("Open recent", |ui| {
+            let recents = app.recent_roms().to_vec();
+            if recents.is_empty() {
+                ui.add_enabled(false, egui::Button::new("(nothing yet)"));
+            }
+            for (i, path) in recents.iter().take(RECENT_LIMIT).enumerate() {
+                // Numbered as melonDS numbers them, and labelled by file name so
+                // the list stays readable with long paths.
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                let label = format!("{}.  {name}", i + 1);
+                let clicked = ui
+                    .add(egui::Button::new(&label))
+                    .on_hover_text(path.display().to_string())
+                    .clicked();
+                if clicked {
+                    ui.close();
+                    action = Some(Action::OpenRecent(i));
+                }
+            }
+            if !recents.is_empty() {
+                ui.separator();
+                action = action.take().or_else(|| entry(ui, true, "Clear", Action::ClearRecent));
+            }
+        });
+        // Booting the firmware needs a firmware image and a boot path the shim
+        // does not offer: `mds_boot` always direct-boots a cart with FreeBIOS.
+        unavailable(ui, "Boot firmware", Unavailable::Bindings);
         ui.separator();
 
         ui.label(format!("DS slot: {}", app.cart_label()));
@@ -83,11 +137,11 @@ fn file_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         action = action.take().or_else(|| entry(ui, loaded, "Eject cart", Action::EjectCart));
         ui.separator();
 
-        // No GBA slot: the bindings expose no second cart.
+        // There is no GBA slot in the FFI: `mds_nds_new` takes one ROM.
         ui.label("GBA slot: (none)");
-        unimplemented(ui, "Insert ROM cart...");
-        unimplemented(ui, "Insert add-on cart");
-        unimplemented(ui, "Eject cart");
+        unavailable(ui, "Insert ROM cart...", Unavailable::Bindings);
+        unavailable(ui, "Insert add-on cart", Unavailable::Bindings);
+        unavailable(ui, "Eject cart", Unavailable::Bindings);
         ui.separator();
 
         action =
@@ -120,9 +174,9 @@ fn file_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         });
         ui.separator();
 
-        // No config directory: this front end keeps nothing outside the ROM's
-        // own folder.
-        unimplemented(ui, "Open melonDS directory");
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Open melon_egui directory", Action::OpenDirectory));
         ui.separator();
 
         action = action.take().or_else(|| entry(ui, true, "Quit", Action::Quit));
@@ -146,30 +200,37 @@ fn system_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         action = action.take().or_else(|| entry(ui, loaded, "Frame step", Action::FrameStep));
         ui.separator();
 
-        // Both need core settings the bindings do not surface.
-        unimplemented(ui, "Power management");
-        unimplemented(ui, "Date and time");
+        // Battery level and the lid switch are core settings with no FFI.
+        unavailable(ui, "Power management", Unavailable::Bindings);
+        action = action
+            .take()
+            .or_else(|| entry(ui, loaded, "Date and time", Action::TogglePane(Pane::DateTime)));
         ui.separator();
 
-        unimplemented(ui, "Enable cheats");
-        unimplemented(ui, "Setup cheat codes");
+        // The FFI has no AR engine. Cheats could be driven from the memory
+        // accessors instead, but a half-correct cheat engine is worse than none.
+        unavailable(ui, "Enable cheats", Unavailable::Bindings);
+        unavailable(ui, "Setup cheat codes", Unavailable::Bindings);
         ui.separator();
 
         action = action
             .take()
             .or_else(|| entry(ui, loaded, "ROM info", Action::TogglePane(Pane::RomInfo)));
-        unimplemented(ui, "RAM search");
-        unimplemented(ui, "Manage DSi titles");
+        action = action
+            .take()
+            .or_else(|| entry(ui, loaded, "RAM search", Action::TogglePane(Pane::RamSearch)));
+        // No DSi mode in this build at all.
+        unavailable(ui, "Manage DSi titles", Unavailable::Bindings);
         ui.separator();
 
         ui.menu_button("Multiplayer", |ui| {
-            // The whole point of comparing against melonDS, and the one thing
-            // this front end deliberately does not do yet: it runs a single
-            // unlinked console, see `emu.rs`.
-            unimplemented(ui, "Launch new instance");
+            // The `Host` trait does carry every MP hook, so this is buildable --
+            // and it is the reason this crate exists. It is just a subsystem of
+            // its own rather than a menu entry.
+            unavailable(ui, "Launch new instance", Unavailable::Planned);
             ui.separator();
-            unimplemented(ui, "Host LAN game");
-            unimplemented(ui, "Join LAN game");
+            unavailable(ui, "Host LAN game", Unavailable::Planned);
+            unavailable(ui, "Join LAN game", Unavailable::Planned);
         });
     });
     action
@@ -199,35 +260,38 @@ fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         });
         ui.menu_button("Screen layout", |ui| {
             for layout in ScreenLayout::ALL {
-                if layout.supported() {
-                    ui.radio_value(&mut view.layout, layout, layout.label());
-                } else {
-                    unimplemented(ui, layout.label());
-                }
+                ui.radio_value(&mut view.layout, layout, layout.label());
             }
             ui.separator();
             ui.checkbox(&mut view.swap, "Swap screens");
         });
         ui.menu_button("Screen sizing", |ui| {
             for sizing in ScreenSizing::ALL {
-                if sizing.supported() {
-                    ui.radio_value(&mut view.sizing, sizing, sizing.label());
-                } else {
-                    unimplemented(ui, sizing.label());
-                }
+                ui.radio_value(&mut view.sizing, sizing, sizing.label());
             }
             ui.separator();
             ui.checkbox(&mut view.integer_scaling, "Force integer scaling");
         });
-        // Non-native aspect ratios would need the layout to stretch rather than
-        // fit, which is the opposite of what a reference picture wants.
-        unimplemented(ui, "Aspect ratio");
+        ui.menu_button("Aspect ratio", |ui| {
+            // Per screen, and labelled per screen, exactly as melonDS lists it.
+            for aspect in AspectRatio::ALL {
+                ui.radio_value(&mut view.aspect_top, aspect, format!("Top {}", aspect.label()));
+            }
+            ui.separator();
+            for aspect in AspectRatio::ALL {
+                ui.radio_value(
+                    &mut view.aspect_bottom,
+                    aspect,
+                    format!("Bottom {}", aspect.label()),
+                );
+            }
+        });
         ui.separator();
 
-        // One window, one console; see the Multiplayer note above.
-        unimplemented(ui, "Open new window");
+        action = action.take().or_else(|| entry(ui, true, "Open new window", Action::NewWindow));
         ui.separator();
 
+        let view = &mut app.view;
         ui.checkbox(&mut view.filtering, "Screen filtering");
         ui.checkbox(&mut view.show_osd, "Show OSD");
     });
@@ -237,29 +301,42 @@ fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
 fn config_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
     let mut action = None;
     ui.menu_button("Config", |ui| {
-        // Everything melonDS keeps in a settings dialog needs config plumbing
-        // this front end does not have; the input list is the exception because
-        // its bindings are fixed and worth being able to read.
-        unimplemented(ui, "Emu settings");
-        unimplemented(ui, "Preferences...");
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Emu settings", Action::TogglePane(Pane::EmuSettings)));
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Preferences...", Action::TogglePane(Pane::Preferences)));
         ui.separator();
 
         action = action
             .take()
             .or_else(|| entry(ui, true, "Input and hotkeys", Action::TogglePane(Pane::Input)));
-        unimplemented(ui, "Video settings");
-        unimplemented(ui, "Camera settings");
-        // There is no audio output at all yet, so nothing to configure.
-        unimplemented(ui, "Audio settings");
-        unimplemented(ui, "Multiplayer settings");
-        unimplemented(ui, "Wifi settings");
-        unimplemented(ui, "Firmware settings");
-        unimplemented(ui, "Interface settings");
-        unimplemented(ui, "Path settings");
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Video settings", Action::TogglePane(Pane::VideoSettings)));
+        // No camera in the FFI.
+        unavailable(ui, "Camera settings", Unavailable::Bindings);
+        // The FFI exposes `mds_audio_read`, so output is buildable -- there is
+        // just no audio device backend in this front end yet, and a volume
+        // slider over silence would be a lie.
+        unavailable(ui, "Audio settings", Unavailable::Planned);
+        // Both of these configure wireless, which is not wired up yet.
+        unavailable(ui, "Multiplayer settings", Unavailable::Planned);
+        unavailable(ui, "Wifi settings", Unavailable::Planned);
+        // The firmware is generated by the shim; its contents are not settable.
+        unavailable(ui, "Firmware settings", Unavailable::Bindings);
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Interface settings", Action::TogglePane(Pane::Interface)));
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Path settings", Action::TogglePane(Pane::Paths)));
         ui.separator();
 
         ui.checkbox(&mut app.limit_framerate, "Limit framerate");
-        unimplemented(ui, "Audio sync");
+        // Nothing to sync to until there is audio output.
+        unavailable(ui, "Audio sync", Unavailable::Planned);
     });
     action
 }

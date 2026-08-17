@@ -34,6 +34,10 @@ eframe = { version = "0.33", default-features = false, features = [
 egui = "0.33"
 rfd = "0.14"
 
+# Remembering the recent-ROM list and the View menu's settings between runs.
+serde.workspace = true
+serde_json = "1.0.149"
+
 # Only used by `--selftest --dump`, to make the core's picture inspectable
 # without a window. Same version core's own frame dumper uses.
 image = { version = "0.25", default-features = false, features = ["png"] }
