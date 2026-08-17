@@ -11,6 +11,7 @@
     "lint:fix": "cargo clippy --workspace --fix --allow-staged --allow-dirty",
     "build:imgui": "cargo build --release --features release --package lunaris_imgui",
     "build:egui": "cargo build --release --features release --package lunaris",
+    "build:melon": "cargo build --release --features release --package melon_egui",
     "imgui": "cargo run --release --features release --package lunaris_imgui",
     "egui": "cargo run --release --features release --package lunaris",
     "egui:gnu": "cargo +stable-x86_64-pc-windows-gnu run --release",

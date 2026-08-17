@@ -37,8 +37,12 @@ jobs:
 
       - name: Check format
         run: cargo fmt --all -- --check
+      # `melon_egui` is excluded because its default feature compiles the
+      # melonDS C++ core, which needs an LLVM toolchain and several minutes; it
+      # is a local comparison tool, not part of the emulator. Lint it with
+      # `cargo clippy -p melon_egui` on a machine set up for that build.
       - name: Lint Check
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --exclude melon_egui -- -D warnings
 
       # The action only supports Linux.
       - name: Check license, dependencies

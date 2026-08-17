@@ -135,7 +135,12 @@ pub use names::*;
 /// actual progress.
 ///
 /// [`write16`]: Wifi::write16
-const MP_SETUP_REGS: [usize; 16] = [
+const MP_SETUP_REGS: [usize; 17] = [
+    // Bit 0 is the transceiver's master enable. A radio that is down with this
+    // clear stays down in melonDS too, so whether the driver ever re-asserts it
+    // is the difference between "we lose the write" and "the driver never makes
+    // it". Only bit-14 writes were traced before, which cannot answer that.
+    W_ModeReset,
     W_ModeWEP,
     W_BSSID0,
     W_AIDFull,
@@ -163,6 +168,7 @@ const MP_SETUP_REGS: [usize; 16] = [
 /// names rather than offsets.
 fn mp_setup_reg_name(reg: usize) -> &'static str {
     match reg {
+        W_ModeReset => "W_ModeReset",
         W_ModeWEP => "W_ModeWEP",
         W_BSSID0 => "W_BSSID0",
         W_AIDFull => "W_AIDFull",
@@ -398,10 +404,10 @@ impl Wifi {
             // `Wifi::check_rx`'s zero-size-ring guard then rejected *every*
             // inbound frame. See `docs/design/local-mp-melonds-parity-2.md` F0.
             //
-            // Not ported: the bit-0 edge's `UpdatePowerStatus(0)` call and the
-            // `IOPORT(0x27C)` writes -- both belong to the power-management
-            // state machine this emulator does not implement (see the previous
-            // design document's Appendix C).
+            // The bit-0 edges *are* ported, including the `27Ch` status word;
+            // see the block just above the edge handling below. An older
+            // version of this comment claimed otherwise and outlived the code
+            // that made it true.
             W_ModeReset => {
                 let old = self.ioport(W_ModeReset);
                 // Bit 14 restores the register defaults, which includes zeroing
@@ -418,30 +424,26 @@ impl Wifi {
                     );
                 }
                 self.set_ioport(W_ModeReset, value & 0x0001);
-                // Bit 0 is the transceiver's master enable; both edges
-                // re-evaluate power (`Wifi.cpp:2130-2143`).
+                // Bit 0 is the transceiver's master enable. Both edges publish
+                // a status word at port `27Ch` and re-evaluate power
+                // (`Wifi.cpp:2131-2143`). `27Ch` is not one of the named `W_*`
+                // registers; melonDS writes it as a bare port and so does this.
                 //
-                // The rising edge requests power *on* rather than merely
-                // re-evaluating. melonDS passes 0 on both edges, but it also
-                // models `IOPORT(0x27C)` and a driver that drives
-                // `W_PowerState` in mode 3. Here, clearing bit 0 forces the
-                // radio off (`update_power_status`'s master-enable branch)
-                // and re-asserting it would otherwise leave `reqflags` at 0
-                // -- the radio never comes back, `check_rx` returns at its
-                // `W_PowerState` bit-9 guard, and the instance stops
-                // receiving for good. Asserting the master enable has to be
-                // able to undo what clearing it did.
-                // Both edges publish a status word at port `27Ch` and
-                // re-evaluate power (`Wifi.cpp:2131-2143`). `27Ch` is not
-                // one of the named `W_*` registers; melonDS writes it as a
-                // bare port and so does this.
+                // **Deviation:** the rising edge requests power *on* where
+                // melonDS passes `0` (re-evaluate only). This is the second
+                // half of the pair described in
+                // [`Wifi::update_power_status`]: that function declines to
+                // force the radio off while the master enable is clear, and
+                // this one lets re-asserting the enable actively bring it
+                // back. Neither is faithful on its own, and removing either
+                // alone strands the radio off -- the driver then spins on
+                // `W_PowerState`/`W_RFStatus` and the link dies.
                 //
-                // The rising edge requests power *on* rather than merely
-                // re-evaluating (melonDS passes 0 on both edges). Paired
-                // with the deviation in `Wifi::update_power_status`, this is
-                // what lets the master enable undo its own force-off:
-                // without it `reqflags` stays 0 and the transmit half never
-                // returns.
+                // Note the two `TODO`s in melonDS this does *not* fill in,
+                // because melonDS does not either: partial power states
+                // (`W_PowerDownCtrl` 1 or 2, `Wifi.cpp:509`) and `W_RFStatus`
+                // states 2/4/7 (`Wifi.cpp:455`, whose `rfpins` entries are
+                // zero). There is no more complete reference to port from.
                 if old & 0x0001 == 0 && value & 0x0001 != 0 {
                     self.set_ioport(0x27C, 0x0005);
                     self.update_power_status(1);
@@ -514,6 +516,12 @@ impl Wifi {
                         value & 0x000F,
                         self.us_timestamp,
                     );
+                    // Accepting an association opens the window that ends in
+                    // either MP rounds or a teardown; the reads inside it are
+                    // what the driver is waiting on.
+                    if value & 0x000F != 0 {
+                        self.mark_read_baseline();
+                    }
                 }
                 self.set_ioport(W_AIDLow, value & 0x000F);
             }

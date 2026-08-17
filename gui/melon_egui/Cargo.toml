@@ -1,0 +1,51 @@
+# egui front end for the *melonDS* core, via the `melonds-rs` bindings.
+#
+# Purpose: a reference renderer whose emulation is known-good, so lunaris's own
+# output (and its wifi traces) can be compared against melonDS without needing
+# melonDS's Qt frontend built. See docs/design/review_mp_local2.md §7.
+#
+# The `melonds` feature is opt-in because building it compiles the melonDS C++
+# core, which needs an LLVM toolchain (see src/main.rs for the environment it
+# expects). Leaving it off keeps `cargo build --workspace` working on machines
+# without one.
+[package]
+name = "melon_egui"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+winres = "0.1.12" # Meta information can be added to the exe.
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "x11",
+    "wayland",
+] }
+egui = "0.33"
+rfd = "0.14"
+
+# Only used by `--selftest --dump`, to make the core's picture inspectable
+# without a window. Same version core's own frame dumper uses.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "599d4c8", optional = true }
+
+[features]
+release = []
+
+# On by default so that `cargo run -p melon_egui` just launches, rather than
+# building a binary with no emulator core in it. The cost is that
+# `cargo build --workspace` then needs the LLVM toolchain too; pass
+# `--no-default-features` to build this crate without the core.
+default = ["melonds"]
+melonds = ["dep:melonds"]

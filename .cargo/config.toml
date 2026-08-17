@@ -1,3 +1,19 @@
 [alias]
-# `cargo xtask <build|run> [--gui egui|imgui]` — see xtask/src/main.rs.
+# `cargo xtask <build|run> [--gui egui|imgui|melon]` — see xtask/src/main.rs.
 xtask = "run -p xtask --quiet --"
+
+# `gui/melon_egui` compiles the melonDS C++ core through `melonds-sys`, which
+# needs an LLVM toolchain: clang driving the MSVC ABI (melonDS is GCC/Clang code
+# `cl.exe` cannot compile) via `LLVM_ROOT`, plus `LIBCLANG_PATH` for the
+# `bindgen` step.
+#
+# Those two paths are machine-specific, so they are deliberately NOT set here —
+# this file is committed. Either:
+#
+#   * use `cargo xtask run --gui melon --release`, which locates a toolchain
+#     itself (Visual Studio's "C++ Clang tools" component, or a standalone
+#     `winget install LLVM.LLVM`), or
+#   * set `LLVM_ROOT` and `LIBCLANG_PATH` once in a `.cargo/config.toml` in a
+#     directory *above* this repository, which cargo also reads.
+#
+# Neither is needed for any other crate here, nor to run the built executable.

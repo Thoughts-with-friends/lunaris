@@ -236,6 +236,29 @@ pub struct Wifi {
     #[savestate(skip)]
     assoc_trace_reads: u32,
 
+    /// [`Wifi::reg_read_counts`] as it stood at the last baseline, so a later
+    /// dump can report *what was polled during a window* rather than a
+    /// session-cumulative ranking.
+    ///
+    /// A driver waiting on a condition spins on one register, but the
+    /// cumulative counts are dominated by whatever it polled during boot. The
+    /// delta over the window that ends in a teardown is what names the
+    /// condition it gave up on. See [`Wifi::dump_read_profile`].
+    #[savestate(skip)]
+    read_count_baseline: Vec<u32>,
+
+    /// Remaining interrupts to trace, armed while a TX slot sits armed but
+    /// unrequested.
+    ///
+    /// Tracing every interrupt is useless -- IRQ 0/6/7 fire continuously and
+    /// bury everything else. The interesting window is narrow and specific:
+    /// between a driver arming a slot and requesting its transmission it is
+    /// waiting for *something*, and on a client that stalls after associating
+    /// that gap ran to 9.6ms while the peer gave up. See
+    /// [`assoc_trace_enabled`] and `docs/design/review_mp_local2.md` §7.1i.
+    #[savestate(skip)]
+    irq_trace_remaining: u32,
+
     /// Set by [`Wifi::update_power_status`] when the transceiver starts
     /// powering up, and drained by [`Wifi::tick`]. Latched rather than
     /// raised directly because power status is re-evaluated from register
@@ -271,6 +294,11 @@ impl Wifi {
     /// header, i.e. ~26 halfwords; 64 covers it with room for the driver to
     /// walk past the end.
     const ASSOC_TRACE_READS: u32 = 64;
+
+    /// Interrupts logged per armed-but-unrequested window. A driver waiting a
+    /// few milliseconds services a handful; 64 covers that without letting a
+    /// window that never closes flood the console.
+    const IRQ_TRACE_LIMIT: u32 = 64;
 
     const RAM_SIZE: usize = 0x2000;
     const IO_WORDS: usize = 0x800;
@@ -321,6 +349,8 @@ impl Wifi {
             block_beacon_irq14: false,
             rx_read_cursor_written: false,
             assoc_trace_reads: 0,
+            read_count_baseline: vec![0; Self::IO_WORDS],
+            irq_trace_remaining: 0,
             pending_irq11: false,
             reg_read_counts: vec![0; Self::IO_WORDS],
             diag: diag::MpDiag::default(),
@@ -377,6 +407,8 @@ impl Wifi {
         self.block_beacon_irq14 = false;
         self.rx_read_cursor_written = false;
         self.assoc_trace_reads = 0;
+        self.read_count_baseline.iter_mut().for_each(|n| *n = 0);
+        self.irq_trace_remaining = 0;
         self.bb_regs.iter_mut().for_each(|b| *b = 0);
         self.bb_regs_ro.iter_mut().for_each(|b| *b = 0);
 
@@ -674,9 +706,15 @@ impl Wifi {
             // `W_PowerState` bit 1, nor `W_PowerDownCtrl` bit 1, nor IRQ 15
             // can bring it back -- the driver is left polling
             // `W_PowerState`/`W_RFStatus` tens of millions of times while
-            // the link dies. melonDS escapes because it models the partial
-            // power states and `W_RFStatus` states 2/4/7, neither of which
-            // exists here (nor in melonDS's own TODO list).
+            // the link dies.
+            //
+            // This used to claim melonDS escapes by modelling the partial
+            // power states and `W_RFStatus` 2/4/7. It does not -- both are
+            // `TODO`s there too (`Wifi.cpp:509`, `455`), and the `rfpins`
+            // entries for 2/4/7 are zero. So there is nothing more faithful
+            // available to port; this deviation and the rising-edge
+            // `update_power_status(1)` in [`super::regs`]'s `W_ModeReset` arm
+            // are a matched pair, and removing either alone strands the radio.
             //
             // Leaving the state alone keeps every other power path
             // faithful, and is the narrowest change that removes the
@@ -708,6 +746,28 @@ impl Wifi {
 
         if reqflags == curflags {
             return;
+        }
+
+        // Every actual transition of the transceiver, with the inputs that
+        // decided it. `W_PowerState` bit 9 going up is the moment an instance
+        // stops being able to transmit, and the counters alone say only that it
+        // happened, never which branch chose it. See
+        // [`assoc_trace_enabled`] and `docs/design/review_mp_local2.md` §7.1h.
+        if assoc_trace_enabled() {
+            eprintln!(
+                "[assoc-trace][{:04X}] power {}: request={power} curflags={curflags} \
+                 reqflags={reqflags} (W_ModeReset=0x{:04X} master_enable_held={mode_reset_forced} \
+                 W_ModeWEP=0x{:04X} W_PowerTX=0x{:04X} W_PowerDownCtrl=0x{:04X} \
+                 W_PowerForce=0x{:04X}) (us_timestamp={})",
+                self.ioport(W_MACAddr2),
+                if reqflags & 2 != 0 { "ON" } else { "OFF" },
+                self.ioport(W_ModeReset),
+                self.ioport(W_ModeWEP),
+                self.ioport(W_PowerTX),
+                self.ioport(W_PowerDownCtrl),
+                self.ioport(W_PowerForce),
+                self.us_timestamp,
+            );
         }
 
         if reqflags & 1 != 0 {
@@ -788,6 +848,35 @@ impl Wifi {
     /// re-triggering here would flood the ARM7 with spurious interrupts.
     fn set_irq(&mut self, irq: u32, request: &mut InterruptRequest) {
         let old_flags = self.ioport(W_IF) & self.ioport(W_IE);
+
+        // Only inside the armed-but-unrequested window; see
+        // [`Wifi::irq_trace_remaining`]. `enabled` matters as much as the
+        // number: an interrupt the driver has masked off cannot be the one it
+        // is waiting for, and `W_IF` is set either way.
+        if self.irq_trace_remaining > 0 {
+            self.irq_trace_remaining -= 1;
+            eprintln!(
+                "[assoc-trace][{:04X}]   IRQ {irq} raised (enabled={}, us_timestamp={})",
+                self.ioport(W_MACAddr2),
+                self.ioport(W_IE) & (1 << irq) != 0,
+                self.us_timestamp,
+            );
+        } else if assoc_trace_enabled() && matches!(irq, 13..=15) {
+            // The beacon-cycle interrupts, always, not just inside a window.
+            // A driver that only requests transmissions from its IRQ 14
+            // handler has a send latency of exactly one beacon interval, so
+            // the *period* between these is a property worth being able to
+            // read straight off a log. They fire a handful of times a second,
+            // so this costs nothing.
+            eprintln!(
+                "[assoc-trace][{:04X}] IRQ {irq} (beacon cycle, enabled={}, interval={},                  us_timestamp={})",
+                self.ioport(W_MACAddr2),
+                self.ioport(W_IE) & (1 << irq) != 0,
+                self.ioport(W_BeaconInterval),
+                self.us_timestamp,
+            );
+        }
+
         self.set_ioport(W_IF, self.ioport(W_IF) | (1 << irq));
         self.check_irq_edge(old_flags, request);
     }
@@ -890,6 +979,41 @@ impl Wifi {
             snapshot.top_reads[slot] = (reg as u16, count);
         }
         snapshot
+    }
+
+    /// Records the current read counts as the baseline for the next
+    /// [`Wifi::dump_read_profile`].
+    pub(super) fn mark_read_baseline(&mut self) {
+        self.read_count_baseline.clone_from(&self.reg_read_counts);
+    }
+
+    /// Prints the registers read most often *since the last baseline*, with a
+    /// `label` naming the window.
+    ///
+    /// This is the question the write trace cannot answer. A driver that has
+    /// stopped making progress still reads constantly; which register it reads
+    /// is the condition it is waiting for, and the cumulative ranking hides
+    /// that behind the boot-time traffic. See [`assoc_trace_enabled`].
+    pub(super) fn dump_read_profile(&self, label: &str) {
+        let mut ranked: Vec<(u32, usize)> = self
+            .reg_read_counts
+            .iter()
+            .zip(self.read_count_baseline.iter())
+            .enumerate()
+            .filter_map(|(i, (&now, &then))| {
+                let delta = now.saturating_sub(then);
+                (delta > 0).then_some((delta, i << 1))
+            })
+            .collect();
+        ranked.sort_unstable_by_key(|&(count, _)| std::cmp::Reverse(count));
+
+        let top: Vec<String> =
+            ranked.iter().take(8).map(|&(n, reg)| format!("{reg:03X}:{n}")).collect();
+        eprintln!(
+            "[assoc-trace][{:04X}] reads during {label}: {}",
+            self.ioport(regs::W_MACAddr2),
+            if top.is_empty() { "(none)".to_owned() } else { top.join("  ") },
+        );
     }
 
     /// Prints the [`diag`] summary immediately. See [`crate::hw::HW::wifi_dump_diag`].

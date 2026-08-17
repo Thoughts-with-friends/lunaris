@@ -284,15 +284,21 @@ impl Wifi {
         // melonDS aborts here when `W_PowerState` bit 9 reports the
         // transceiver powered down (`Wifi.cpp:1566-1567`).
         //
-        // **Deliberate deviation:** this port does not, because it has no
-        // reliable way back out of that state. melonDS's radio always
-        // recovers -- it models `IOPORT(0x27C)`, the partial
-        // `W_PowerDownCtrl` states, and a driver that drives `W_PowerState`
-        // in `W_ModeWEP` mode 3 -- whereas here, measured against a real
-        // game, an instance that took this branch simply stopped receiving
-        // for the rest of the session: reception froze mid-session and the
-        // link dropped, with the driver polling `W_PowerState` tens of
+        // **Deliberate deviation:** this port does not gate on it, because a
+        // radio that goes down here has no reliable way back. Measured against
+        // a real game, an instance that took this branch simply stopped
+        // receiving for the rest of the session: reception froze mid-session
+        // and the link dropped, with the driver polling `W_PowerState` tens of
         // millions of times waiting for a wake-up that never came.
+        //
+        // This comment used to blame the gap on melonDS modelling things this
+        // port does not -- `IOPORT(0x27C)`, the partial `W_PowerDownCtrl`
+        // states, `W_RFStatus` 2/4/7. That was wrong on every count: `27Ch` is
+        // implemented (see [`super::regs`]), and melonDS carries `TODO`s for
+        // the other two rather than implementations (`Wifi.cpp:455`, `509`).
+        // The real difference is narrower -- the `W_ModeReset` master-enable
+        // pair documented in [`Wifi::update_power_status`] -- and there is no
+        // more complete reference to port from.
         //
         // The power state itself is still modelled and still reported to the
         // driver through `W_PowerState`/`W_TRXPower`/`W_RFStatus`; only this

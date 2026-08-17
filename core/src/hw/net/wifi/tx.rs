@@ -169,8 +169,41 @@ impl Wifi {
         if self.ioport(W_TXSlotLoc3) & 0x8000 != 0 {
             txstart |= 0x0008;
         }
+        let armed = txstart;
         txstart &= txreq;
         txstart &= !txbusy;
+
+        // A slot the driver armed (bit 15 set) that `FireTX` declines to start
+        // is the exact shape of a staged frame that never goes out -- which is
+        // how a client that has associated ends up silent until its peer gives
+        // up on it. The three masks name which gate stopped it: not requested
+        // (`W_TXReqRead`), already busy (`W_TXBusy`, i.e. a previous transfer
+        // on that slot never completed), or reception disarmed.
+        if super::assoc_trace_enabled() && armed & !txstart != 0 {
+            eprintln!(
+                "[assoc-trace][{:04X}] fire_tx declined slots 0x{:04X}: armed=0x{armed:04X} \
+                 txreq=0x{txreq:04X} txbusy=0x{txbusy:04X} com_status={} tx_cur_slot={} \
+                 (us_timestamp={})",
+                self.ioport(W_MACAddr2),
+                armed & !txstart,
+                self.com_status,
+                self.tx_cur_slot,
+                self.us_timestamp,
+            );
+            // Armed but not *requested* means the driver staged a frame and has
+            // not yet said "send it" -- it is waiting on something. Open the
+            // interrupt window here so that wait becomes visible. A slot
+            // declined for `W_TXBusy` instead is merely queued behind a
+            // transfer in flight and needs no explaining.
+            if armed & !txstart & !txreq != 0 {
+                self.irq_trace_remaining = Wifi::IRQ_TRACE_LIMIT;
+            }
+        }
+        // The frame finally went out: close the window rather than let it leak
+        // into unrelated traffic.
+        if txstart != 0 {
+            self.irq_trace_remaining = 0;
+        }
 
         self.set_ioport(W_TXBusy, txbusy | txstart);
 
@@ -371,6 +404,16 @@ impl Wifi {
         // frame. Ported from `ProcessTX`'s `if (num != 5) TXSendFrame(...)`.
         if slot != 5 && self.cur_channel != 0 {
             self.send_slot_frame(slot);
+        } else if slot != 5 && super::assoc_trace_enabled() {
+            // The phase machine below still runs to completion and still raises
+            // IRQ 1, so from the driver's side the transmission "succeeded"
+            // while nothing reached the wire. Silent, and indistinguishable
+            // from a peer that simply is not listening.
+            eprintln!(
+                "[assoc-trace][{:04X}] TX DROPPED slot={slot}: no RF channel resolved \
+                 (cur_channel=0), frame never reached the transport",
+                self.ioport(W_MACAddr2),
+            );
         }
         let s = self.tx_slots[slot];
         self.tx_slots[slot].phase = 1;
@@ -635,6 +678,17 @@ impl Wifi {
         }
 
         if self.cur_channel == 0 {
+            // The TX phase machine still runs to completion and still raises
+            // IRQ 1/7, so from the driver's side the transmission "succeeded"
+            // while nothing reached the wire. Silent, and indistinguishable
+            // from a peer that is not listening -- worth naming.
+            if super::assoc_trace_enabled() {
+                eprintln!(
+                    "[assoc-trace][{:04X}] TX DROPPED slot={slot}: no RF channel resolved \
+                     (cur_channel=0), frame never reached the transport",
+                    self.ioport(W_MACAddr2),
+                );
+            }
             return;
         }
         // Only the channel byte is patched. The rate (`[8]`) and frame length
@@ -657,6 +711,9 @@ impl Wifi {
                     self.ioport(W_AIDLow),
                     self.us_timestamp,
                 );
+                // The whole point of the window: whatever this driver polled
+                // while it waited is the condition it just gave up on.
+                self.dump_read_profile("the wait before this deauth");
             }
             if fc & 0x00FF == 0x00C0 && self.is_mp_client {
                 self.is_mp = false;

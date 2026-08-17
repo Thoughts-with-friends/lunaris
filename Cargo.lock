@@ -468,6 +468,8 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
+ "log",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -2607,6 +2609,38 @@ checksum = "8ea1f30cedd69f0a2954655f7188c6a834246d2bcf1e315e2ac40c4b24dc9519"
 dependencies = [
  "cfg-if 1.0.4",
  "rayon",
+]
+
+[[package]]
+name = "melon_egui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "image",
+ "melonds",
+ "rfd",
+ "winres",
+]
+
+[[package]]
+name = "melonds"
+version = "0.1.0"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=599d4c8#599d4c84a8367878214ca651ff5f6a4084d514af"
+dependencies = [
+ "log",
+ "melonds-sys",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "melonds-sys"
+version = "0.1.0"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=599d4c8#599d4c84a8367878214ca651ff5f6a4084d514af"
+dependencies = [
+ "bindgen",
+ "cc",
+ "cmake",
 ]
 
 [[package]]

@@ -39,7 +39,9 @@ jobs:
       - name: Install nextest(Parallel Test Execution CLI)
         uses: taiki-e/install-action@nextest
       - name: Test
-        run: cargo nextest run --workspace --target ${{ matrix.job.target }} --exclude lunaris
+        # `melon_egui` is excluded for the same reason as `lunaris`: see the note
+        # in lint.yaml — its default feature builds the melonDS C++ core.
+        run: cargo nextest run --workspace --target ${{ matrix.job.target }} --exclude lunaris --exclude melon_egui
 
   # miri:
   #   runs-on: ubuntu-latest

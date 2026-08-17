@@ -712,20 +712,36 @@ impl Drop for ThreadMode {
 /// One line of the MP diagnostic counters, in the same shape both instances
 /// report so the two can be compared at a glance.
 fn diag_line(d: &nds_core::nds::MpDiag) -> String {
+    // `rx_accepted` far below what the peer transmitted says frames are being
+    // lost, but not where. The drop counters are the other half of that
+    // sentence, and omitting them made a real 88%-loss reading unactionable.
+    let k = &d.drops;
     format!(
-        "channel {} · is_mp {} / client {} / aid {} · rx {} of {} polls · loc {} beacon {} \
-         cmd {} reply {} · irq12 {}",
+        "channel {} · is_mp {} / client {} / aid {} · rx {} of {} polls (empty {}) · loc {} \
+         beacon {} cmd {} reply {} · irq12 {}\ndropped: rx_disabled {} ring_unconfigured {} \
+         too_short {} bad_length {} channel_mismatch {} foreign_mp {} filtered {} ring_full {} \
+         wep_off {}",
         d.channel,
         d.is_mp,
         d.is_mp_client,
         d.aid,
         d.rx_accepted,
         d.rx_polls,
+        d.rx_empty,
         d.loc_tx,
         d.beacon_tx,
         d.cmd_tx,
         d.reply_tx,
         d.irq12,
+        k.rx_disabled,
+        k.ring_unconfigured,
+        k.too_short,
+        k.bad_length,
+        k.channel_mismatch,
+        k.foreign_mp,
+        k.filtered,
+        k.ring_full,
+        k.wep_off,
     )
 }
 
