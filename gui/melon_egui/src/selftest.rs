@@ -94,6 +94,9 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     if !check_render_settings(&mut emu) {
         return 1;
     }
+    if !check_cheats(&mut emu) {
+        return 1;
+    }
     if !check_two_instances(rom) {
         return 1;
     }
@@ -104,6 +107,41 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     }
     println!("selftest: OK");
     0
+}
+
+/// The cheat engine, with a code whose effect is unmistakable.
+///
+/// `02100000 DEADBEEF` is an Action Replay 32-bit write: main RAM at 0x02100000
+/// takes that value every time the ARM7 takes its VBlank IRQ. So the test is
+/// that the word appears while the code is enabled, and that a different value
+/// written there survives once it is not — which is what tells "the engine ran
+/// it" apart from "something else happened to be there".
+fn check_cheats(emu: &mut Emu) -> bool {
+    const ADDR: u32 = 0x0210_0000;
+    const VALUE: u32 = 0xDEAD_BEEF;
+
+    let cheat =
+        melonds::Cheat { name: "selftest".to_owned(), code: vec![ADDR, VALUE], enabled: true };
+    emu.nds.set_cheats(std::slice::from_ref(&cheat));
+    advance(emu, 8);
+    let applied = emu.nds.arm7_read32(ADDR) == VALUE;
+
+    // Off is an empty list, which is how the front end's master switch works.
+    emu.nds.set_cheats(&[]);
+    emu.nds.arm7_write32(ADDR, 0);
+    advance(emu, 8);
+    let stopped = emu.nds.arm7_read32(ADDR) == 0;
+
+    println!(
+        "selftest: cheat wrote {VALUE:08X} to {ADDR:08X}: {}; stopped when uninstalled: {}",
+        yes_no(applied),
+        yes_no(stopped),
+    );
+    if !applied || !stopped {
+        eprintln!("selftest: the cheat engine did not behave as documented");
+        return false;
+    }
+    true
 }
 
 /// The Video settings dialog's renderer half, as far as a headless run can

@@ -49,10 +49,11 @@ serde_json = "1.0.149"
 # without a window. Same version core's own frame dumper uses.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9db0db4", optional = true }
+melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "642cbf2", optional = true }
 # Game controllers. Its Windows back end is XInput plus the vendored SDL
 # mapping database, so a pad works without anything installed beside the exe.
 gilrs = "0.11"
+xbrz-rs = "0.1.0"
 
 [features]
 release = []

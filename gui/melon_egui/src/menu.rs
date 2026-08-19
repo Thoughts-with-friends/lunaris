@@ -210,10 +210,15 @@ fn system_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
             .or_else(|| entry(ui, loaded, "Date and time", Action::TogglePane(Pane::DateTime)));
         ui.separator();
 
-        // The FFI has no AR engine. Cheats could be driven from the memory
-        // accessors instead, but a half-correct cheat engine is worse than none.
-        unavailable(ui, "Enable cheats", Unavailable::Bindings);
-        unavailable(ui, "Setup cheat codes", Unavailable::Bindings);
+        // melonDS's AR engine, running the codes from the ARM7's VBlank
+        // handler exactly as the hardware does.
+        let mut cheats_on = app.cheats_enabled;
+        if ui.checkbox(&mut cheats_on, "Enable cheats").clicked() {
+            app.cheats_enabled = cheats_on;
+        }
+        action = action
+            .take()
+            .or_else(|| entry(ui, true, "Setup cheat codes", Action::TogglePane(Pane::Cheats)));
         ui.separator();
 
         action = action

@@ -2364,12 +2364,13 @@ dependencies = [
  "serde",
  "serde_json",
  "winres",
+ "xbrz-rs",
 ]
 
 [[package]]
 name = "melonds"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=9db0db4#9db0db42891a687e160ddb86091b5d49822ca7d1"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=642cbf2#642cbf25dad75930e08646fea196151a3231a336"
 dependencies = [
  "log",
  "melonds-sys",
@@ -2379,7 +2380,7 @@ dependencies = [
 [[package]]
 name = "melonds-sys"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=9db0db4#9db0db42891a687e160ddb86091b5d49822ca7d1"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=642cbf2#642cbf25dad75930e08646fea196151a3231a336"
 dependencies = [
  "bindgen",
  "cc",

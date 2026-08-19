@@ -23,6 +23,9 @@ pub struct Settings {
     pub open_panes: Vec<Pane>,
     pub limit_framerate: bool,
     pub audio_sync: bool,
+    /// melonDS's "Enable cheats", which is a preference rather than a per-cart
+    /// thing: the codes themselves live in the cart's `.mch`.
+    pub cheats_enabled: bool,
     /// Output volume, 0.0 to 1.0.
     pub volume: f32,
     /// Where savestates go. Empty means "beside the ROM", melonDS's default.
@@ -43,6 +46,7 @@ impl Default for Settings {
             open_panes: Vec::new(),
             limit_framerate: true,
             audio_sync: false,
+            cheats_enabled: false,
             volume: 1.0,
             state_dir: None,
             save_dir: None,

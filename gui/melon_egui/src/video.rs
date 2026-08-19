@@ -111,6 +111,14 @@ pub struct VideoOptions {
     /// (`mds_set_displayed_screens`). Saves most of the 2D renderer's work in
     /// the single-screen sizings.
     pub skip_hidden_screens: bool,
+    /// Post-process filter for the software renderer's finished picture.
+    ///
+    /// The only setting here that improves a *2D* layer: those are drawn from
+    /// tiles at 256x192 whatever the renderer does, so
+    /// [`Self::internal_scale`] cannot touch them. See [`crate::upscale`].
+    pub upscale: crate::upscale::Method,
+    /// How far [`Self::upscale`] scales, 1 to 6.
+    pub upscale_factor: u8,
     /// Wait for the display's refresh before presenting. Applied when the window
     /// is created, so a change takes effect on the next run.
     pub vsync: bool,
@@ -124,6 +132,8 @@ impl Default for VideoOptions {
             threaded_software: false,
             better_polygons: false,
             hires_coordinates: false,
+            upscale: crate::upscale::Method::None,
+            upscale_factor: 2,
             render: true,
             skip_hidden_screens: true,
             vsync: true,
@@ -143,6 +153,11 @@ impl VideoOptions {
         } else {
             self.internal_scale
         }
+    }
+
+    /// The xBRZ factor, held to what the filter accepts.
+    pub const fn upscale_factor(self) -> u8 {
+        crate::upscale::clamp_factor(self.upscale_factor)
     }
 
     /// These settings as the core takes them.

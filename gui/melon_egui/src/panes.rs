@@ -10,6 +10,7 @@ use crate::{
     app::{BINDINGS, MelonEgui},
     config,
     mp::Kind,
+    upscale,
     video::Renderer,
     view::AspectRatio,
 };
@@ -22,6 +23,7 @@ use crate::{
 pub enum Pane {
     RomInfo,
     Power,
+    Cheats,
     RamSearch,
     DateTime,
     Input,
@@ -41,6 +43,7 @@ impl Pane {
         match self {
             Self::RomInfo => "ROM info",
             Self::Power => "Power management",
+            Self::Cheats => "Cheat codes",
             Self::RamSearch => "RAM search",
             Self::DateTime => "Date and time",
             Self::Input => "Input and hotkeys",
@@ -62,7 +65,7 @@ pub fn show(app: &mut MelonEgui, ctx: &Context) {
         let mut open = true;
         egui::Window::new(pane.title())
             .open(&mut open)
-            .resizable(matches!(pane, Pane::RamSearch | Pane::Wireless))
+            .resizable(matches!(pane, Pane::RamSearch | Pane::Wireless | Pane::Cheats))
             .default_width(if matches!(pane, Pane::Wireless) { 460.0 } else { 260.0 })
             .show(ctx, |ui| body(app, pane, ui));
         if !open {
@@ -75,6 +78,7 @@ fn body(app: &mut MelonEgui, pane: Pane, ui: &mut egui::Ui) {
     match pane {
         Pane::RomInfo => rom_info(app, ui),
         Pane::Power => power(app, ui),
+        Pane::Cheats => cheat_codes(app, ui),
         Pane::RamSearch => ram_search(app, ui),
         Pane::DateTime => date_time(app, ui),
         Pane::Input => input(app, ui),
@@ -124,6 +128,105 @@ fn power(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.label(
         "What SPI's power-management chip reports; \"Low\" is what a cart's low-battery          warning reads.",
     );
+}
+
+/// melonDS's **System ▸ Setup cheat codes**.
+///
+/// The list is the cart's `.mch` — melonDS's own file, in its own format — so
+/// codes written here open there and vice versa. Editing is deliberately plain:
+/// a name and the `%08X %08X` lines every published code list is written in.
+fn cheat_codes(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let mut enabled = app.cheats_enabled;
+    if ui
+        .checkbox(&mut enabled, "Enable cheats")
+        .on_hover_text(
+            "Off hands the console an empty list, so the codes cost nothing at all \
+             rather than merely doing nothing.",
+        )
+        .clicked()
+    {
+        app.cheats_enabled = enabled;
+    }
+    match app.cheat_file() {
+        Some(path) => ui.label(format!("File: {}", path.display())),
+        None => ui.label("No cart running; codes load with one."),
+    };
+    ui.separator();
+
+    // Applied after the loop: removing an entry mid-iteration would renumber
+    // the rest under the widgets already drawn.
+    let mut remove = None;
+    let mut edit = None;
+    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+        for (i, cheat) in app.cheats.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut cheat.enabled, "");
+                let label = if cheat.category.is_empty() {
+                    cheat.name.clone()
+                } else {
+                    format!("{} / {}", cheat.category, cheat.name)
+                };
+                let mut response = ui.label(label);
+                if !cheat.description.is_empty() {
+                    response = response.on_hover_text(&cheat.description);
+                }
+                if !cheat.is_well_formed() {
+                    response.on_hover_text("This code has an odd number of words.");
+                }
+                if ui.small_button("Edit").clicked() {
+                    edit = Some(i);
+                }
+                if ui.small_button("Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+    });
+    if let Some(i) = remove {
+        app.cheats.remove(i);
+    }
+    if let Some(i) = edit {
+        let cheat = &app.cheats[i];
+        app.cheat_draft = (cheat.name.clone(), cheat.text());
+        app.cheats.remove(i);
+    }
+    if app.cheats.is_empty() {
+        ui.label("No codes. Paste one below, or read a melonDS .mch file.");
+    }
+    ui.separator();
+
+    ui.heading("Add a code");
+    ui.horizontal(|ui| {
+        ui.label("Name");
+        ui.text_edit_singleline(&mut app.cheat_draft.0);
+    });
+    ui.add(
+        egui::TextEdit::multiline(&mut app.cheat_draft.1)
+            .hint_text("020F5CE4 000003E7")
+            .desired_rows(3)
+            .font(egui::TextStyle::Monospace),
+    );
+    ui.horizontal(|ui| {
+        if ui.button("Add").clicked() {
+            app.add_cheat_from_draft();
+        }
+        if ui.button("Clear").clicked() {
+            app.cheat_draft = (String::new(), String::new());
+        }
+    });
+    ui.separator();
+
+    ui.horizontal(|ui| {
+        if ui.add_enabled(app.cheat_file().is_some(), egui::Button::new("Save")).clicked() {
+            app.save_cheats();
+        }
+        if ui.button("Open .mch...").clicked()
+            && let Some(path) =
+                rfd::FileDialog::new().add_filter("melonDS cheats", &["mch"]).pick_file()
+        {
+            app.import_cheats(&path);
+        }
+    });
 }
 
 fn rom_info(app: &mut MelonEgui, ui: &mut egui::Ui) {
@@ -432,6 +535,36 @@ fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
         "Always on: this front end composites through egui's OpenGL painter \
          whichever renderer the core draws with, so there is nothing to turn off.",
     );
+    ui.separator();
+
+    ui.heading("2D upscaling");
+    // The one setting here that can improve a 2D layer: those come from tiles
+    // at 256x192 whatever the renderer does, so the internal resolution above
+    // cannot touch them.
+    let on_software = app.video.renderer == Renderer::Software;
+    ui.add_enabled_ui(on_software, |ui| {
+        ui.horizontal(|ui| {
+            for method in upscale::Method::ALL {
+                ui.selectable_value(&mut app.video.upscale, method, method.label());
+            }
+        });
+        let mut factor = app.video.upscale_factor();
+        let slider = egui::Slider::new(&mut factor, upscale::MIN_FACTOR..=upscale::MAX_FACTOR)
+            .text("Factor")
+            .custom_formatter(|v, _| format!("{v}x"));
+        if ui.add_enabled(app.video.upscale != upscale::Method::None, slider).changed() {
+            app.video.upscale_factor = factor;
+        }
+    });
+    if on_software {
+        ui.label(
+            "xBRZ redraws the finished picture edge by edge, which is what smooths              sprites and text rather than blurring them. It runs on the CPU, once              per screen per frame.",
+        );
+    } else {
+        ui.label(
+            "Software renderer only: an OpenGL renderer leaves its picture in a              texture, and filtering it would mean reading the whole thing back              every frame.",
+        );
+    }
     ui.separator();
 
     ui.heading("Display scale");

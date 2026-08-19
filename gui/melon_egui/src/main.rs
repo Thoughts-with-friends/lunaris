@@ -75,6 +75,8 @@ mod app;
 #[cfg(feature = "melonds")]
 mod audio;
 #[cfg(feature = "melonds")]
+mod cheats;
+#[cfg(feature = "melonds")]
 mod config;
 #[cfg(feature = "melonds")]
 mod emu;
@@ -90,6 +92,8 @@ mod pad;
 mod panes;
 #[cfg(feature = "melonds")]
 mod selftest;
+#[cfg(feature = "melonds")]
+mod upscale;
 #[cfg(feature = "melonds")]
 mod video;
 #[cfg(feature = "melonds")]

@@ -15,12 +15,13 @@ use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH, keys};
 
 use crate::{
     audio::Audio,
+    cheats::{self, Cheat},
     config::Settings,
     emu::Emu,
     gl_screen,
     menu::{self, Action},
     mp::Airwaves,
-    panes,
+    panes, upscale,
     video::VideoOptions,
     view::{self, Rotation, ScreenSizing, ViewOptions},
 };
@@ -119,6 +120,18 @@ pub struct MelonEgui {
     pub limit_framerate: bool,
     /// White noise on the microphone, the only mic input this build has.
     pub mic_static: bool,
+    /// The cart's Action Replay codes, read from its `.mch` when it booted.
+    /// Held whether or not cheats are on, so the master switch loses nothing.
+    pub cheats: Vec<Cheat>,
+    /// melonDS's "Enable cheats". Off, the core is handed an empty list, which
+    /// is what makes cheats cost nothing at all rather than merely do nothing.
+    pub cheats_enabled: bool,
+    /// What was last handed to the core, so the list is only pushed on a
+    /// change: it is copied into the console each time.
+    applied_cheats: Option<(bool, Vec<Cheat>)>,
+    /// The Cheat codes dialog's name/text boxes, kept here so the pane itself
+    /// stays a function of the app rather than owning state of its own.
+    pub cheat_draft: (String, String),
     /// The host's game controllers, merged into the keyboard's key mask.
     pads: crate::pad::Pads,
     /// The output stream, or the reason there is none.
@@ -209,6 +222,10 @@ impl MelonEgui {
             applied_renderer: None,
             limit_framerate: settings.limit_framerate,
             mic_static: false,
+            cheats: Vec::new(),
+            cheats_enabled: settings.cheats_enabled,
+            applied_cheats: None,
+            cheat_draft: (String::new(), String::new()),
             pads: crate::pad::Pads::new(),
             // Opened here rather than lazily: `CreationContext` already runs
             // after winit has taken the UI thread, and `Audio::spawn` puts the
@@ -309,6 +326,7 @@ impl MelonEgui {
             open_panes: self.panes.clone(),
             limit_framerate: self.limit_framerate,
             audio_sync: self.audio_sync,
+            cheats_enabled: self.cheats_enabled,
             volume: self.volume(),
             state_dir: self.state_dir.clone(),
             save_dir: self.save_dir.clone(),
@@ -358,6 +376,83 @@ impl MelonEgui {
     }
 
     /// The ROM info pane's rows, or `None` with no cart loaded.
+    /// Where a cart's codes live: `<rom>.mch`, which is melonDS's own name and
+    /// format, so one file serves both front ends.
+    pub fn cheat_path(rom: &Path) -> PathBuf {
+        rom.with_extension("mch")
+    }
+
+    /// The path the running cart's codes are read from and written to.
+    pub fn cheat_file(&self) -> Option<PathBuf> {
+        self.emu.as_ref().map(|emu| Self::cheat_path(&emu.rom_path))
+    }
+
+    /// Turn the dialog's two boxes into a code, reporting a bad paste rather
+    /// than adding something the engine would read as garbage.
+    pub fn add_cheat_from_draft(&mut self) {
+        let (name, text) = self.cheat_draft.clone();
+        match cheats::parse_code(&text) {
+            Ok(code) if code.is_empty() => self.post("no code words in that text"),
+            Ok(code) => {
+                let odd = !code.len().is_multiple_of(2);
+                self.cheats.push(Cheat {
+                    name: if name.trim().is_empty() { "Unnamed".to_owned() } else { name },
+                    code,
+                    enabled: true,
+                    ..Cheat::default()
+                });
+                self.cheat_draft = (String::new(), String::new());
+                if odd {
+                    self.post("added, but that code has an odd number of words");
+                }
+            }
+            Err(token) => self.post(format!("not a 32-bit hex word: {token}")),
+        }
+    }
+
+    /// Write the current list back to the cart's `.mch`.
+    pub fn save_cheats(&mut self) {
+        let Some(path) = self.cheat_file() else { return };
+        match cheats::save(&path, &self.cheats) {
+            Ok(()) => self.post(format!("cheats written to {}", path.display())),
+            Err(e) => self.post(e),
+        }
+    }
+
+    /// Read a `.mch` the user picked, replacing the list.
+    pub fn import_cheats(&mut self, path: &Path) {
+        match cheats::load(path) {
+            Ok(list) => {
+                let count = list.len();
+                self.cheats = list;
+                self.post(format!("{count} codes read from {}", path.display()));
+            }
+            Err(e) => self.post(e),
+        }
+    }
+
+    /// Hand the core the codes it should be running.
+    ///
+    /// Only on a change: the list is copied into the console, and it is pushed
+    /// from the same place every repaint so that a code toggled in the dialog
+    /// takes effect on the next frame.
+    fn apply_cheats(&mut self) {
+        let wanted = (self.cheats_enabled, self.cheats.clone());
+        if self.applied_cheats.as_ref() == Some(&wanted) || self.emu.is_none() {
+            return;
+        }
+        let Some(emu) = &mut self.emu else { return };
+        // Cheats off is an empty list rather than a flag: melonDS runs whatever
+        // is in the console's list, so this is the only way to stop it.
+        let installed: Vec<melonds::Cheat> = if self.cheats_enabled {
+            self.cheats.iter().map(Cheat::to_core).collect()
+        } else {
+            Vec::new()
+        };
+        emu.nds.set_cheats(&installed);
+        self.applied_cheats = Some(wanted);
+    }
+
     /// The game controllers the last repaint saw, for the Input pane.
     pub fn connected_pads(&self) -> &[String] {
         self.pads.connected()
@@ -530,6 +625,20 @@ impl MelonEgui {
         match Emu::boot_with(rom, self.save_dir.as_ref(), self.state_dir.as_ref()) {
             Ok(emu) => {
                 self.emu = Some(emu);
+                self.cheats = cheats::load(&Self::cheat_path(rom)).unwrap_or_default();
+                self.applied_cheats = None;
+                if !self.cheats.is_empty() {
+                    // Worth saying out loud: a code file found beside the ROM
+                    // changes what the console does, and a run that picked one
+                    // up silently is a run nobody can explain afterwards.
+                    let on = self.cheats.iter().filter(|cheat| cheat.enabled).count();
+                    eprintln!(
+                        "melon_egui: {} cheat codes from {}, {on} enabled, engine {}",
+                        self.cheats.len(),
+                        Self::cheat_path(rom).display(),
+                        if self.cheats_enabled { "on" } else { "off" }
+                    );
+                }
                 self.push_recent(rom);
                 self.paused = false;
                 self.frame_debt = 0.0;
@@ -838,6 +947,7 @@ impl MelonEgui {
         let mut guest_stopped = false;
         self.apply_render_settings();
         self.apply_renderer();
+        self.apply_cheats();
         let mic_static = self.mic_static;
 
         // Destructured so both consoles can be driven from the same loop.
@@ -1054,7 +1164,8 @@ impl MelonEgui {
         // black is one the console is not really using.
         let lit = |fb: &[u32]| fb.iter().any(|&px| px & 0x00FF_FFFF != 0);
         let live = [lit(top), lit(bottom)];
-        let images = [to_image(top), to_image(bottom)];
+        let (method, factor) = (self.video.upscale, self.video.upscale_factor());
+        let images = [to_image(top, method, factor), to_image(bottom, method, factor)];
         self.screens_live = live;
 
         match &mut self.textures {
@@ -1205,7 +1316,10 @@ impl MelonEgui {
         if let Some(guest) = &mut self.guest
             && let Some((top, bottom)) = guest.nds.framebuffers()
         {
-            let images = [to_image(top), to_image(bottom)];
+            let images = [
+                to_image(top, upscale::Method::None, 1),
+                to_image(bottom, upscale::Method::None, 1),
+            ];
             match &mut self.guest_textures {
                 Some(textures) => {
                     for (texture, image) in textures.iter_mut().zip(images) {
@@ -1501,15 +1615,20 @@ fn touch_coords(rect: Rect, pos: Pos2, rotation: Rotation) -> Option<(u16, u16)>
 /// memory, which is what melonDS calls the format (`GPU_Soft.cpp`, "convert to
 /// 32-bit BGRA"). Alpha is whatever the compositor left there, so it is
 /// discarded and the pixel forced opaque.
-fn to_image(fb: &[u32]) -> ColorImage {
-    let pixels = fb
-        .iter()
-        .map(|&px| Color32::from_rgb((px >> 16) as u8, (px >> 8) as u8, px as u8))
-        .collect();
+/// One screen's framebuffer as an egui image, post-processed by `method` at
+/// `factor` on the way (see [`crate::upscale`]).
+///
+/// The core's pixels are BGRA in memory; the swizzle here is the software
+/// renderer's counterpart to the one `gl_screen`'s shader does on the GPU.
+fn to_image(fb: &[u32], method: upscale::Method, factor: u8) -> ColorImage {
+    let rgba: Vec<u8> =
+        fb.iter().flat_map(|&px| [(px >> 16) as u8, (px >> 8) as u8, px as u8, 0xFF]).collect();
+    let (buf, width, height) = upscale::upscale(rgba, SCREEN_WIDTH, SCREEN_HEIGHT, method, factor);
+    let pixels = buf.chunks_exact(4).map(|px| Color32::from_rgb(px[0], px[1], px[2])).collect();
     ColorImage {
-        size: [SCREEN_WIDTH, SCREEN_HEIGHT],
+        size: [width, height],
         pixels,
-        source_size: egui::vec2(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32),
+        source_size: egui::vec2(width as f32, height as f32),
     }
 }
 
@@ -1642,7 +1761,7 @@ mod tests {
         let mut fb = vec![0u32; SCREEN_WIDTH * SCREEN_HEIGHT];
         fb[0] = 0xFF_12_34_56;
         fb[1] = 0x00_FF_00_00; // pure red, transparent: alpha must be ignored
-        let image = to_image(&fb);
+        let image = to_image(&fb, crate::upscale::Method::None, 1);
         assert_eq!(image.size, [SCREEN_WIDTH, SCREEN_HEIGHT]);
         assert_eq!(image.pixels[0], Color32::from_rgb(0x12, 0x34, 0x56));
         assert_eq!(image.pixels[1], Color32::from_rgb(0xFF, 0, 0));
