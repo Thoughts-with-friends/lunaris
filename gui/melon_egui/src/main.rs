@@ -56,6 +56,14 @@
 //! captures the framebuffers themselves, so nothing about the window can get
 //! into the picture.
 //!
+//! Either harness (and an ordinary run) also takes
+//! `--renderer <software|opengl|compute>[@scale]`, which overrides the saved
+//! Video settings for that run alone. Three `--shot` captures of one cart at
+//! one frame, one per renderer, are how the renderers are compared; under an
+//! OpenGL renderer `--shot` additionally writes `<out>_core_top.png` and
+//! `<out>_core_bottom.png`, read back from the core's texture at the internal
+//! resolution, which is where the upscaling is actually visible.
+//!
 //! `melon_egui --shot <frames> <out.png> <rom.nds>` captures the real window
 //! instead, proving that egui's texture upload and compositing work rather than
 //! just the core. Note it photographs the window as it *is*, menus and hover
@@ -65,15 +73,25 @@
 #[cfg(feature = "melonds")]
 mod app;
 #[cfg(feature = "melonds")]
+mod audio;
+#[cfg(feature = "melonds")]
 mod config;
 #[cfg(feature = "melonds")]
 mod emu;
 #[cfg(feature = "melonds")]
+mod gl_screen;
+#[cfg(feature = "melonds")]
 mod menu;
+#[cfg(feature = "melonds")]
+mod mp;
+#[cfg(feature = "melonds")]
+mod pad;
 #[cfg(feature = "melonds")]
 mod panes;
 #[cfg(feature = "melonds")]
 mod selftest;
+#[cfg(feature = "melonds")]
+mod video;
 #[cfg(feature = "melonds")]
 mod view;
 
@@ -96,7 +114,11 @@ fn main() {
 
 #[cfg(feature = "melonds")]
 fn main() -> eframe::Result<()> {
-    let mut args = std::env::args().skip(1);
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    // Pulled out before the positional arguments are read, so it can be
+    // written last on the command line where it reads naturally.
+    let renderer = take_renderer(&mut argv);
+    let mut args = argv.into_iter();
     let first = args.next();
 
     if first.as_deref() == Some("--selftest") {
@@ -137,17 +159,49 @@ fn main() -> eframe::Result<()> {
     // what makes the front end scriptable from a shell.
     let rom = if shot.is_some() { args.next() } else { first }.map(std::path::PathBuf::from);
 
+    // Vsync is fixed when the surface is created, so it is read from the saved
+    // settings here rather than applied live from the Video settings dialog.
+    let saved = config::Settings::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(app::default_window_size())
             .with_min_inner_size(app::min_window_size())
             .with_title("melon_egui"),
+        vsync: saved.video.vsync,
         ..Default::default()
     };
 
     eframe::run_native(
         "melon_egui",
         options,
-        Box::new(move |cc| Ok(Box::new(app::MelonEgui::new(cc, rom, shot)))),
+        Box::new(move |cc| Ok(Box::new(app::MelonEgui::new(cc, rom, shot, renderer)))),
     )
+}
+
+/// Take `--renderer <software|opengl|compute>[@scale]` out of `argv`, if it is
+/// there.
+///
+/// It overrides the saved Video settings for this run only. That is what makes
+/// the renderers comparable from a shell: three `--shot` captures of the same
+/// cart at the same frame, one per renderer, are the evidence that the OpenGL
+/// path draws the same picture and that its internal resolution reaches the
+/// rasteriser.
+#[cfg(feature = "melonds")]
+fn take_renderer(argv: &mut Vec<String>) -> Option<(video::Renderer, u32)> {
+    let at = argv.iter().position(|arg| arg == "--renderer")?;
+    let value = argv.get(at + 1).cloned().unwrap_or_default();
+    argv.drain(at..(at + 2).min(argv.len()));
+
+    let (name, scale) = value.split_once('@').unwrap_or((value.as_str(), "1"));
+    let renderer = match name {
+        "software" | "soft" => video::Renderer::Software,
+        "opengl" | "gl" => video::Renderer::OpenGl,
+        "compute" => video::Renderer::Compute,
+        _ => {
+            eprintln!("usage: --renderer <software|opengl|compute>[@scale]");
+            std::process::exit(2);
+        }
+    };
+    let scale = scale.parse().unwrap_or(1);
+    Some((renderer, scale))
 }

@@ -63,9 +63,23 @@ cargo run --release --features release --package lunaris
 - Egui
 
 ```shell
-cargo build --release  # default or
+# MSVC target
 cargo run --release --features release --package lunaris-egui
+
+# GNU target
+cargo +stable-x86_64-pc-windows-gnu run --release
 ```
+
+## MelonDS Backend
+
+You can also select the Egui wrapper from Melonds. While some features are not supported, about 70 % of the features are available.
+
+- Egui (MelonDS Backend)
+
+```shell
+cargo run --release --features release --package melon_egui
+```
+
 
 ## Todo List
 
@@ -102,6 +116,10 @@ This project is a modified/extended version based on NDS-Emulator.
   - [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
   - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++
   - [melonDS](https://github.com/melonDS-emu/melonDS): DS emulator high performance, low memory usage
+
+- Tools
+  - [melonds-rs](https://github.com/tangobattle/melonds-rs): Wrapper for the melonDS library
+  - [melonds-rs (folk ver.)](https://github.com/Thoughts-with-friends/melonds-rs): Wrapper for the melonDS library
 
 - Technical Information
   - [Nintendo DS Architecture](https://www.copetti.org/writings/consoles/nintendo-ds/): An overview of the NDS

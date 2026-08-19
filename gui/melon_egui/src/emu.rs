@@ -74,6 +74,22 @@ impl Emu {
         Self::boot_with(rom_path, None, None)
     }
 
+    /// As [`Emu::boot_with`], but joined to shared airwaves as console
+    /// `instance_id`.
+    ///
+    /// `instance_id` also uniquifies the generated firmware's MAC address, the
+    /// same way melonDS's frontend does, so two consoles on one medium are not
+    /// indistinguishable to each other.
+    pub fn boot_mp(
+        rom_path: &Path,
+        save_dir: Option<&PathBuf>,
+        state_dir: Option<&PathBuf>,
+        instance_id: u32,
+        mp: crate::mp::Client,
+    ) -> Result<Self, String> {
+        Self::boot_inner(rom_path, save_dir, state_dir, instance_id, Some(mp))
+    }
+
     /// As [`Emu::boot`], but with the save and savestate directories overridden;
     /// `None` for either means "beside the ROM".
     pub fn boot_with(
@@ -81,16 +97,26 @@ impl Emu {
         save_dir: Option<&PathBuf>,
         state_dir: Option<&PathBuf>,
     ) -> Result<Self, String> {
+        Self::boot_inner(rom_path, save_dir, state_dir, 0, None)
+    }
+
+    fn boot_inner(
+        rom_path: &Path,
+        save_dir: Option<&PathBuf>,
+        state_dir: Option<&PathBuf>,
+        instance_id: u32,
+        mp: Option<crate::mp::Client>,
+    ) -> Result<Self, String> {
         let rom = std::fs::read(rom_path).map_err(|e| format!("cannot read ROM: {e}"))?;
         let save_path = crate::config::Settings::redirect(save_dir, rom_path, "sav");
         let state_dir = state_dir.cloned();
         let save = std::fs::read(&save_path).ok();
 
         let saves = Arc::new(SaveSink { path: save_path, pending: Mutex::new(None) });
-        let host = Box::new(HostBridge { saves: Arc::clone(&saves) });
+        let host = Box::new(HostBridge { saves: Arc::clone(&saves), mp });
 
-        let mut nds =
-            Nds::new(&rom, save.as_deref(), 0, host).map_err(|e| format!("cart rejected: {e}"))?;
+        let mut nds = Nds::new(&rom, save.as_deref(), instance_id, host)
+            .map_err(|e| format!("cart rejected: {e}"))?;
         let (y, mo, d, h, mi, s) = if deterministic_rtc() { FIXED_RTC } else { utc_now() };
         nds.set_rtc(y, mo, d, h, mi, s);
         nds.boot();
@@ -132,6 +158,75 @@ impl Emu {
             clock.minute,
             clock.second,
         );
+    }
+
+    /// Apply the Video settings, returning the renderer the core actually
+    /// installed.
+    ///
+    /// That can differ from the one asked for: melonDS falls back to the
+    /// software renderer rather than leave a console unable to draw, so a
+    /// machine whose driver cannot compile its shaders answers
+    /// [`melonds::Renderer::Software`] here. Asking for an OpenGL renderer
+    /// requires a current GL context on this thread, both here and on every
+    /// subsequent frame.
+    pub fn set_render_settings(&mut self, settings: melonds::RenderSettings) -> melonds::Renderer {
+        self.nds.set_render_settings(settings)
+    }
+
+    /// Where the OpenGL renderer left the picture, if it is the one in use.
+    pub fn gl_output(&mut self) -> Option<melonds::GlOutput> {
+        self.nds.gl_output()
+    }
+
+    /// Build one of a lazily-compiled renderer's shaders, reporting progress
+    /// as `(done, total)` while any remain. Only the compute renderer has
+    /// any; for the others this is `None` from the first call.
+    pub fn gl_shader_compile_step(&mut self) -> Option<(u32, u32)> {
+        self.nds.gl_shader_compile_step()
+    }
+
+    /// Read one screen of the OpenGL renderer's output back into host memory,
+    /// BGRA8888 and top-down, at the internal resolution.
+    ///
+    /// The headless harnesses capture the software renderer's framebuffers
+    /// directly; this is how they capture a picture that only ever existed in
+    /// a texture.
+    pub fn gl_read_output(&mut self, screen: u8, out: &mut [u32]) -> usize {
+        self.nds.gl_read_output(screen, out)
+    }
+
+    /// Open or close the lid, as melonDS's Power management does. Closing it
+    /// raises the lid IRQ, which is how a cart is told to sleep.
+    pub fn set_lid_closed(&mut self, closed: bool) {
+        self.nds.set_lid_closed(closed);
+    }
+
+    pub fn lid_closed(&mut self) -> bool {
+        self.nds.lid_closed()
+    }
+
+    /// What the power-management chip reports about the battery: `true` for
+    /// okay, `false` for the low level a cart warns about.
+    pub fn set_battery_okay(&mut self, okay: bool) {
+        self.nds.set_battery_okay(okay);
+    }
+
+    pub fn battery_okay(&mut self) -> bool {
+        self.nds.battery_okay()
+    }
+
+    /// Turn framebuffer production on or off.
+    ///
+    /// Off, the console keeps running and keeps capturing to VRAM; only the
+    /// framebuffer the front end reads goes stale.
+    pub fn set_render(&mut self, enabled: bool) {
+        self.nds.set_render(enabled);
+    }
+
+    /// Tell the core which screens anyone is looking at: bit 0 top, bit 1
+    /// bottom. An engine whose screen is not shown does not compose it.
+    pub fn set_displayed_screens(&mut self, mask: u8) {
+        self.nds.set_displayed_screens(mask);
     }
 
     /// Hold or release white noise on the microphone.
@@ -185,6 +280,9 @@ struct SaveSink {
 /// keeps its own [`Arc`] to the same sink.
 struct HostBridge {
     saves: Arc<SaveSink>,
+    /// This console's place on the shared airwaves, when it has one. Without it
+    /// every MP hook keeps the trait's default — an unlinked console.
+    mp: Option<crate::mp::Client>,
 }
 
 impl melonds::Host for HostBridge {
@@ -193,6 +291,55 @@ impl melonds::Host for HostBridge {
     /// than all of it, which this front end does not bother with.
     fn write_save(&self, data: &[u8], _writeoffset: u32, _writelen: u32) {
         *self.saves.pending.lock().unwrap() = Some(data.to_vec());
+    }
+
+    // The MP hooks are pure forwarding: the airwaves are shared state, so the
+    // interesting behaviour lives in `crate::mp` rather than here.
+
+    fn mp_begin(&self) {
+        if let Some(mp) = &self.mp {
+            mp.mp_begin();
+        }
+    }
+
+    fn mp_end(&self) {
+        if let Some(mp) = &self.mp {
+            mp.mp_end();
+        }
+    }
+
+    fn mp_send_packet(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_packet(data, timestamp))
+    }
+
+    fn mp_send_cmd(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_cmd(data, timestamp))
+    }
+
+    fn mp_send_reply(&self, data: &[u8], timestamp: u64, aid: u16) -> i32 {
+        self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_reply(data, timestamp, aid))
+    }
+
+    fn mp_send_ack(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_ack(data, timestamp))
+    }
+
+    fn mp_recv_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        self.mp.as_ref().map_or(Some(0), |mp| mp.mp_recv_packet(data, now, timestamp))
+    }
+
+    fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        self.mp.as_ref().and_then(|mp| mp.mp_recv_host_packet(data, now, timestamp))
+    }
+
+    fn mp_recv_replies(&self, data: &mut [u8], now: u64, timestamp: u64, aidmask: u16) -> u16 {
+        self.mp.as_ref().map_or(0, |mp| mp.mp_recv_replies(data, now, timestamp, aidmask))
+    }
+
+    fn mp_clock(&self, now: u64) {
+        if let Some(mp) = &self.mp {
+            mp.mp_clock(now);
+        }
     }
 }
 

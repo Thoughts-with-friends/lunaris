@@ -14,11 +14,15 @@ use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2}
 use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH, keys};
 
 use crate::{
+    audio::Audio,
     config::Settings,
     emu::Emu,
+    gl_screen,
     menu::{self, Action},
+    mp::Airwaves,
     panes,
-    view::{self, Rotation, ViewOptions},
+    video::VideoOptions,
+    view::{self, Rotation, ScreenSizing, ViewOptions},
 };
 
 /// The DS video frame rate: `33_513_982 / 560_190` Hz. Slightly under the 60 Hz
@@ -38,6 +42,13 @@ const UNLIMITED_BURST: u32 = 64;
 
 /// How often pending backup memory is written to disk.
 const SAVE_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How many of a renderer's shaders to build before giving up on it.
+///
+/// Only the compute renderer compiles lazily, and it has 33; the ceiling is
+/// there so a driver that never reports itself finished cannot hang the window
+/// instead of falling back.
+const SHADER_COMPILE_LIMIT: u32 = 256;
 
 /// How long an OSD message stays up.
 const OSD_LIFETIME: Duration = Duration::from_secs(3);
@@ -91,11 +102,30 @@ pub struct MelonEgui {
     /// command, which is the only way to advance while stopped.
     step_pending: bool,
     pub view: ViewOptions,
+    pub video: VideoOptions,
+    /// What was last handed to the core's render knobs, so they are only poked
+    /// when something actually changed.
+    applied_render: Option<(bool, u8)>,
+    /// The blitter for the OpenGL renderer's output, once its shader has built.
+    gl_screen: Option<gl_screen::Shared>,
+    /// Whether glad has bound GL for eframe's context.
+    gl_loaded: bool,
+    /// The render settings the core was last given, so it is only poked when
+    /// something actually changed — a renderer swap reallocates every render
+    /// target, and even a scale change is not free.
+    applied_renderer: Option<melonds::RenderSettings>,
     /// Whether to pace the core against wall-clock time. Off, it runs as fast
     /// as it can, matching melonDS's "Limit framerate".
     pub limit_framerate: bool,
     /// White noise on the microphone, the only mic input this build has.
     pub mic_static: bool,
+    /// The host's game controllers, merged into the keyboard's key mask.
+    pads: crate::pad::Pads,
+    /// The output stream, or the reason there is none.
+    audio: Result<Audio, String>,
+    /// Pace emulation against the sound card rather than the clock, so audio
+    /// plays without gaps even if the two clocks disagree slightly.
+    pub audio_sync: bool,
     pub pause_when_unfocused: bool,
     pub confirm_on_quit: bool,
     pub dark_theme: bool,
@@ -113,6 +143,14 @@ pub struct MelonEgui {
     panes: Vec<Pane>,
     /// Whether the second view of this console is open.
     second_window: bool,
+    /// The shared wireless medium every console here sits on.
+    pub airwaves: Airwaves,
+    /// The second console, when "Launch new instance" has opened one. It is a
+    /// separate DS on the same airwaves, not another view of the first.
+    guest: Option<Emu>,
+    guest_textures: Option<[TextureHandle; 2]>,
+    /// Where the guest's bottom screen was drawn, for its own touch input.
+    guest_bottom: Option<Rect>,
     /// Whether each screen had anything on it last frame, which is what
     /// `ScreenSizing::Auto` decides on.
     screens_live: [bool; 2],
@@ -146,10 +184,13 @@ pub struct MelonEgui {
 }
 
 impl MelonEgui {
+    /// `renderer` is `--renderer`'s override of the saved Video settings, for
+    /// this run only — see `crate::take_renderer`.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         rom: Option<PathBuf>,
         shot: Option<(u64, PathBuf)>,
+        renderer: Option<(crate::video::Renderer, u32)>,
     ) -> Self {
         let settings = Settings::load();
         let now = Instant::now();
@@ -159,8 +200,21 @@ impl MelonEgui {
             paused: false,
             step_pending: false,
             view: settings.view,
+            // `render` is deliberately forced on at startup whatever was saved:
+            // a window that opens frozen reads as a crash.
+            video: VideoOptions { render: true, ..settings.video },
+            applied_render: None,
+            gl_screen: None,
+            gl_loaded: false,
+            applied_renderer: None,
             limit_framerate: settings.limit_framerate,
             mic_static: false,
+            pads: crate::pad::Pads::new(),
+            // Opened here rather than lazily: `CreationContext` already runs
+            // after winit has taken the UI thread, and `Audio::spawn` puts the
+            // device on a thread of its own regardless.
+            audio: Audio::spawn(),
+            audio_sync: settings.audio_sync,
             pause_when_unfocused: false,
             confirm_on_quit: false,
             dark_theme: settings.dark_theme,
@@ -171,8 +225,12 @@ impl MelonEgui {
             clock_note: String::new(),
             ram_search: RamSearch::default(),
             recents: settings.recents,
-            panes: Vec::new(),
+            panes: settings.open_panes,
             second_window: false,
+            airwaves: Airwaves::new(),
+            guest: None,
+            guest_textures: None,
+            guest_bottom: None,
             screens_live: [true, true],
             frame_debt: 0.0,
             last_tick: now,
@@ -187,6 +245,37 @@ impl MelonEgui {
             shot,
             shot_requested: false,
         };
+        if let Ok(audio) = &mut app.audio {
+            audio.volume = settings.volume;
+        }
+        if let Some((renderer, scale)) = renderer {
+            app.video.renderer = renderer;
+            app.video.internal_scale = scale;
+        }
+        // eframe's GL context is current on this thread here, which is what
+        // both of these need: glad binds against whatever is current, and the
+        // shader has to be created in the context that will draw it.
+        if let Some(gl) = &cc.gl {
+            app.gl_loaded = melonds::gl_load(None);
+            match melonds::gl_info() {
+                // Which context was bound decides which renderers can work at
+                // all: a driver can bind and still be too old for melonDS's
+                // shaders, and that failure otherwise looks like a bug here.
+                Some(info) => eprintln!("melon_egui: OpenGL bound: {info}"),
+                None => eprintln!(
+                    "melon_egui: could not bind OpenGL for this context, so the OpenGL \
+                     renderers are unavailable and the software rasteriser is used."
+                ),
+            }
+            match gl_screen::Screen::new(gl) {
+                Ok(screen) => app.gl_screen = Some(std::sync::Arc::new(screen)),
+                Err(e) => eprintln!("melon_egui: no GL blitter ({e}); OpenGL renderer disabled"),
+            }
+        }
+
+        // Logged at startup because a missing sound card is otherwise only
+        // visible if the user opens Config > Audio settings.
+        eprintln!("melon_egui: {}", app.audio_status());
         app.set_theme(&cc.egui_ctx, app.dark_theme);
         if settings.ui_scale > 0.0 {
             cc.egui_ctx.set_zoom_factor(settings.ui_scale);
@@ -216,8 +305,11 @@ impl MelonEgui {
         Settings {
             recents: self.recents.clone(),
             view: self.view,
+            video: self.video,
+            open_panes: self.panes.clone(),
             limit_framerate: self.limit_framerate,
-            audio_sync: false,
+            audio_sync: self.audio_sync,
+            volume: self.volume(),
             state_dir: self.state_dir.clone(),
             save_dir: self.save_dir.clone(),
             ui_scale: self.ui_scale,
@@ -233,6 +325,11 @@ impl MelonEgui {
 
     pub const fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    /// Whether a second console is running.
+    pub const fn has_guest(&self) -> bool {
+        self.guest.is_some()
     }
 
     pub fn recent_roms(&self) -> &[PathBuf] {
@@ -261,6 +358,33 @@ impl MelonEgui {
     }
 
     /// The ROM info pane's rows, or `None` with no cart loaded.
+    /// The game controllers the last repaint saw, for the Input pane.
+    pub fn connected_pads(&self) -> &[String] {
+        self.pads.connected()
+    }
+
+    /// The console's power state as `(lid closed, battery okay)`, or `None`
+    /// with no cart running.
+    ///
+    /// Read from the core rather than mirrored here, so a cart that opens the
+    /// lid itself shows up in the dialog.
+    pub fn power_state(&mut self) -> Option<(bool, bool)> {
+        let emu = self.emu.as_mut()?;
+        Some((emu.lid_closed(), emu.battery_okay()))
+    }
+
+    pub fn set_lid_closed(&mut self, closed: bool) {
+        if let Some(emu) = &mut self.emu {
+            emu.set_lid_closed(closed);
+        }
+    }
+
+    pub fn set_battery_okay(&mut self, okay: bool) {
+        if let Some(emu) = &mut self.emu {
+            emu.set_battery_okay(okay);
+        }
+    }
+
     pub fn cart_info(&self) -> Option<Vec<(&'static str, String)>> {
         let emu = self.emu.as_ref()?;
         Some(vec![
@@ -280,11 +404,27 @@ impl MelonEgui {
         self.undo_state.is_some()
     }
 
-    /// Why there is no sound, for the Audio settings pane.
-    pub fn audio_status(&self) -> &'static str {
-        "No audio output: this front end has no audio device backend yet. \
-         The core does produce sound (the FFI exposes it), so this is a gap here, \
-         not a limit of the bindings."
+    /// What the Audio settings pane says about the device.
+    pub fn audio_status(&self) -> String {
+        match &self.audio {
+            Ok(audio) => format!("Playing on {}", audio.description()),
+            Err(e) => format!("No audio output: {e}"),
+        }
+    }
+
+    /// Whether there is a device to configure at all.
+    pub const fn has_audio(&self) -> bool {
+        self.audio.is_ok()
+    }
+
+    pub fn volume(&self) -> f32 {
+        self.audio.as_ref().map_or(1.0, |audio| audio.volume)
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        if let Ok(audio) = &mut self.audio {
+            audio.volume = volume;
+        }
     }
 
     pub fn set_theme(&mut self, ctx: &egui::Context, dark: bool) {
@@ -385,6 +525,8 @@ impl MelonEgui {
         self.undo_state = None;
         self.textures = None;
         self.frames_run = 0;
+        self.applied_render = None;
+        self.applied_renderer = None;
         match Emu::boot_with(rom, self.save_dir.as_ref(), self.state_dir.as_ref()) {
             Ok(emu) => {
                 self.emu = Some(emu);
@@ -459,6 +601,7 @@ impl MelonEgui {
                 let size = view::window_size_for_scale(scale, &self.view, CHROME_HEIGHT);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
             }
+            Action::LaunchInstance => self.launch_instance(),
             Action::TogglePane(pane) => {
                 if let Some(at) = self.panes.iter().position(|open| *open == pane) {
                     self.panes.remove(at);
@@ -466,6 +609,40 @@ impl MelonEgui {
                     self.panes.push(pane);
                 }
             }
+        }
+    }
+
+    /// Open a second console on the same cart and the same airwaves, which is
+    /// what makes local wireless play testable in one window.
+    ///
+    /// melonDS launches a whole second process for this; here it is a second
+    /// [`Emu`] driven from the same repaint, which keeps the two wifi clocks in
+    /// step without any cross-process synchronisation.
+    fn launch_instance(&mut self) {
+        if self.guest.is_some() {
+            self.guest = None;
+            self.guest_textures = None;
+            self.post("second instance closed");
+            return;
+        }
+        let Some(rom) = self.emu.as_ref().map(|emu| emu.rom_path.clone()) else {
+            self.post("load a cart first");
+            return;
+        };
+        // The host console only joins the airwaves lazily, when the cart starts
+        // using wireless, so nothing needs doing for it here.
+        match Emu::boot_mp(
+            &rom,
+            self.save_dir.as_ref(),
+            self.state_dir.as_ref(),
+            1,
+            self.airwaves.client(1),
+        ) {
+            Ok(guest) => {
+                self.guest = Some(guest);
+                self.post("second instance launched - both consoles share the airwaves");
+            }
+            Err(e) => self.post(format!("cannot launch second instance: {e}")),
         }
     }
 
@@ -592,6 +769,11 @@ impl MelonEgui {
         let elapsed = self.last_tick.elapsed();
         self.last_tick = Instant::now();
 
+        // Pumped before the early return: gilrs only notices a pad being
+        // plugged in while its queue is drained, and the Input pane lists
+        // controllers whether or not a cart is running.
+        let pad_keys = self.pads.poll();
+
         if self.emu.is_none() {
             return;
         }
@@ -604,7 +786,13 @@ impl MelonEgui {
             // fast-forward through it.
             self.frame_debt = 0.0;
             u32::from(std::mem::take(&mut self.step_pending))
-        } else if self.shot.is_some() || !self.limit_framerate {
+        } else if let Some((at, _)) = &self.shot {
+            // A capture has to land on an exact frame to be worth comparing
+            // against another run, so the burst is cut short at the target and
+            // the console stops there — it must not keep running while the
+            // screenshot makes its way back from the GPU.
+            UNLIMITED_BURST.min(at.saturating_sub(self.frames_run) as u32)
+        } else if !self.limit_framerate {
             UNLIMITED_BURST
         } else {
             self.frame_debt += elapsed.as_secs_f64() * FRAME_RATE;
@@ -618,6 +806,19 @@ impl MelonEgui {
             due
         };
 
+        // "Audio sync": when the ring is already comfortably full the sound
+        // card has not caught up, so this repaint runs nothing and lets it. Only
+        // meaningful while the framerate limiter is on -- fast-forward
+        // deliberately outruns the device.
+        let due = if self.audio_sync && self.limit_framerate && !self.paused {
+            match &self.audio {
+                Ok(audio) if audio.fill() > 0.75 => 0,
+                _ => due,
+            }
+        } else {
+            due
+        };
+
         // Sampled before the core is borrowed, since both readings come out of
         // `self` and the emulator borrow would conflict with them.
         let keys = ctx.input(|i| {
@@ -625,26 +826,68 @@ impl MelonEgui {
                 .iter()
                 .filter(|(key, ..)| i.key_down(*key))
                 .fold(0, |mask, (_, bit, _)| mask | bit)
-        });
+            // Pads are merged with the keyboard rather than replacing it, so
+            // neither has to be chosen up front and holding both is one press.
+        }) | pad_keys;
         let touch = self.sample_touch(ctx);
+        // The guest window has its own input; see `guest_view`.
+        let (guest_keys, guest_touch) = self.sample_guest_input(ctx);
 
         let mut ran = 0;
         let mut stopped = false;
+        let mut guest_stopped = false;
+        self.apply_render_settings();
+        self.apply_renderer();
         let mic_static = self.mic_static;
-        if let Some(emu) = &mut self.emu {
+
+        // Destructured so both consoles can be driven from the same loop.
+        let Self { emu, guest, .. } = self;
+
+        if let Some(emu) = emu.as_mut() {
             emu.nds.set_keys(keys);
             emu.set_mic_static(mic_static);
             match touch {
                 Some((x, y)) => emu.nds.touch(x, y),
                 None => emu.nds.release_screen(),
             }
-            for _ in 0..due {
+        }
+        if let Some(guest) = guest.as_mut() {
+            guest.nds.set_keys(guest_keys);
+            match guest_touch {
+                Some((x, y)) => guest.nds.touch(x, y),
+                None => guest.nds.release_screen(),
+            }
+        }
+
+        // Strictly alternating, one frame each, rather than running one console
+        // to completion and then the other. A paired console's wifi clock must
+        // not drift: melonDS runs its instances as concurrent processes, and an
+        // MP round spanning a gap of several frames times out mid-handshake.
+        for _ in 0..due {
+            if let Some(emu) = emu.as_mut() {
                 if emu.nds.run_frame() == 0 {
                     stopped = true;
                     break;
                 }
                 ran += 1;
             }
+            if let Some(guest) = guest.as_mut()
+                && guest.nds.run_frame() == 0
+            {
+                // A guest that has stopped stops being run, rather than taking
+                // down the console the player is actually using.
+                guest_stopped = true;
+                break;
+            }
+        }
+        if guest_stopped {
+            self.guest = None;
+            self.guest_textures = None;
+            self.post("second instance stopped");
+        }
+
+        if ran > 0 {
+            self.drain_audio();
         }
         self.fps_frames += ran;
         self.frames_run += u64::from(ran);
@@ -672,6 +915,111 @@ impl MelonEgui {
         }
     }
 
+    /// Push the Video settings' two core-side knobs, when they have changed.
+    ///
+    /// The screen mask is taken from the *explicit* sizings only. Under
+    /// `ScreenSizing::Auto` it would feed back on itself: hiding a screen stops
+    /// it being composed, its framebuffer goes stale, and the staleness is then
+    /// read as the screen being idle.
+    /// Whether the OpenGL renderer can be offered at all.
+    pub const fn gl_available(&self) -> bool {
+        self.gl_loaded && self.gl_screen.is_some()
+    }
+
+    /// Push the Video settings' renderer half into the core.
+    ///
+    /// Only on a change: swapping renderer reallocates every render target,
+    /// and even a change of internal resolution is not free.
+    fn apply_renderer(&mut self) {
+        use crate::video::Renderer;
+
+        // Asking for OpenGL without a working blitter would leave a console
+        // rendering into a texture nothing can draw, so that choice is taken
+        // back here rather than in the core.
+        if self.video.renderer.is_gl() && !self.gl_available() {
+            self.video.renderer = Renderer::Software;
+        }
+        let wanted = self.video.to_core();
+        if self.applied_renderer == Some(wanted) || self.emu.is_none() {
+            return;
+        }
+
+        let Some(emu) = &mut self.emu else { return };
+        let installed = Renderer::from_core(emu.set_render_settings(wanted));
+        // The compute renderer builds its shaders on demand; without this the
+        // first frames come out empty.
+        let mut compiled = 0;
+        while emu.gl_shader_compile_step().is_some() && compiled < SHADER_COMPILE_LIMIT {
+            compiled += 1;
+        }
+
+        self.applied_renderer = Some(wanted);
+        if installed.is_gl() {
+            // The CPU textures stop being refreshed under OpenGL and would
+            // otherwise linger as a stale picture.
+            self.textures = None;
+        }
+        if installed == self.video.renderer {
+            self.post(match installed {
+                Renderer::Software => format!(
+                    "renderer: software{}",
+                    if self.video.threaded_software { ", threaded" } else { "" }
+                ),
+                _ => format!(
+                    "renderer: {} at {}x internal resolution",
+                    installed.label(),
+                    self.video.scale()
+                ),
+            });
+        } else {
+            // melonDS installs a software renderer of its own when the one it
+            // was handed cannot initialise, so this is what actually happened
+            // rather than what was asked for.
+            self.post(format!(
+                "could not create the {} renderer; on {} instead",
+                self.video.renderer.label(),
+                installed.label()
+            ));
+            self.video.renderer = installed;
+            self.applied_renderer = Some(self.video.to_core());
+        }
+    }
+
+    fn apply_render_settings(&mut self) {
+        let (top, bottom) = match self.view.sizing {
+            ScreenSizing::TopOnly => (!self.view.swap, self.view.swap),
+            ScreenSizing::BottomOnly => (self.view.swap, !self.view.swap),
+            _ => (true, true),
+        };
+        let wanted = (self.video.render, self.video.displayed_mask(top, bottom));
+        if self.applied_render == Some(wanted) {
+            return;
+        }
+        if let Some(emu) = &mut self.emu {
+            emu.set_render(wanted.0);
+            emu.set_displayed_screens(wanted.1);
+            self.applied_render = Some(wanted);
+        }
+    }
+
+    /// Move whatever the SPU has produced into the output ring.
+    ///
+    /// Called once per batch of emulated frames rather than per frame, since the
+    /// core buffers internally and the ring is what actually paces playback.
+    fn drain_audio(&mut self) {
+        let (Ok(audio), Some(emu)) = (&mut self.audio, &mut self.emu) else {
+            return;
+        };
+        let queued = emu.nds.audio_queued();
+        if queued == 0 {
+            return;
+        }
+        // Interleaved stereo, so two `i16` per sample frame.
+        let mut buf = vec![0i16; queued * 2];
+        let read = emu.nds.read_audio(&mut buf);
+        audio.push(&buf[..read * 2]);
+    }
+
     /// The pointer's position on the bottom screen in touchscreen coordinates,
     /// or `None` when the stylus is not down on it.
     fn sample_touch(&self, ctx: &egui::Context) -> Option<(u16, u16)> {
@@ -682,12 +1030,23 @@ impl MelonEgui {
     }
 
     /// Copy both framebuffers into egui textures.
+    ///
+    /// Nothing to do under an OpenGL renderer: its picture never leaves the
+    /// GPU, and is drawn by [`Self::screens`] straight from the texture.
     fn upload(&mut self, ctx: &egui::Context) {
         let filter =
             if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
         let Some(emu) = &mut self.emu else {
             return;
         };
+        if emu.gl_output().is_some() {
+            // `ScreenSizing::Auto` decides on whether a screen has anything on
+            // it, which cannot be sampled from a texture without reading it
+            // back every frame. Both screens count as live instead, which is
+            // what Auto resolves to whenever it cannot tell.
+            self.screens_live = [true, true];
+            return;
+        }
         let Some((top, bottom)) = emu.nds.framebuffers() else {
             return;
         };
@@ -723,6 +1082,28 @@ impl MelonEgui {
     fn screens(&mut self, ui: &mut egui::Ui, area: Rect) {
         let placed = view::layout(area, &self.resolved_view());
         self.bottom_screen = placed.bottom;
+
+        // Under OpenGL the picture is a texture in eframe's context rather than
+        // CPU pixels, so it is drawn by a callback inside the GL painter.
+        if let Some(output) = self.emu.as_mut().and_then(Emu::gl_output)
+            && let Some(screen) = self.gl_screen.clone()
+        {
+            let filter =
+                if self.view.filtering { eframe::glow::LINEAR } else { eframe::glow::NEAREST };
+            for (rect, layer) in [(placed.top, 0.0f32), (placed.bottom, 1.0f32)] {
+                let Some(rect) = rect else { continue };
+                let screen = screen.clone();
+                let callback = egui_glow::CallbackFn::new(move |_info, painter| {
+                    // egui_glow sets the GL viewport to this callback's own
+                    // rectangle before calling it, so the quad just covers clip
+                    // space and lands exactly where the layout put the screen.
+                    screen.paint(painter.gl(), output.texture, FULL_CLIP, layer, filter);
+                });
+                ui.painter()
+                    .add(egui::PaintCallback { rect, callback: std::sync::Arc::new(callback) });
+            }
+            return;
+        }
 
         let Some(textures) = &self.textures else {
             return;
@@ -761,7 +1142,9 @@ impl MelonEgui {
         }
         if self.is_loaded() {
             let paused = if self.paused { "  [paused]" } else { "" };
-            lines.insert(0, format!("{:.1} FPS{paused}", self.fps));
+            // Without this the window looks hung rather than deliberately still.
+            let frozen = if self.video.render { "" } else { "  [rendering off]" };
+            lines.insert(0, format!("{:.1} FPS{paused}{frozen}", self.fps));
         }
 
         let painter = ui.painter();
@@ -779,6 +1162,103 @@ impl MelonEgui {
                 );
             }
             at.y += 16.0;
+        }
+    }
+
+    /// Keys and touch for the second console, read from its own viewport.
+    ///
+    /// egui keeps a separate input state per viewport, so this reads the guest
+    /// window's rather than the main window's — otherwise one keypress would
+    /// drive both consoles.
+    fn sample_guest_input(&self, ctx: &egui::Context) -> (u32, Option<(u16, u16)>) {
+        if self.guest.is_none() {
+            return (0, None);
+        }
+        let id = guest_viewport_id();
+        let read = |i: &egui::InputState| {
+            let keys = BINDINGS
+                .iter()
+                .filter(|(key, ..)| i.key_down(*key))
+                .fold(0, |mask, (_, bit, _)| mask | bit);
+            let pointer = i.pointer.primary_down().then(|| i.pointer.interact_pos()).flatten();
+            (keys, pointer)
+        };
+        // Before the viewport's first repaint this reads a default state, which
+        // is simply "nothing held" -- the right answer for a window that has
+        // not appeared yet.
+        let (keys, pointer) = ctx.input_for(id, read);
+        let touch = self
+            .guest_bottom
+            .zip(pointer)
+            .and_then(|(rect, pos)| touch_coords(rect, pos, self.view.rotation));
+        (keys, touch)
+    }
+
+    /// The second console's window: its own screens, its own input.
+    fn guest_view(&mut self, ctx: &egui::Context) {
+        if self.guest.is_none() {
+            return;
+        }
+        // Upload the guest's picture with the same conversion the host uses.
+        let filter =
+            if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
+        if let Some(guest) = &mut self.guest
+            && let Some((top, bottom)) = guest.nds.framebuffers()
+        {
+            let images = [to_image(top), to_image(bottom)];
+            match &mut self.guest_textures {
+                Some(textures) => {
+                    for (texture, image) in textures.iter_mut().zip(images) {
+                        texture.set(image, filter);
+                    }
+                }
+                None => {
+                    let [t, b] = images;
+                    self.guest_textures = Some([
+                        ctx.load_texture("guest-top", t, filter),
+                        ctx.load_texture("guest-bottom", b, filter),
+                    ]);
+                }
+            }
+        }
+
+        let Some(textures) = self.guest_textures.clone() else {
+            return;
+        };
+        let view = self.resolved_view();
+        let builder = egui::ViewportBuilder::default()
+            .with_title("melon_egui - instance 2")
+            .with_inner_size(default_window_size())
+            // Same COM-apartment reason as the main window.
+            .with_drag_and_drop(false);
+
+        let mut closed = false;
+        let mut bottom_rect = None;
+        ctx.show_viewport_immediate(guest_viewport_id(), builder, |ctx, _class| {
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
+                ctx,
+                |ui| {
+                    let area = ui.max_rect();
+                    let placed = view::layout(area, &view);
+                    bottom_rect = placed.bottom;
+                    let painter = ui.painter();
+                    for (rect, texture) in
+                        [(placed.top, &textures[0]), (placed.bottom, &textures[1])]
+                    {
+                        if let Some(rect) = rect {
+                            paint_screen(painter, texture.id(), rect, view.rotation);
+                        }
+                    }
+                },
+            );
+            if ctx.input(|i| i.viewport().close_requested()) {
+                closed = true;
+            }
+        });
+        self.guest_bottom = bottom_rect;
+        if closed {
+            self.guest = None;
+            self.guest_textures = None;
         }
     }
 
@@ -856,6 +1336,7 @@ impl MelonEgui {
                 Ok(()) => println!("shot: wrote {} ({w}x{h})", path.display()),
                 Err(e) => eprintln!("shot: failed to write {}: {e}", path.display()),
             }
+            self.shot_core_picture(path.clone());
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -864,6 +1345,43 @@ impl MelonEgui {
             self.shot_requested = true;
             println!("shot: {} frames run, requesting capture", self.frames_run);
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+    }
+
+    /// Alongside a `--shot` of the window, write the core's own picture when it
+    /// is an OpenGL renderer drawing it: `<out>_core_top.png` and
+    /// `<out>_core_bottom.png`, read back from the texture at the internal
+    /// resolution.
+    ///
+    /// The window capture is at window size whatever the renderer is doing, so
+    /// it cannot show that the internal resolution reached the rasteriser.
+    /// These can: their pixel size *is* `256*scale x 192*scale`.
+    fn shot_core_picture(&mut self, path: PathBuf) {
+        let Some(emu) = &mut self.emu else { return };
+        let Some(output) = emu.gl_output() else { return };
+
+        let (w, h) = (output.width as usize, output.height as usize);
+        let mut pixels = vec![0u32; w * h];
+        for (screen, name) in [(0u8, "top"), (1, "bottom")] {
+            if emu.gl_read_output(screen, &mut pixels) == 0 {
+                eprintln!("shot: could not read the {name} screen back from the GL renderer");
+                continue;
+            }
+            // BGRA in memory, as the software framebuffers are, so the channel
+            // order here is the one `to_image` uses.
+            let rgb: Vec<u8> = pixels
+                .iter()
+                .flat_map(|&px| [(px >> 16) as u8, (px >> 8) as u8, px as u8])
+                .collect();
+            let out = path.with_file_name(format!(
+                "{}_core_{name}.png",
+                path.file_stem().unwrap_or_default().to_string_lossy()
+            ));
+            match image::save_buffer(&out, &rgb, w as u32, h as u32, image::ExtendedColorType::Rgb8)
+            {
+                Ok(()) => println!("shot: wrote {} ({w}x{h})", out.display()),
+                Err(e) => eprintln!("shot: failed to write {}: {e}", out.display()),
+            }
         }
     }
 }
@@ -883,6 +1401,7 @@ impl eframe::App for MelonEgui {
             },
         );
         panes::show(self, ctx);
+        self.guest_view(ctx);
         self.second_view(ctx);
         if let Some(action) = action {
             self.apply(action, ctx);
@@ -898,12 +1417,26 @@ impl eframe::App for MelonEgui {
         }
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {
         if let Some(emu) = &self.emu {
             emu.flush_save();
         }
+        // The blitter's program and vertex array belong to eframe's context,
+        // which is still current here and gone afterwards.
+        if let (Some(gl), Some(screen)) = (gl, self.gl_screen.take()) {
+            screen.destroy(gl);
+        }
         self.persist();
     }
+}
+
+/// A quad covering the whole GL viewport, which egui_glow has already set to
+/// the paint callback's rectangle.
+const FULL_CLIP: [f32; 4] = [-1.0, -1.0, 2.0, 2.0];
+
+/// The second console's window. A stable id, so the viewport survives repaints.
+fn guest_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("melon_egui-instance-2")
 }
 
 /// Paint one screen into `rect`, rotated.

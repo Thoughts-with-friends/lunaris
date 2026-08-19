@@ -9,19 +9,27 @@ use egui::Context;
 use crate::{
     app::{BINDINGS, MelonEgui},
     config,
+    mp::Kind,
+    video::Renderer,
     view::AspectRatio,
 };
 
 /// One auxiliary window.
-#[derive(Clone, Copy, PartialEq, Eq)]
+///
+/// Serialisable so that whichever dialogs were open are reopened next run, the
+/// way a docked tool window would be.
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Pane {
     RomInfo,
+    Power,
     RamSearch,
     DateTime,
     Input,
     EmuSettings,
     Preferences,
     VideoSettings,
+    AudioSettings,
+    Wireless,
     Interface,
     Paths,
     About,
@@ -32,12 +40,15 @@ impl Pane {
     pub const fn title(self) -> &'static str {
         match self {
             Self::RomInfo => "ROM info",
+            Self::Power => "Power management",
             Self::RamSearch => "RAM search",
             Self::DateTime => "Date and time",
             Self::Input => "Input and hotkeys",
             Self::EmuSettings => "Emu settings",
             Self::Preferences => "Preferences",
             Self::VideoSettings => "Video settings",
+            Self::AudioSettings => "Audio settings",
+            Self::Wireless => "Wireless status",
             Self::Interface => "Interface settings",
             Self::Paths => "Path settings",
             Self::About => "About melon_egui",
@@ -51,7 +62,8 @@ pub fn show(app: &mut MelonEgui, ctx: &Context) {
         let mut open = true;
         egui::Window::new(pane.title())
             .open(&mut open)
-            .resizable(matches!(pane, Pane::RamSearch))
+            .resizable(matches!(pane, Pane::RamSearch | Pane::Wireless))
+            .default_width(if matches!(pane, Pane::Wireless) { 460.0 } else { 260.0 })
             .show(ctx, |ui| body(app, pane, ui));
         if !open {
             app.close_pane(pane);
@@ -62,16 +74,56 @@ pub fn show(app: &mut MelonEgui, ctx: &Context) {
 fn body(app: &mut MelonEgui, pane: Pane, ui: &mut egui::Ui) {
     match pane {
         Pane::RomInfo => rom_info(app, ui),
+        Pane::Power => power(app, ui),
         Pane::RamSearch => ram_search(app, ui),
         Pane::DateTime => date_time(app, ui),
-        Pane::Input => input(ui),
+        Pane::Input => input(app, ui),
         Pane::EmuSettings => emu_settings(app, ui),
         Pane::Preferences => preferences(app, ui),
         Pane::VideoSettings => video_settings(app, ui),
+        Pane::AudioSettings => audio_settings(app, ui),
+        Pane::Wireless => wireless(app, ui),
         Pane::Interface => interface(app, ui),
         Pane::Paths => paths(app, ui),
         Pane::About => about(ui),
     }
+}
+
+/// A checkbox present for shape but not usable, with the reason on hover.
+fn disabled_checkbox(ui: &mut egui::Ui, label: &str, why: &str) {
+    let mut off = false;
+    ui.add_enabled(false, egui::Checkbox::new(&mut off, label)).on_disabled_hover_text(why);
+}
+
+/// melonDS's **System ▸ Power management**: the lid switch and what the
+/// power-management chip says about the battery.
+///
+/// Both are inputs to the console rather than settings of the front end, so
+/// they are read back from the core each frame instead of being mirrored here
+/// — a cart that opens the lid itself is then visible in the dialog.
+fn power(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let Some((lid, battery)) = app.power_state() else {
+        ui.label("No cart running.");
+        return;
+    };
+
+    let mut closed = lid;
+    if ui.checkbox(&mut closed, "Lid closed").changed() {
+        app.set_lid_closed(closed);
+    }
+    ui.label("Closing the lid raises the lid IRQ, which is how a cart is told to sleep.");
+    ui.separator();
+
+    let mut okay = battery;
+    ui.label("Battery level");
+    let mut changed = ui.radio_value(&mut okay, true, "Okay").changed();
+    changed |= ui.radio_value(&mut okay, false, "Low").changed();
+    if changed {
+        app.set_battery_okay(okay);
+    }
+    ui.label(
+        "What SPI's power-management chip reports; \"Low\" is what a cart's low-battery          warning reads.",
+    );
 }
 
 fn rom_info(app: &mut MelonEgui, ui: &mut egui::Ui) {
@@ -237,8 +289,24 @@ fn date_time(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.label(&app.clock_note);
 }
 
-fn input(ui: &mut egui::Ui) {
+fn input(app: &MelonEgui, ui: &mut egui::Ui) {
     ui.label("Bindings are fixed in this front end.");
+    ui.separator();
+
+    ui.heading("Controllers");
+    match app.connected_pads() {
+        [] => {
+            ui.label("None connected. A pad is picked up as soon as it is plugged in.");
+        }
+        pads => {
+            for pad in pads {
+                ui.label(pad);
+            }
+        }
+    }
+    ui.label(
+        "Face buttons map by position, as the DS lays them out: A is the right-hand          button and B the bottom one. Shoulders are L and R; the D-pad and the left          stick both steer. Pad and keyboard are merged, so either works at any time.",
+    );
     ui.separator();
     egui::Grid::new("bindings").striped(true).show(ui, |ui| {
         for (key, _, name) in BINDINGS {
@@ -255,8 +323,7 @@ fn input(ui: &mut egui::Ui) {
 fn emu_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.limit_framerate, "Limit framerate")
         .on_hover_text("Off runs the core as fast as it will go.");
-    ui.separator();
-    ui.label(app.audio_status());
+    ui.checkbox(&mut app.audio_sync, "Audio sync");
     ui.separator();
     ui.label("Console: DS, direct boot, FreeBIOS + generated firmware.");
     ui.label("The shim offers no other boot mode, so there is nothing else to pick.");
@@ -273,14 +340,149 @@ fn preferences(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.monospace(config::config_dir().display().to_string());
 }
 
+/// melonDS's Video settings dialog, control for control.
+///
+/// Every 3D-renderer control here is live: `melonds-sys` builds the core with
+/// its OpenGL renderers and carries melonDS's whole `RendererSettings`. What a
+/// given machine can select still depends on its driver — see
+/// [`crate::video`] — so the OpenGL choices are disabled, with the reason on
+/// hover, when the context could not be bound.
 fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.label("Renderer: melonDS software rasteriser.");
-    ui.label("The OpenGL renderer is excluded from this build of the core.");
+    /// Why an OpenGL renderer cannot be selected on this machine.
+    const NO_GL: &str = "No OpenGL context: melon_egui could not bind the GL entry \
+                         points (or its blitter's shader would not build), so only \
+                         the software renderer can draw.";
+    /// Why the compute renderer in particular cannot.
+    const NO_COMPUTE: &str = "This context is not OpenGL 4.3, which the compute-shader                               renderer needs.";
+
+    ui.heading("3D renderer");
+    let gl_ok = app.gl_available();
+    let compute_ok = gl_ok && melonds::gl_supports_compute();
+    for renderer in Renderer::ALL {
+        let available = match renderer {
+            Renderer::Software => true,
+            Renderer::OpenGl => gl_ok,
+            Renderer::Compute => compute_ok,
+        };
+        let button = ui.add_enabled(
+            available,
+            egui::RadioButton::new(app.video.renderer == renderer, renderer.label()),
+        );
+        if available && button.clicked() {
+            app.video.renderer = renderer;
+        }
+        if !available {
+            button.on_disabled_hover_text(if gl_ok { NO_COMPUTE } else { NO_GL });
+        }
+    }
+    // Threading is the software 3D rasteriser's own setting, so it is offered
+    // with that renderer selected and no other.
+    ui.add_enabled_ui(app.video.renderer == Renderer::Software, |ui| {
+        ui.checkbox(&mut app.video.threaded_software, "Threaded software renderer").on_hover_text(
+            "Rasterise 3D on worker threads. Faster where there are cores to \
+                 spare; melonDS ships it off, so this does too.",
+        );
+    });
     ui.separator();
+
+    ui.heading("OpenGL options");
+    let on_gl = app.video.renderer.is_gl() && gl_ok;
+    ui.add_enabled_ui(on_gl, |ui| {
+        let mut scale = app.video.scale();
+        egui::ComboBox::from_label("Internal resolution")
+            .selected_text(format!("{scale}x  ({} x {})", 256 * scale, 192 * scale))
+            .show_ui(ui, |ui| {
+                for choice in 1..=16u32 {
+                    ui.selectable_value(
+                        &mut scale,
+                        choice,
+                        format!("{choice}x  ({} x {})", 256 * choice, 192 * choice),
+                    );
+                }
+            });
+        if scale != app.video.internal_scale {
+            app.video.internal_scale = scale;
+        }
+    });
+    if !on_gl {
+        ui.label("Select an OpenGL renderer above to change the internal resolution.");
+    }
+    ui.label(
+        "This rasterises the 3D geometry itself at the higher resolution, so it adds real \
+         detail — unlike Display scale below, which magnifies the finished picture.",
+    );
+    // Each of these belongs to one of the two OpenGL renderers, exactly as in
+    // melonDS: the core ignores the one its renderer has no use for, and this
+    // says which is which instead of letting a dead checkbox look live.
+    ui.add_enabled_ui(app.video.renderer == Renderer::OpenGl && gl_ok, |ui| {
+        ui.checkbox(&mut app.video.better_polygons, "Better polygons").on_hover_text(
+            "Improved polygon splitting. Closes the seams upscaling opens in some \
+                 geometry, for some speed. Regular OpenGL renderer only.",
+        );
+    });
+    ui.add_enabled_ui(app.video.renderer == Renderer::Compute && gl_ok, |ui| {
+        ui.checkbox(&mut app.video.hires_coordinates, "High-resolution coordinates").on_hover_text(
+            "Keep the extra vertex precision upscaling makes visible instead of \
+                 rounding to the DS's own grid. Compute-shader renderer only.",
+        );
+    });
+    disabled_checkbox(
+        ui,
+        "GL display",
+        "Always on: this front end composites through egui's OpenGL painter \
+         whichever renderer the core draws with, so there is nothing to turn off.",
+    );
+    ui.separator();
+
+    ui.heading("Display scale");
+    // `None` means "fit the window", which is the default and what the Screen
+    // size menu entries assume.
+    let mut fixed = app.view.display_scale.is_some();
+    if ui.checkbox(&mut fixed, "Draw at a fixed scale").changed() {
+        app.view.display_scale = fixed.then_some(2.0);
+    }
+    let mut scale = app.view.display_scale.unwrap_or(2.0);
+    let slider = egui::Slider::new(&mut scale, 1.0..=8.0)
+        .step_by(0.25)
+        .text("Scale")
+        .custom_formatter(|v, _| format!("{v:.2}x"));
+    if ui.add_enabled(fixed, slider).changed() {
+        app.view.display_scale = Some(scale);
+    }
+    if fixed {
+        let (w, h) = (
+            (melonds::SCREEN_WIDTH as f32 * scale).round() as u32,
+            (melonds::SCREEN_HEIGHT as f32 * scale).round() as u32,
+        );
+        ui.label(format!("Each screen drawn at {w} x {h} pixels."));
+        ui.label("Larger than the window simply crops; the layout still centres it.");
+    } else {
+        ui.label("Fitting to the window (use Screen filtering to choose how it is sampled).");
+    }
+    ui.separator();
+
+    ui.heading("Display");
+    ui.checkbox(&mut app.video.vsync, "VSync").on_hover_text(
+        "Takes effect the next time melon_egui starts: the surface's \
+                        present mode is fixed when the window is created.",
+    );
     ui.checkbox(&mut app.view.filtering, "Screen filtering")
         .on_hover_text("Smooth the picture when scaled, instead of square pixels.");
     ui.separator();
-    ui.label("Aspect ratio");
+
+    ui.heading("Compositing");
+    ui.checkbox(&mut app.video.render, "Render frames").on_hover_text(
+        "Off, the console keeps running but stops composing a picture. Emulation \
+             is unaffected -- melonDS documents it as bit-identical either way -- so \
+             this only makes the window go still.",
+    );
+    ui.checkbox(&mut app.video.skip_hidden_screens, "Skip screens the layout hides").on_hover_text(
+        "In the Top only / Bottom only sizings, tell the core not to compose the \
+             screen nobody is looking at. Most of the 2D renderer's work, saved.",
+    );
+    ui.separator();
+
+    ui.heading("Aspect ratio");
     egui::Grid::new("video-aspect").show(ui, |ui| {
         for (label, aspect) in
             [("Top", &mut app.view.aspect_top), ("Bottom", &mut app.view.aspect_bottom)]
@@ -294,6 +496,169 @@ fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
             ui.end_row();
         }
     });
+}
+
+fn audio_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    ui.label(app.audio_status());
+    ui.separator();
+
+    let mut volume = app.volume();
+    // Past 100% is a boost rather than a normalisation: the DS's own mix sits
+    // some way below full scale, so unity is quieter than most other things on
+    // the desktop. Loud material will clip up here, hence the hint below.
+    let slider = egui::Slider::new(&mut volume, 0.0..=2.0)
+        .text("Volume")
+        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+    if ui.add_enabled(app.has_audio(), slider).changed() {
+        app.set_volume(volume);
+    }
+    if volume > 1.0 {
+        ui.label("Above 100% is a boost; loud passages may clip.");
+    }
+    ui.add_enabled(app.has_audio(), egui::Checkbox::new(&mut app.audio_sync, "Audio sync"))
+        .on_hover_text("Pace emulation against the sound card instead of the clock.");
+    ui.separator();
+
+    ui.label(format!(
+        "Source rate: {} Hz (the core's SPU output; fixed by the bindings)",
+        crate::audio::SPU_SAMPLE_RATE,
+    ));
+    ui.separator();
+    ui.checkbox(&mut app.mic_static, "Microphone: white noise");
+}
+
+/// Everything the shared airwaves have seen, in the detail needed to compare
+/// this run against lunaris's own wireless trace.
+///
+/// The headline is deliberately the CMD count. DS local play only starts once
+/// the host begins sending CMD frames — association succeeding is *not* the same
+/// thing — and "association fine, no CMD ever sent" is exactly where lunaris
+/// currently stops (`docs/design/review_mp_local2.md` §4). So the one number
+/// that says whether this is working is how many CMD frames went out.
+fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let counters = app.airwaves.counters();
+    let connected = app.airwaves.connected();
+    let live: Vec<usize> =
+        connected.iter().enumerate().filter_map(|(i, on)| on.then_some(i)).collect();
+
+    let cmds: u64 = counters.iter().map(|c| c.sent_cmd).sum();
+    let replies: u64 = counters.iter().map(|c| c.sent_reply).sum();
+    let acks: u64 = counters.iter().map(|c| c.sent_ack).sum();
+    let generic: u64 = counters.iter().map(|c| c.sent_generic).sum();
+
+    // -- the verdict ----------------------------------------------------
+    ui.heading("Status");
+    if live.is_empty() {
+        ui.label(
+            "No console is on the air yet. A cart only joins when it opens its \
+             wireless menu, so this stays empty until then.",
+        );
+    } else if cmds == 0 {
+        ui.colored_label(
+            egui::Color32::from_rgb(0xE0, 0xA0, 0x40),
+            format!(
+                "{} console(s) on the air, {generic} frames exchanged, but no CMD frame \
+                 has been sent.",
+                live.len()
+            ),
+        );
+        ui.label(
+            "Beacons and the association handshake are ordinary frames; local play only \
+             begins when the host starts an MP round with a CMD. This is the exact point \
+             lunaris does not get past.",
+        );
+    } else {
+        ui.colored_label(
+            egui::Color32::from_rgb(0x60, 0xC0, 0x60),
+            format!("MP rounds are running: {cmds} CMD, {replies} replies, {acks} ACK."),
+        );
+        if replies == 0 {
+            ui.colored_label(
+                egui::Color32::from_rgb(0xE0, 0xA0, 0x40),
+                "The host is asking but no client has answered.",
+            );
+        }
+    }
+    ui.separator();
+
+    // -- per console ----------------------------------------------------
+    ui.heading("Per console");
+    egui::ScrollArea::horizontal().id_salt("mp-counters").show(ui, |ui| {
+        egui::Grid::new("mp-grid").striped(true).show(ui, |ui| {
+            for heading in [
+                "#",
+                "on air",
+                "wifi clock",
+                "sent pkt",
+                "CMD",
+                "reply",
+                "ACK",
+                "recv pkt",
+                "recv CMD",
+                "recv reply",
+                "stale",
+                "AID mask",
+            ] {
+                ui.strong(heading);
+            }
+            ui.end_row();
+
+            for (i, c) in counters.iter().enumerate() {
+                // Consoles that never joined and never sent anything are noise.
+                if !connected[i] && c.sent_generic == 0 && c.recv_generic == 0 {
+                    continue;
+                }
+                ui.monospace(i.to_string());
+                ui.monospace(if connected[i] { "yes" } else { "no" });
+                ui.monospace(c.clock.to_string());
+                ui.monospace(c.sent_generic.to_string());
+                ui.monospace(c.sent_cmd.to_string());
+                ui.monospace(c.sent_reply.to_string());
+                ui.monospace(c.sent_ack.to_string());
+                ui.monospace(c.recv_generic.to_string());
+                ui.monospace(c.recv_cmd.to_string());
+                ui.monospace(c.recv_reply.to_string());
+                ui.monospace(c.stale_replies.to_string());
+                ui.monospace(format!("{:04b}", c.last_reply_mask));
+                ui.end_row();
+            }
+        });
+    });
+    ui.label(
+        "\"stale\" counts replies discarded for arriving outside the host's round, and \
+         \"AID mask\" is what the last reply collection returned - a host asking and \
+         getting 0000 is a host nobody answered.",
+    );
+    ui.separator();
+
+    // -- the traffic log ------------------------------------------------
+    ui.horizontal(|ui| {
+        ui.heading("Traffic");
+        if ui.button("Clear").clicked() {
+            app.airwaves.clear_log();
+        }
+    });
+    let log = app.airwaves.log();
+    if log.is_empty() {
+        ui.label("(nothing yet)");
+        return;
+    }
+    // Newest last, scrolled to the bottom, so it reads like a trace.
+    egui::ScrollArea::vertical().id_salt("mp-log").max_height(220.0).stick_to_bottom(true).show(
+        ui,
+        |ui| {
+            for event in &log {
+                let kind = match event.kind {
+                    Kind::Reply(aid) => format!("reply aid={aid}"),
+                    other => other.label().to_owned(),
+                };
+                ui.monospace(format!(
+                    "inst {}  t={:<12} {:<12} {} bytes",
+                    event.sender, event.timestamp, kind, event.len
+                ));
+            }
+        },
+    );
 }
 
 fn interface(app: &mut MelonEgui, ui: &mut egui::Ui) {

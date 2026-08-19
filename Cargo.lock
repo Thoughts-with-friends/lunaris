@@ -2352,11 +2352,15 @@ dependencies = [
 name = "melon_egui"
 version = "0.2.0"
 dependencies = [
+ "cpal",
  "eframe",
  "egui",
+ "egui_glow",
+ "gilrs",
  "image",
  "melonds",
  "rfd",
+ "ringbuf",
  "serde",
  "serde_json",
  "winres",
@@ -2365,7 +2369,7 @@ dependencies = [
 [[package]]
 name = "melonds"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=599d4c8#599d4c84a8367878214ca651ff5f6a4084d514af"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=9db0db4#9db0db42891a687e160ddb86091b5d49822ca7d1"
 dependencies = [
  "log",
  "melonds-sys",
@@ -2375,7 +2379,7 @@ dependencies = [
 [[package]]
 name = "melonds-sys"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=599d4c8#599d4c84a8367878214ca651ff5f6a4084d514af"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=9db0db4#9db0db42891a687e160ddb86091b5d49822ca7d1"
 dependencies = [
  "bindgen",
  "cc",

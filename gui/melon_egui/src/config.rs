@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::view::ViewOptions;
+use crate::{panes::Pane, video::VideoOptions, view::ViewOptions};
 
 /// How many recent ROMs are remembered, matching melonDS's list length.
 pub const RECENT_LIMIT: usize = 10;
@@ -18,8 +18,13 @@ pub struct Settings {
     /// Most recently opened first.
     pub recents: Vec<PathBuf>,
     pub view: ViewOptions,
+    pub video: VideoOptions,
+    /// Dialogs that were open when the window closed.
+    pub open_panes: Vec<Pane>,
     pub limit_framerate: bool,
     pub audio_sync: bool,
+    /// Output volume, 0.0 to 1.0.
+    pub volume: f32,
     /// Where savestates go. Empty means "beside the ROM", melonDS's default.
     pub state_dir: Option<PathBuf>,
     /// Where `.sav` files go. Empty means "beside the ROM".
@@ -34,8 +39,11 @@ impl Default for Settings {
         Self {
             recents: Vec::new(),
             view: ViewOptions::default(),
+            video: VideoOptions::default(),
+            open_panes: Vec::new(),
             limit_framerate: true,
             audio_sync: false,
+            volume: 1.0,
             state_dir: None,
             save_dir: None,
             ui_scale: 0.0,

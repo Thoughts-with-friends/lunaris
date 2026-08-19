@@ -198,6 +198,14 @@ pub struct ViewOptions {
     /// widescreen hack can stretch the 3D screen and leave the other native.
     pub aspect_top: AspectRatio,
     pub aspect_bottom: AspectRatio,
+    /// Draw the screens at exactly this magnification instead of fitting them to
+    /// the window. `None` fits, which is the default.
+    ///
+    /// This is *display* scaling — the GPU samples the 256x192 framebuffer at
+    /// this factor. It is not melonDS's "internal resolution", which re-renders
+    /// 3D geometry at a higher resolution inside the OpenGL renderer; see
+    /// [`crate::video`] for why that one is out of reach here.
+    pub display_scale: Option<f32>,
     /// Restrict the fitted scale to whole numbers, so every DS pixel covers the
     /// same number of screen pixels.
     pub integer_scaling: bool,
@@ -215,6 +223,7 @@ impl Default for ViewOptions {
             layout: ScreenLayout::default(),
             swap: false,
             sizing: ScreenSizing::default(),
+            display_scale: None,
             aspect_top: AspectRatio::default(),
             aspect_bottom: AspectRatio::default(),
             // Square pixels by default: this front end exists to be compared
@@ -321,6 +330,12 @@ pub fn layout(area: Rect, opts: &ViewOptions) -> Layout {
 /// The largest scale at which `size` fits inside `area`, honouring
 /// `integer_scaling`.
 fn fit(area: Rect, size: Vec2, opts: &ViewOptions) -> f32 {
+    // An explicit scale is explicit: it is not then rounded by
+    // `integer_scaling`, and it is allowed to overflow the window (the panel
+    // clips, so the result is a crop rather than a squeeze).
+    if let Some(scale) = opts.display_scale {
+        return scale.max(0.0);
+    }
     let mut scale = (area.width() / size.x).min(area.height() / size.y);
     if !scale.is_finite() || scale <= 0.0 {
         return 0.0;
@@ -596,6 +611,56 @@ mod tests {
             },
         );
         assert_eq!(strict.top.unwrap().width(), W * 2.0);
+    }
+
+    #[test]
+    fn an_explicit_display_scale_overrides_the_fit() {
+        // An area big enough for 4x, asked to draw at 2x.
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(W * 4.0, H * 8.0));
+        let placed = layout(
+            area,
+            &ViewOptions {
+                layout: ScreenLayout::Vertical,
+                display_scale: Some(2.0),
+                ..Default::default()
+            },
+        );
+        let top = placed.top.unwrap();
+        assert_eq!(top.width(), W * 2.0);
+        assert_eq!(top.height(), H * 2.0);
+        // Still centred, with the surplus as a border.
+        let block = top.union(placed.bottom.unwrap());
+        assert!((block.center().y - area.center().y).abs() < 0.01);
+    }
+
+    #[test]
+    fn an_explicit_scale_is_not_rounded_by_integer_scaling() {
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(W * 8.0, H * 16.0));
+        let placed = layout(
+            area,
+            &ViewOptions {
+                layout: ScreenLayout::Vertical,
+                display_scale: Some(2.5),
+                integer_scaling: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(placed.top.unwrap().width(), W * 2.5, "an explicit scale is taken as given");
+    }
+
+    #[test]
+    fn an_explicit_scale_larger_than_the_window_is_allowed() {
+        // Overflow is a crop, not a squeeze: the panel clips it.
+        let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(W, H));
+        let placed = layout(
+            area,
+            &ViewOptions {
+                layout: ScreenLayout::Vertical,
+                display_scale: Some(4.0),
+                ..Default::default()
+            },
+        );
+        assert_eq!(placed.top.unwrap().width(), W * 4.0);
     }
 
     #[test]
