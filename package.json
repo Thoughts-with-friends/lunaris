@@ -1,6 +1,6 @@
 {
   "name": "lunaris",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "A Nintendo DS emulator - Rust-based",
   "homepage": "https://github.com/Thoughts-with-friends/lunaris",
