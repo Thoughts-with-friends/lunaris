@@ -31,7 +31,6 @@ jobs:
             os: windows-latest
 
           - target: x86_64-unknown-linux-gnu
-            build_profile: ${{ env.PROFILE }}
 
     runs-on: ${{ matrix.target.os }}
 
