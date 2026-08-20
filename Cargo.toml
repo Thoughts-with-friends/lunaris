@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.3.1" # NOTE: <- fixed ordering first(To release)
+version = "0.3.2" # NOTE: <- fixed ordering first(To release)
 authors = ["DiaSird"]
 categories = ["encoding"]
 description = "A modern Nintendo DS emulator written in Rust"
