@@ -377,6 +377,18 @@ impl HW {
     /// [`crate::hw::net::wifi::diag`]; unlike the periodic dump this ignores
     /// `LUNARIS_MP_DIAG`, so a caller that explicitly asks for a snapshot
     /// always gets one.
+    /// The wireless timebase a console joining this one should adopt. See
+    /// [`net::wifi::Wifi::clock_reference`].
+    pub fn wifi_clock_reference(&self) -> u64 {
+        self.wifi.clock_reference(&self.scheduler)
+    }
+
+    /// Put this console on `us` as its wireless timebase, for one joining a
+    /// session already in progress.
+    pub fn set_wifi_clock_epoch(&mut self, us: u64) {
+        self.wifi.set_clock_epoch(us);
+    }
+
     pub fn wifi_diag_snapshot(&self) -> net::wifi::diag::MpDiag {
         self.wifi.diag_snapshot()
     }

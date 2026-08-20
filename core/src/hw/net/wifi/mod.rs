@@ -190,6 +190,14 @@ pub struct Wifi {
 
     is_mp: bool,
     is_mp_client: bool,
+    /// Where [`Self::us_timestamp`] starts counting from, in microseconds.
+    ///
+    /// Zero for a console that booted on its own. A console joined to a pair
+    /// *later* — Thread Mode's guest, which boots when the player asks for it —
+    /// is given its peer's clock reference here, so that the two agree on a
+    /// timebase despite having started at different moments. See
+    /// [`Self::update_power_on`].
+    clock_epoch_us: u64,
     us_timestamp: u64,
     us_counter: u64,
     us_compare: u64,
@@ -338,6 +346,7 @@ impl Wifi {
             mp_client_replies: vec![0; Self::MP_CLIENT_REPLIES_SIZE],
             is_mp: false,
             is_mp_client: false,
+            clock_epoch_us: 0,
             us_timestamp: 0,
             us_counter: 0,
             us_compare: 0,
@@ -908,6 +917,19 @@ impl Wifi {
         }
         self.power_on = on;
         if on {
+            // Start the wireless clock on the console's own timeline rather
+            // than wherever the last power-on left it.
+            //
+            // MP frames carry this clock, and a receiver holds a frame back
+            // until its own clock reaches the stamp on it. With a per-power-on
+            // epoch the two consoles of a pair disagree by however differently
+            // they reached their comm screens — one console's frames land
+            // minutes into the other's future or past, and discovery starves.
+            // Uptime is a timeline both consoles share (and `clock_epoch_us`
+            // carries the offset for one that joined late), so their clocks
+            // agree to within the moment wireless came up. Ported from
+            // melonDS's `USTimestamp = NumFrames * 16716`.
+            self.us_timestamp = self.clock_epoch_us + Self::uptime_us(scheduler);
             self.timer_error = 0;
             self.schedule_timer(scheduler);
             if let Some(t) = self.transport.as_mut() {
@@ -919,6 +941,24 @@ impl Wifi {
                 t.end();
             }
         }
+    }
+
+    /// How long this console has been running, in microseconds, from the
+    /// master clock the scheduler counts in.
+    fn uptime_us(scheduler: &Scheduler) -> u64 {
+        (scheduler.cycle as u64).saturating_mul(1_000_000) / crate::nds::NDS::CLOCK_RATE as u64
+    }
+
+    /// The clock a peer joining this console should start from: this console's
+    /// own reference *now*, whether or not its radio is on.
+    pub(crate) fn clock_reference(&self, scheduler: &Scheduler) -> u64 {
+        self.clock_epoch_us + Self::uptime_us(scheduler)
+    }
+
+    /// Put this console on `us` as its wireless timebase. Call before it turns
+    /// its radio on; afterwards it only takes effect at the next power cycle.
+    pub(crate) fn set_clock_epoch(&mut self, us: u64) {
+        self.clock_epoch_us = us;
     }
 
     fn schedule_timer(&mut self, scheduler: &mut Scheduler) {

@@ -39,7 +39,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -141,6 +141,14 @@ pub struct ThreadMode {
     frame: Arc<Mutex<GuestFrame>>,
     input: Arc<Mutex<GuestInput>>,
     commands: Arc<Mutex<Vec<GuestCommand>>>,
+    /// The host's wireless timebase, republished every repaint.
+    ///
+    /// The guest reads it whenever it boots — at start, and again on Reset or
+    /// Import Save, which rebuild the console from scratch. A console whose
+    /// uptime restarts has to be told where its peer's clock has got to, or it
+    /// starts stamping its frames from zero again. See
+    /// [`NDS::wifi_clock_reference`].
+    clock: Arc<AtomicU64>,
     /// Shown in the UI when [`ThreadMode::start`] could not boot the guest.
     last_error: Option<String>,
     /// Whether the control window is open. The guest's own viewport is tied to
@@ -182,6 +190,7 @@ impl ThreadMode {
             frame: Arc::new(Mutex::new(GuestFrame::default())),
             input: Arc::new(Mutex::new(GuestInput::default())),
             commands: Arc::new(Mutex::new(Vec::new())),
+            clock: Arc::new(AtomicU64::new(0)),
             last_error: None,
             is_open: false,
             textures: None,
@@ -228,6 +237,15 @@ impl ThreadMode {
         host_transport.begin();
         host.set_mp_transport(Some(Box::new(host_transport)));
 
+        // The guest boots now, while the host has been running for however
+        // long the player took to get here. Wi-Fi frames carry a microsecond
+        // timestamp and a receiver holds one back until its own clock reaches
+        // it, so two consoles counting from their own boots read each other's
+        // traffic as arriving from the future — or the distant past — and
+        // never associate. Handing the newcomer its peer's reference puts both
+        // on one timeline. See `NDS::wifi_clock_reference`.
+        self.clock = Arc::new(AtomicU64::new(host.wifi_clock_reference()));
+
         self.stop = Arc::new(AtomicBool::new(false));
         *self.frame.lock().unwrap_or_else(|e| e.into_inner()) = GuestFrame::default();
         *self.input.lock().unwrap_or_else(|e| e.into_inner()) = GuestInput::default();
@@ -238,6 +256,7 @@ impl ThreadMode {
         let input = Arc::clone(&self.input);
         let commands = Arc::clone(&self.commands);
         let hub_for_worker = Arc::clone(&hub);
+        let clock = Arc::clone(&self.clock);
 
         // The guest runs from `instances/instance2/config.json`, not from a
         // copy of the host's: it owns its own saves, savestates, cheats, logs
@@ -255,7 +274,7 @@ impl ThreadMode {
         self.config = config.clone();
 
         self.worker = Some(std::thread::spawn(move || {
-            guest_main(&config, &hub_for_worker, &stop, &frame, &input, &commands);
+            guest_main(&config, &hub_for_worker, &clock, &stop, &frame, &input, &commands);
             frame.lock().unwrap_or_else(|e| e.into_inner()).finished = true;
         }));
         self.hub = Some(hub);
@@ -276,6 +295,11 @@ impl ThreadMode {
 
     /// Draws the control panel and, while a guest is running, its viewport.
     pub fn show(&mut self, ctx: &egui::Context, config: &Config, host: &mut NDS) {
+        if self.is_running() {
+            // Kept current so a guest that reboots (Reset, Import Save) rejoins
+            // on the host's timeline rather than starting its clock over.
+            self.clock.store(host.wifi_clock_reference(), Ordering::Relaxed);
+        }
         self.control_panel(ctx, config, host);
         if self.is_running() {
             self.guest_viewport(ctx);
@@ -750,12 +774,13 @@ fn diag_line(d: &nds_core::nds::MpDiag) -> String {
 fn guest_main(
     config: &Config,
     hub: &Arc<LocalMpHub>,
+    clock: &AtomicU64,
     stop: &AtomicBool,
     frame: &Mutex<GuestFrame>,
     input: &Mutex<GuestInput>,
     commands: &Mutex<Vec<GuestCommand>>,
 ) {
-    let mut nds = boot_guest(config, hub);
+    let mut nds = boot_guest(config, hub, clock.load(Ordering::Relaxed));
 
     let mut next = Instant::now();
     let mut frames = 0u64;
@@ -765,7 +790,8 @@ fn guest_main(
     while !stop.load(Ordering::Relaxed) {
         let queued = std::mem::take(&mut *commands.lock().unwrap_or_else(|e| e.into_inner()));
         for command in queued {
-            let status = apply_command(&mut nds, config, hub, command, &mut paused, &mut speed);
+            let status =
+                apply_command(&mut nds, config, hub, clock, command, &mut paused, &mut speed);
             let mut slot = frame.lock().unwrap_or_else(|e| e.into_inner());
             slot.status = status;
             slot.paused = paused;
@@ -823,12 +849,15 @@ fn guest_main(
 /// [`GuestCommand::ImportSave`], which rebuild the emulator exactly as the main
 /// window's Reset and Import Save do. Re-joining the hub matters: a fresh `NDS`
 /// has no transport, so a reset instance would silently drop off the link.
-fn boot_guest(config: &Config, hub: &Arc<LocalMpHub>) -> NDS {
+fn boot_guest(config: &Config, hub: &Arc<LocalMpHub>, clock_epoch: u64) -> NDS {
     let mut nds = loader::load_rom_for_instance(config, GUEST_INSTANCE);
     let mut transport =
         MpInterfaceTransport::new(LocalMp::from_hub(Arc::clone(hub)), GUEST_INSTANCE);
     transport.begin();
     nds.set_mp_transport(Some(Box::new(transport)));
+    // Before the cart has a chance to turn the radio on, which is when the
+    // wireless clock takes its epoch.
+    nds.set_wifi_clock_epoch(clock_epoch);
     nds
 }
 
@@ -838,6 +867,7 @@ fn apply_command(
     nds: &mut NDS,
     config: &Config,
     hub: &Arc<LocalMpHub>,
+    clock: &AtomicU64,
     command: GuestCommand,
     paused: &mut bool,
     speed: &mut f32,
@@ -876,7 +906,7 @@ fn apply_command(
             nds.flush_save();
             match std::fs::copy(&src, &dst) {
                 Ok(_) => {
-                    *nds = boot_guest(config, hub);
+                    *nds = boot_guest(config, hub, clock.load(Ordering::Relaxed));
                     *paused = false;
                     format!("imported {}", src.display())
                 }
@@ -889,7 +919,7 @@ fn apply_command(
         },
         GuestCommand::Reset => {
             nds.flush_save();
-            *nds = boot_guest(config, hub);
+            *nds = boot_guest(config, hub, clock.load(Ordering::Relaxed));
             *paused = false;
             "reset".to_owned()
         }

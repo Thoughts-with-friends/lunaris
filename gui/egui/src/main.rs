@@ -516,7 +516,16 @@ impl LunarisApp {
 
         self.frame_accum += dt * Self::NDS_FPS * speed;
 
-        let emulated = (self.frame_accum.max(0.0) as u32).min(Self::MAX_BATCH);
+        // A batch is a burst: eight frames of emulated time pass in the couple
+        // of milliseconds it takes to run them. That is invisible on its own,
+        // but with a second instance linked it is fatal — the other console
+        // runs on its own thread at its own 60 Hz, so during the burst it
+        // produces nothing, and by the time it answers a wireless round the
+        // host has closed it. One frame at a time keeps the pair overlapping,
+        // which is the whole reason the guest has a thread at all. See
+        // `crate::thread_mode`.
+        let cap = if self.thread_mode.is_running() { 1 } else { Self::MAX_BATCH };
+        let emulated = (self.frame_accum.max(0.0) as u32).min(cap);
         for frame in 0..emulated {
             self.frame_accum -= 1.0;
 

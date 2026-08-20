@@ -124,6 +124,28 @@ impl NDS {
 
     /// Prints the local-multiplayer diagnostic summary immediately. See
     /// [`crate::hw::HW::wifi_dump_diag`].
+    /// The wireless timebase another console should adopt to be on this
+    /// one's clock.
+    ///
+    /// Wi-Fi frames carry a microsecond timestamp, and a receiver holds a
+    /// frame back until its own clock reaches it. Two consoles that started at
+    /// different moments — a second instance opened mid-session — therefore
+    /// have to be told about each other, or each reads the other's traffic as
+    /// arriving from the future (or the distant past) and the two never
+    /// associate.
+    #[inline]
+    pub fn wifi_clock_reference(&self) -> u64 {
+        self.hw.wifi_clock_reference()
+    }
+
+    /// Put this console on `us` as its wireless timebase. Call it on the
+    /// console that is joining, with [`Self::wifi_clock_reference`] taken from
+    /// the one already running, before either turns its radio on.
+    #[inline]
+    pub fn set_wifi_clock_epoch(&mut self, us: u64) {
+        self.hw.set_wifi_clock_epoch(us);
+    }
+
     /// A snapshot of the local-multiplayer handshake counters, for a
     /// frontend that wants to show how far the connection got. See
     /// [`crate::hw::net::wifi::diag`].

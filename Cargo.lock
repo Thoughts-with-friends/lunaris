@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "free_bios"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "futures-channel"
@@ -2266,7 +2266,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "eframe",
  "egui",
@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_gui_common"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "free_bios",
  "nds-core",
@@ -2314,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_net"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "nds-core",
  "rusty_enet",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "melon_egui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cpal",
  "eframe",
@@ -5361,7 +5361,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "y4m"
@@ -5508,9 +5508,9 @@ dependencies = [
 
 [[package]]
 name = "zerovec"
-version = "0.11.7"
+version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94b5c6b5976d66c1d703c4fd17d3f5e43c8cedaacf604961b171adc7130896d8"
+checksum = "bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8"
 dependencies = [
  "yoke",
  "zerofrom",
@@ -5519,9 +5519,9 @@ dependencies = [
 
 [[package]]
 name = "zerovec-derive"
-version = "0.11.4"
+version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47402523226a02bfe5230160dc3ccc089aa6f6f19e7fcbb4e6f824bbb1b4aa62"
+checksum = "9f212a141d820099d57ffafb9569be9617a6f27d3dc881fbee8fb56642f917a9"
 dependencies = [
  "proc-macro2",
  "quote",

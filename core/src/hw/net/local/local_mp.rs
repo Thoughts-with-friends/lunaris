@@ -35,7 +35,7 @@
 
 use std::{
     sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use super::semaphore::Semaphore;
@@ -86,6 +86,9 @@ enum Fifo {
 /// The mutex-guarded half of [`LocalMpHub`].
 struct Queues {
     status: MpStatusData,
+    /// When each instance last put a frame on the air, or `None` if it never
+    /// has. See [`LocalMpHub::peer_can_answer`].
+    last_send: [Option<Instant>; MAX_INSTANCES],
     /// Boxed rather than inline: 64 KiB each would otherwise be a large
     /// stack array during construction.
     packet_queue: Box<[u8]>,
@@ -103,6 +106,7 @@ impl Queues {
     fn new() -> Self {
         Queues {
             status: MpStatusData::default(),
+            last_send: [None; MAX_INSTANCES],
             packet_queue: vec![0u8; PACKET_QUEUE_SIZE].into_boxed_slice(),
             reply_queue: vec![0u8; REPLY_QUEUE_SIZE].into_boxed_slice(),
             packet_read_offset: [0; MAX_INSTANCES],
@@ -223,6 +227,36 @@ impl LocalMpHub {
         self.lock().status
     }
 
+    /// How stale an instance's last frame may be before a blocking receive
+    /// stops waiting for it.
+    ///
+    /// A paused, stopped or still-booting instance cannot answer, and waiting
+    /// out the full [`DEFAULT_RECV_TIMEOUT`] on every round for one that never
+    /// will is what turns "the other window is paused" into a front end
+    /// running at a few frames a second. Generous enough that an instance
+    /// merely running slowly, or one between rounds, still counts.
+    const PEER_TIMEOUT: Duration = Duration::from_millis(250);
+
+    /// Whether any instance other than `index` is in a position to answer.
+    ///
+    /// melonDS never asks this: its instances are separate processes, and one
+    /// that stops answering has usually gone altogether. Here they are threads
+    /// of one program, and one of them can be deliberately held — Thread
+    /// Mode's guest has a Pause item of its own.
+    fn peer_can_answer(&self, index: usize) -> bool {
+        let queues = self.lock();
+        (0..MAX_INSTANCES).any(|i| {
+            i != index
+                && queues.status.connected_bitmask & (1 << i) != 0
+                && queues.last_send[i].is_some_and(|at| at.elapsed() < Self::PEER_TIMEOUT)
+        })
+    }
+
+    /// `timeout`, or none at all when nobody could answer within it.
+    fn timeout_against_peers(&self, index: usize, timeout: Duration) -> Duration {
+        if timeout.is_zero() || self.peer_can_answer(index) { timeout } else { Duration::ZERO }
+    }
+
     fn lock(&self) -> MutexGuard<'_, Queues> {
         // A panic while holding this lock cannot leave the FIFOs in a
         // state a reader can't recover from: the magic check plus
@@ -301,6 +335,7 @@ impl LocalMpHub {
 
         let mut queues = self.lock();
         let connected = queues.status.connected_bitmask;
+        queues.last_send[index] = Some(Instant::now());
 
         queues.fifo_write(fifo, &header.to_bytes());
         if len != 0 {
@@ -354,6 +389,7 @@ impl LocalMpHub {
         timeout: Duration,
     ) -> MpRecvResult {
         let Some(index) = instance_index(inst) else { return MpRecvResult::None };
+        let timeout = self.timeout_against_peers(index, timeout);
 
         loop {
             if !self.sem_pool[index].try_wait(timeout) {
@@ -442,6 +478,7 @@ impl LocalMpHub {
         timeout: Duration,
     ) -> u16 {
         let Some(index) = instance_index(inst) else { return 0 };
+        let timeout = self.timeout_against_peers(index, timeout);
 
         let mut answered = 0u16;
         let mut seen_mask = 1u16 << index;
@@ -617,6 +654,47 @@ mod tests {
         host.begin(0);
         client.begin(1);
         (host, client)
+    }
+
+    /// A blocking receive is what makes a wireless round work at all: the
+    /// answer is produced by the *other* instance's thread while this one
+    /// waits. See `gui/egui/src/thread_mode.rs`.
+    #[test]
+    fn a_blocking_receive_is_answered_by_an_instance_that_is_still_running() {
+        let (mut host, mut client) = connected_pair();
+        // The peer has to have spoken recently, or waiting for it is refused.
+        host.send_packet(0, b"beacon", 10);
+        let mut drain = [0u8; 64];
+        client.recv_packet(1, &mut drain);
+
+        let hub = Arc::clone(host.hub());
+        let answering = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(5));
+            hub.send_packet_generic(0, MpFrameType::CMD, b"round", 1_000);
+        });
+
+        let started = Instant::now();
+        let mut buf = [0u8; 64];
+        let recv = client.recv_host_packet(1, &mut buf);
+        let waited = started.elapsed();
+        answering.join().unwrap();
+
+        assert!(matches!(recv, MpRecvResult::Frame { len: 5, .. }), "the CMD arrived: {recv:?}");
+        assert!(waited < DEFAULT_RECV_TIMEOUT, "returned on the frame, not the timeout");
+    }
+
+    /// And the guard that goes with it: an instance that is connected but not
+    /// running -- Thread Mode's guest, paused from its own menu -- must not
+    /// cost a full timeout on every round.
+    #[test]
+    fn nothing_waits_on_an_instance_that_is_not_running() {
+        let (_host, mut client) = connected_pair();
+        // Instance 0 is connected but has never sent anything, so it has no
+        // activity within PEER_TIMEOUT.
+        let started = Instant::now();
+        let mut buf = [0u8; 64];
+        assert_eq!(client.recv_host_packet(1, &mut buf), MpRecvResult::None);
+        assert!(started.elapsed() < Duration::from_millis(5), "returned at once");
     }
 
     #[test]
