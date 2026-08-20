@@ -44,6 +44,11 @@ const REPLY_SLOT: usize = 1024;
 /// the same 32 microseconds in `RecvReplies`.
 const STALE_MICROSECONDS: u64 = 32;
 
+/// The largest frame the wifi hardware moves, melonDS's `kMaxFrameSize`.
+/// `SendPacketGeneric` refuses anything bigger and warns rather than truncating
+/// it into the queue, and so does this.
+const MAX_FRAME_SIZE: usize = 0x948;
+
 /// What kind of frame a packet is, which decides the queue it lands in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -106,6 +111,11 @@ struct Mailbox {
     replies: VecDeque<Packet>,
     counters: Counters,
     connected: bool,
+    /// The console whose CMD frame this one last *received*, which is what
+    /// melonDS's `LastHostID` is: it is set on receive, per instance, so that
+    /// "my host has gone" is answered from what this console has actually
+    /// heard rather than from who spoke last on the medium.
+    last_host: Option<usize>,
 }
 
 #[derive(Default)]
@@ -113,8 +123,6 @@ struct Shared {
     boxes: Vec<Mailbox>,
     /// A short rolling history for the diagnostics window, newest last.
     log: VecDeque<Event>,
-    /// Which console last sent a CMD, so a client can tell its host has gone.
-    last_host: Option<usize>,
 }
 
 /// A line in the traffic log.
@@ -205,17 +213,30 @@ impl Client {
         // read, and would otherwise be delivered stale if it rejoins.
         mailbox.packets.clear();
         mailbox.replies.clear();
+        mailbox.last_host = None;
     }
 
     /// Broadcast to every *other* console, which is what a radio does. melonDS
     /// writes into a shared FIFO and filters the sender out on read; the effect
     /// is the same and this way a console never sees its own frame.
     fn send(&self, kind: Kind, data: &[u8], timestamp: u64) -> i32 {
+        // melonDS's SendPacketGeneric refuses an oversized frame outright:
+        // truncating one into the queue would be read back as a frame whose
+        // header disagrees with its length, which is worse than losing it.
+        if data.len() > MAX_FRAME_SIZE {
+            log::warn!("mp: refusing a {}-byte frame (max {MAX_FRAME_SIZE})", data.len());
+            return 0;
+        }
+
         let mut shared = self.airwaves.0.lock().unwrap();
 
         let packet = Packet { sender: self.instance, kind, timestamp, data: data.to_vec() };
         if kind == Kind::Cmd {
-            shared.last_host = Some(self.instance);
+            // A CMD opens a new round, and melonDS empties the host's reply
+            // queue here (`ReplyReadOffset = ReplyWriteOffset`, then
+            // `Semaphore_Reset`). Anything still in it answers a round that is
+            // over, and would otherwise be read as an answer to this one.
+            shared.boxes[self.instance].replies.clear();
         }
 
         for other in 0..MAX_INSTANCES {
@@ -236,6 +257,16 @@ impl Client {
             Kind::Ack => counters.sent_ack += 1,
         }
 
+        // `RUST_LOG=debug` turns this into a running account of the
+        // handshake, which is the only way to see how far a pair got before
+        // one of them gave up.
+        log::debug!(
+            "mp: {} sent {} len={} ts={timestamp}",
+            self.instance,
+            kind.label(),
+            data.len()
+        );
+
         let event = Event { sender: self.instance, kind, timestamp, len: data.len() };
         shared.log.push_back(event);
         if shared.log.len() > LOG_LIMIT {
@@ -245,8 +276,9 @@ impl Client {
         data.len() as i32
     }
 
-    /// Take the next ordinary packet, if one is waiting.
-    fn recv(&self, out: &mut [u8], timestamp: &mut u64) -> i32 {
+    /// Take the next ordinary packet, if one is waiting. `now` is the
+    /// receiving console's own wifi clock, for the trace only.
+    fn recv(&self, out: &mut [u8], now: u64, timestamp: &mut u64) -> i32 {
         let mut shared = self.airwaves.0.lock().unwrap();
         let Some(packet) = shared.boxes[self.instance].packets.pop_front() else {
             return 0;
@@ -254,6 +286,19 @@ impl Client {
         let len = packet.data.len().min(out.len());
         out[..len].copy_from_slice(&packet.data[..len]);
         *timestamp = packet.timestamp;
+
+        log::debug!(
+            "mp: {} received {} len={len} ts={} (now={now})",
+            self.instance,
+            packet.kind.label(),
+            packet.timestamp
+        );
+
+        // melonDS sets LastHostID when a CMD frame is *received*, which is
+        // what makes "the host has gone" answerable per console.
+        if packet.kind == Kind::Cmd {
+            shared.boxes[self.instance].last_host = Some(packet.sender);
+        }
 
         let counters = &mut shared.boxes[self.instance].counters;
         match packet.kind {
@@ -289,24 +334,24 @@ impl melonds::Host for Client {
         self.send(Kind::Ack, data, timestamp)
     }
 
-    fn mp_recv_packet(&self, data: &mut [u8], _now: u64, timestamp: &mut u64) -> Option<i32> {
-        Some(self.recv(data, timestamp))
+    fn mp_recv_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        Some(self.recv(data, now, timestamp))
     }
 
     /// As [`Self::mp_recv_packet`], but reports `-1` once the console whose CMDs
     /// this one has been following is no longer connected — which is how a
     /// client learns its host has gone rather than waiting forever.
-    fn mp_recv_host_packet(&self, data: &mut [u8], _now: u64, timestamp: &mut u64) -> Option<i32> {
+    fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
         {
             let shared = self.airwaves.0.lock().unwrap();
-            if let Some(host) = shared.last_host
+            if let Some(host) = shared.boxes[self.instance].last_host
                 && host != self.instance
                 && !shared.boxes[host].connected
             {
                 return Some(-1);
             }
         }
-        Some(self.recv(data, timestamp))
+        Some(self.recv(data, now, timestamp))
     }
 
     /// Drain the reply queue into per-AID slots, returning the mask of AIDs that

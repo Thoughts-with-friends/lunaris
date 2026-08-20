@@ -24,6 +24,7 @@ pub enum Pane {
     RomInfo,
     Power,
     Cheats,
+    Crash,
     RamSearch,
     DateTime,
     Input,
@@ -44,6 +45,7 @@ impl Pane {
             Self::RomInfo => "ROM info",
             Self::Power => "Power management",
             Self::Cheats => "Cheat codes",
+            Self::Crash => "Why the console stopped",
             Self::RamSearch => "RAM search",
             Self::DateTime => "Date and time",
             Self::Input => "Input and hotkeys",
@@ -65,7 +67,10 @@ pub fn show(app: &mut MelonEgui, ctx: &Context) {
         let mut open = true;
         egui::Window::new(pane.title())
             .open(&mut open)
-            .resizable(matches!(pane, Pane::RamSearch | Pane::Wireless | Pane::Cheats))
+            .resizable(matches!(
+                pane,
+                Pane::RamSearch | Pane::Wireless | Pane::Cheats | Pane::Crash
+            ))
             .default_width(if matches!(pane, Pane::Wireless) { 460.0 } else { 260.0 })
             .show(ctx, |ui| body(app, pane, ui));
         if !open {
@@ -79,6 +84,7 @@ fn body(app: &mut MelonEgui, pane: Pane, ui: &mut egui::Ui) {
         Pane::RomInfo => rom_info(app, ui),
         Pane::Power => power(app, ui),
         Pane::Cheats => cheat_codes(app, ui),
+        Pane::Crash => crash(app, ui),
         Pane::RamSearch => ram_search(app, ui),
         Pane::DateTime => date_time(app, ui),
         Pane::Input => input(app, ui),
@@ -128,6 +134,36 @@ fn power(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.label(
         "What SPI's power-management chip reports; \"Low\" is what a cart's low-battery          warning reads.",
     );
+}
+
+/// What the last stopped console left behind.
+///
+/// melonDS has no such dialog: it puts the reason in a message box and the
+/// core's log in a terminal nobody launched it from. A console that stops
+/// mid-session — which is what local wireless play has been doing — needs its
+/// account of itself somewhere it can be copied out of.
+fn crash(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let Some(report) = app.crash_report.clone() else {
+        ui.label("Nothing has stopped this session.");
+        return;
+    };
+    ui.horizontal(|ui| {
+        if ui.button("Copy").clicked() {
+            ui.ctx().copy_text(report.clone());
+        }
+        ui.label(format!(
+            "Also written to {}",
+            config::config_dir().join("last-stop.txt").display()
+        ));
+    });
+    ui.separator();
+    egui::ScrollArea::both().max_height(420.0).show(ui, |ui| {
+        ui.add(
+            egui::TextEdit::multiline(&mut report.as_str())
+                .font(egui::TextStyle::Monospace)
+                .desired_width(f32::INFINITY),
+        );
+    });
 }
 
 /// melonDS's **System ▸ Setup cheat codes**.

@@ -2358,6 +2358,7 @@ dependencies = [
  "egui_glow",
  "gilrs",
  "image",
+ "log",
  "melonds",
  "rfd",
  "ringbuf",
@@ -2370,7 +2371,7 @@ dependencies = [
 [[package]]
 name = "melonds"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=642cbf2#642cbf25dad75930e08646fea196151a3231a336"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=d2e90f5#d2e90f5d7a29a2afa047eb0dec182c28650244be"
 dependencies = [
  "log",
  "melonds-sys",
@@ -2380,7 +2381,7 @@ dependencies = [
 [[package]]
 name = "melonds-sys"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=642cbf2#642cbf25dad75930e08646fea196151a3231a336"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=d2e90f5#d2e90f5d7a29a2afa047eb0dec182c28650244be"
 dependencies = [
  "bindgen",
  "cc",

@@ -50,6 +50,58 @@ impl CartInfo {
     }
 }
 
+/// Why melonDS stopped a console, as `Platform::StopReason`.
+///
+/// The core hands one of these to the host on its way out — the only account
+/// of *why* a console stopped, since `run_frame` reports the fact alone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StopReason {
+    /// No reason given.
+    Unknown,
+    /// Someone outside the console asked it to stop.
+    External,
+    /// The cart asked for GBA mode, which melonDS does not emulate.
+    GbaModeNotSupported,
+    /// The ARM9 took an exception with its vectors in memory the protection
+    /// unit will not execute: a crash inside the emulated console, and the
+    /// interesting case.
+    BadExceptionRegion,
+    /// The console shut itself down — the cart wrote the power-management
+    /// chip's shutdown bit. Not a fault.
+    PowerOff,
+    /// A reason this build does not know about.
+    Other(i32),
+}
+
+impl StopReason {
+    /// melonDS `Platform::StopReason`, in its declaration order (see
+    /// `Platform.h`: Unknown, External, GBAModeNotSupported,
+    /// BadExceptionRegion, PowerOff).
+    const fn from_core(reason: i32) -> Self {
+        match reason {
+            0 => Self::Unknown,
+            1 => Self::External,
+            2 => Self::GbaModeNotSupported,
+            3 => Self::BadExceptionRegion,
+            4 => Self::PowerOff,
+            other => Self::Other(other),
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "stopped for no stated reason",
+            Self::External => "was stopped from outside",
+            Self::GbaModeNotSupported => "asked for GBA mode, which is not emulated",
+            Self::BadExceptionRegion => {
+                "crashed: the ARM9 took an exception with its vectors in non-executable memory"
+            }
+            Self::PowerOff => "powered itself off",
+            Self::Other(_) => "stopped for a reason this build does not know",
+        }
+    }
+}
+
 /// A booted cart, plus the host-side state that outlives any single frame.
 pub struct Emu {
     pub nds: Nds,
@@ -62,6 +114,13 @@ pub struct Emu {
     saves: Arc<SaveSink>,
     /// Where savestates go; `None` means beside the ROM.
     state_dir: Option<PathBuf>,
+    /// The reason the core last gave for stopping, filled in from the host
+    /// callback while `run_frame` was running.
+    stop: Arc<Mutex<Option<StopReason>>>,
+    /// This console's seat on the airwaves and the instance number that goes
+    /// with it, kept so that a reboot takes the same seat rather than dropping
+    /// off the air.
+    seat: Option<(u32, crate::mp::Client)>,
 }
 
 impl Emu {
@@ -113,7 +172,12 @@ impl Emu {
         let save = std::fs::read(&save_path).ok();
 
         let saves = Arc::new(SaveSink { path: save_path, pending: Mutex::new(None) });
-        let host = Box::new(HostBridge { saves: Arc::clone(&saves), mp });
+        let stop = Arc::new(Mutex::new(None));
+        // The seat is cloned rather than moved: the console's `Host` owns one
+        // handle to the airwaves, and the front end keeps another so a reboot
+        // (importing a save) can take the same seat again.
+        let seat = mp.clone().map(|mp| (instance_id, mp));
+        let host = Box::new(HostBridge { saves: Arc::clone(&saves), stop: Arc::clone(&stop), mp });
 
         let mut nds = Nds::new(&rom, save.as_deref(), instance_id, host)
             .map_err(|e| format!("cart rejected: {e}"))?;
@@ -127,6 +191,8 @@ impl Emu {
             info: CartInfo::parse(&rom),
             saves,
             state_dir,
+            stop,
+            seat,
         })
     }
 
@@ -142,6 +208,21 @@ impl Emu {
         if let Err(e) = std::fs::write(&self.saves.path, &data) {
             eprintln!("melon_egui: failed to write {}: {e}", self.saves.path.display());
         }
+    }
+
+    /// Why the core stopped, if it has, taken out on the way past.
+    ///
+    /// Reported with both CPUs' program counters, since the reason alone does
+    /// not say *where*: an ARM9 crash during wireless play, for instance, is
+    /// usually a fault the ARM7's wifi handling led it into.
+    pub fn stop_reason(&mut self) -> Option<String> {
+        let reason = self.stop.lock().unwrap().take()?;
+        Some(format!(
+            "{} (ARM9 pc={:08X}, ARM7 pc={:08X})",
+            reason.label(),
+            self.nds.pc(),
+            self.nds.arm7_pc()
+        ))
     }
 
     /// Re-set the console's real-time clock.
@@ -253,10 +334,20 @@ impl Emu {
         // Drop whatever the core was about to write, so the old save cannot
         // land on top of the imported one.
         *self.saves.pending.lock().unwrap() = None;
-        let reloaded = Self::boot_with(
+        // Rebooting must not cost this console its place on the airwaves: a
+        // `Host` is fixed at construction, so a console rebooted without its
+        // seat could never join one afterwards.
+        let save_dir = self.saves.path.parent().map(Path::to_path_buf);
+        let (instance_id, mp) = match self.seat.clone() {
+            Some((id, mp)) => (id, Some(mp)),
+            None => (0, None),
+        };
+        let reloaded = Self::boot_inner(
             &self.rom_path,
-            self.saves.path.parent().map(Path::to_path_buf).as_ref(),
+            save_dir.as_ref(),
             self.state_dir.as_ref(),
+            instance_id,
+            mp,
         )?;
         *self = reloaded;
         Ok(())
@@ -280,6 +371,9 @@ struct SaveSink {
 /// keeps its own [`Arc`] to the same sink.
 struct HostBridge {
     saves: Arc<SaveSink>,
+    /// Where `signal_stop` leaves what it was told, for the front end to read
+    /// once `run_frame` has returned.
+    stop: Arc<Mutex<Option<StopReason>>>,
     /// This console's place on the shared airwaves, when it has one. Without it
     /// every MP hook keeps the trait's default — an unlinked console.
     mp: Option<crate::mp::Client>,
@@ -291,6 +385,13 @@ impl melonds::Host for HostBridge {
     /// than all of it, which this front end does not bother with.
     fn write_save(&self, data: &[u8], _writeoffset: u32, _writelen: u32) {
         *self.saves.pending.lock().unwrap() = Some(data.to_vec());
+    }
+
+    /// melonDS is stopping this console. Recorded rather than acted on: the
+    /// call arrives from inside `run_frame`, and the front end reads it out
+    /// once that has returned — see [`Emu::stop_reason`].
+    fn signal_stop(&self, reason: i32) {
+        *self.stop.lock().unwrap() = Some(StopReason::from_core(reason));
     }
 
     // The MP hooks are pure forwarding: the airwaves are shared state, so the
@@ -430,7 +531,68 @@ fn civil_from_days(days: i64) -> (i32, i32, i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::civil_from_days;
+    use std::sync::{Arc, Mutex};
+
+    use melonds::Host;
+
+    use super::{HostBridge, SaveSink, civil_from_days};
+    use crate::mp::Airwaves;
+
+    /// A bridge with the seat a console booted for local play gets.
+    fn bridge(air: &Airwaves, instance: usize) -> HostBridge {
+        HostBridge {
+            saves: Arc::new(SaveSink {
+                path: std::path::PathBuf::from("unused.sav"),
+                pending: Mutex::new(None),
+            }),
+            stop: Arc::new(Mutex::new(None)),
+            mp: (instance < usize::MAX).then(|| air.client(instance)),
+        }
+    }
+
+    /// The bug local play failed on: a console booted without a seat has no
+    /// way to join one later, because its `Host` is fixed when the core is
+    /// constructed. Its frames used to vanish into the trait's defaults while
+    /// the other console sat waiting for a host that could never be heard.
+    #[test]
+    fn a_console_with_a_seat_is_actually_on_the_air() {
+        let air = Airwaves::new();
+        let (host, guest) = (bridge(&air, 0), bridge(&air, 1));
+        host.mp_begin();
+        guest.mp_begin();
+
+        host.mp_send_cmd(b"round", 1000);
+
+        let mut buf = [0u8; 64];
+        let mut ts = 0;
+        assert_eq!(guest.mp_recv_host_packet(&mut buf, 0, &mut ts), Some(5));
+        assert_eq!(&buf[..5], b"round");
+        assert_eq!(air.counters()[0].sent_cmd, 1, "the console's CMD reached the medium");
+    }
+
+    #[test]
+    fn a_console_without_a_seat_hears_nothing_and_is_heard_by_nobody() {
+        let air = Airwaves::new();
+        let guest = bridge(&air, 1);
+        guest.mp_begin();
+        // What `Emu::boot_with` builds: no seat at all.
+        let seatless = HostBridge {
+            saves: Arc::new(SaveSink {
+                path: std::path::PathBuf::from("unused.sav"),
+                pending: Mutex::new(None),
+            }),
+            stop: Arc::new(Mutex::new(None)),
+            mp: None,
+        };
+
+        // The trait's defaults claim the send succeeded, which is exactly why
+        // this was invisible: nothing reports an error.
+        assert_eq!(seatless.mp_send_cmd(b"round", 1000), 5);
+        let mut buf = [0u8; 64];
+        let mut ts = 0;
+        assert_eq!(guest.mp_recv_packet(&mut buf, 0, &mut ts), Some(0), "nothing arrived");
+        assert_eq!(air.counters()[0].sent_cmd, 0);
+    }
 
     #[test]
     fn civil_from_days_matches_known_dates() {

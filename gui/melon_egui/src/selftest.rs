@@ -31,7 +31,10 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     let start = std::time::Instant::now();
     let mut stopped_at = None;
     for frame in 0..frames {
-        if emu.nds.run_frame() == 0 {
+        emu.nds.run_frame();
+        // Asked, not inferred: a sleeping console draws no scanlines and is
+        // still perfectly alive (see `MelonEgui::advance`).
+        if !emu.nds.is_running() {
             stopped_at = Some(frame);
             break;
         }
@@ -218,7 +221,9 @@ fn check_two_instances(rom: &Path) -> bool {
 
     // Interleaved, as the front end runs them, so their wifi clocks stay level.
     for _ in 0..240 {
-        if host.nds.run_frame() == 0 || guest.nds.run_frame() == 0 {
+        host.nds.run_frame();
+        guest.nds.run_frame();
+        if !host.nds.is_running() || !guest.nds.is_running() {
             eprintln!("selftest: a console stopped while paired");
             return false;
         }

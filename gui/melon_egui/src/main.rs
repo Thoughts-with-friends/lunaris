@@ -83,6 +83,8 @@ mod emu;
 #[cfg(feature = "melonds")]
 mod gl_screen;
 #[cfg(feature = "melonds")]
+mod logger;
+#[cfg(feature = "melonds")]
 mod menu;
 #[cfg(feature = "melonds")]
 mod mp;
@@ -118,6 +120,10 @@ fn main() {
 
 #[cfg(feature = "melonds")]
 fn main() -> eframe::Result<()> {
+    // First thing, so that a core diagnostic from any later step is printed
+    // rather than dropped. See [`logger`].
+    logger::install();
+
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     // Pulled out before the positional arguments are read, so it can be
     // written last on the command line where it reads naturally.

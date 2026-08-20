@@ -132,6 +132,11 @@ pub struct MelonEgui {
     /// The Cheat codes dialog's name/text boxes, kept here so the pane itself
     /// stays a function of the app rather than owning state of its own.
     pub cheat_draft: (String, String),
+    /// What the last stopped console left behind: the reason, the state of the
+    /// airwaves, and the tail of the core's own log. Shown in a pane and
+    /// written to a file, because a console that stops has to explain itself
+    /// to someone who is not watching a terminal.
+    pub crash_report: Option<String>,
     /// The host's game controllers, merged into the keyboard's key mask.
     pads: crate::pad::Pads,
     /// The output stream, or the reason there is none.
@@ -226,6 +231,7 @@ impl MelonEgui {
             cheats_enabled: settings.cheats_enabled,
             applied_cheats: None,
             cheat_draft: (String::new(), String::new()),
+            crash_report: None,
             pads: crate::pad::Pads::new(),
             // Opened here rather than lazily: `CreationContext` already runs
             // after winit has taken the UI thread, and `Audio::spawn` puts the
@@ -453,6 +459,84 @@ impl MelonEgui {
         self.applied_cheats = Some(wanted);
     }
 
+    /// Gather everything that might explain a stopped console, show it, and
+    /// write it beside the executable.
+    ///
+    /// Written to a file because the usual way to run this is by launching the
+    /// executable, which on Windows has no console attached: a diagnostic that
+    /// only reaches stderr reaches nobody. The pane opens by itself for the
+    /// same reason.
+    fn write_crash_report(&mut self, who: &str, note: &str) {
+        let mut report = format!("melon_egui: {who} {note}\n");
+        if let Some(emu) = &mut self.emu {
+            report.push_str(&format!(
+                "cart: {} [{}]\nframes run: console 0 = {}",
+                emu.info.title,
+                emu.info.gamecode,
+                emu.nds.frame_count()
+            ));
+        }
+        if let Some(guest) = &mut self.guest {
+            report.push_str(&format!(", second instance = {}", guest.nds.frame_count()));
+        }
+        report.push('\n');
+
+        // Who was on the air, and what they had exchanged: local play failing
+        // shows up here as one side sending and nothing coming back.
+        let connected = self.airwaves.connected();
+        for (i, counters) in self.airwaves.counters().iter().enumerate().take(2) {
+            report.push_str(&format!(
+                "console {i}: {} | sent {}/{} cmd/reply, generic {}, ack {} | \
+                 received cmd {}, reply {}, generic {} | stale replies {} | \
+                 wifi clock {} | last reply mask {:04X}\n",
+                if connected.get(i) == Some(&true) { "on the air" } else { "not on the air" },
+                counters.sent_cmd,
+                counters.sent_reply,
+                counters.sent_generic,
+                counters.sent_ack,
+                counters.recv_cmd,
+                counters.recv_reply,
+                counters.recv_generic,
+                counters.stale_replies,
+                counters.clock,
+                counters.last_reply_mask,
+            ));
+        }
+
+        report.push_str("\n-- the last of the wireless traffic ------------------\n");
+        let log = self.airwaves.log();
+        for event in log.iter().rev().take(40).rev() {
+            report.push_str(&format!(
+                "console {} {} len={} ts={}\n",
+                event.sender,
+                event.kind.label(),
+                event.len,
+                event.timestamp
+            ));
+        }
+
+        report.push_str("\n-- the core's own last words -------------------------\n");
+        for line in crate::logger::recent() {
+            report.push_str(&line);
+            report.push('\n');
+        }
+
+        let path = crate::config::config_dir().join("last-stop.txt");
+        match std::fs::create_dir_all(crate::config::config_dir())
+            .and_then(|()| std::fs::write(&path, &report))
+        {
+            Ok(()) => {
+                eprintln!("melon_egui: wrote {}", path.display());
+                self.post(format!("stop report written to {}", path.display()));
+            }
+            Err(e) => eprintln!("melon_egui: could not write {}: {e}", path.display()),
+        }
+        self.crash_report = Some(report);
+        if !self.panes.contains(&panes::Pane::Crash) {
+            self.panes.push(panes::Pane::Crash);
+        }
+    }
+
     /// The game controllers the last repaint saw, for the Input pane.
     pub fn connected_pads(&self) -> &[String] {
         self.pads.connected()
@@ -622,7 +706,19 @@ impl MelonEgui {
         self.frames_run = 0;
         self.applied_render = None;
         self.applied_renderer = None;
-        match Emu::boot_with(rom, self.save_dir.as_ref(), self.state_dir.as_ref()) {
+        // Console 0 takes its seat on the airwaves here, at boot, rather than
+        // when a second instance is launched: a console's `Host` is fixed when
+        // the core is constructed, so one booted without a seat can never join
+        // afterwards — its frames vanish and its peer hears silence, which is
+        // what local play failing looked like. A seat costs nothing until the
+        // cart calls `MP_Begin`.
+        match Emu::boot_mp(
+            rom,
+            self.save_dir.as_ref(),
+            self.state_dir.as_ref(),
+            0,
+            self.airwaves.client(0),
+        ) {
             Ok(emu) => {
                 self.emu = Some(emu);
                 self.cheats = cheats::load(&Self::cheat_path(rom)).unwrap_or_default();
@@ -721,6 +817,29 @@ impl MelonEgui {
         }
     }
 
+    /// Where the second console's backup memory goes: `instance2/` under
+    /// console 0's save directory, seeded with a copy of console 0's file so
+    /// the two start from the same progress and then diverge, as two carts do.
+    ///
+    /// `None` if the directory cannot be made, which falls back to sharing —
+    /// worse, but better than refusing to launch.
+    fn guest_save_dir(&mut self, rom: &Path) -> Option<PathBuf> {
+        let host_save = Settings::redirect(self.save_dir.as_ref(), rom, "sav");
+        let dir = host_save.parent()?.join("instance2");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.post(format!("cannot make {}: {e}; sharing the save", dir.display()));
+            return None;
+        }
+        let guest_save = Settings::redirect(Some(&dir), rom, "sav");
+        if !guest_save.exists()
+            && host_save.exists()
+            && let Err(e) = std::fs::copy(&host_save, &guest_save)
+        {
+            self.post(format!("cannot seed {}: {e}", guest_save.display()));
+        }
+        Some(dir)
+    }
+
     /// Open a second console on the same cart and the same airwaves, which is
     /// what makes local wireless play testable in one window.
     ///
@@ -738,16 +857,32 @@ impl MelonEgui {
             self.post("load a cart first");
             return;
         };
-        // The host console only joins the airwaves lazily, when the cart starts
-        // using wireless, so nothing needs doing for it here.
+        // Console 0 already holds seat 0 (see `load`), so only the second
+        // console is booted here.
+        //
+        // It gets a save directory of its own, seeded from console 0's file:
+        // two consoles are two carts, and pointing both at one `.sav` means
+        // whichever writes last wins -- with a real save on the line.
+        let save_dir = self.guest_save_dir(&rom);
         match Emu::boot_mp(
             &rom,
-            self.save_dir.as_ref(),
+            save_dir.as_ref(),
             self.state_dir.as_ref(),
             1,
             self.airwaves.client(1),
         ) {
-            Ok(guest) => {
+            Ok(mut guest) => {
+                // Put the newcomer on console 0's wireless timebase. melonDS
+                // starts a console's wifi clock at `frames * 16716` when wifi
+                // powers on, so a console booted mid-session would stamp its
+                // frames however far behind it started -- minutes, here -- and
+                // the two would read each other's traffic as ancient. Both run
+                // one frame per repaint from now on, so this holds.
+                if let Some(host) = &mut self.emu {
+                    let frames = host.nds.frame_count();
+                    guest.nds.set_frame_count(frames);
+                    eprintln!("melon_egui: second instance starts at frame {frames}, as console 0");
+                }
                 self.guest = Some(guest);
                 self.post("second instance launched - both consoles share the airwaves");
             }
@@ -945,6 +1080,10 @@ impl MelonEgui {
         let mut ran = 0;
         let mut stopped = false;
         let mut guest_stopped = false;
+        // The core's account of why, which only exists for as long as it takes
+        // to read it out of the console that gave it.
+        let mut stop_note = None;
+        let mut guest_note = None;
         self.apply_render_settings();
         self.apply_renderer();
         self.apply_cheats();
@@ -973,27 +1112,46 @@ impl MelonEgui {
         // to completion and then the other. A paired console's wifi clock must
         // not drift: melonDS runs its instances as concurrent processes, and an
         // MP round spanning a gap of several frames times out mid-handshake.
+        //
+        // Whether a console is still running is *asked*, not inferred from the
+        // frame's scanline count. A console asleep — which is a state a cart
+        // enters deliberately, and which the wireless code passes through —
+        // draws no scanlines at all, and reading that as "stopped" is what used
+        // to freeze a perfectly healthy console the moment it slept.
         for _ in 0..due {
             if let Some(emu) = emu.as_mut() {
-                if emu.nds.run_frame() == 0 {
+                emu.nds.run_frame();
+                if !emu.nds.is_running() {
+                    stop_note = emu.stop_reason();
                     stopped = true;
                     break;
                 }
                 ran += 1;
             }
-            if let Some(guest) = guest.as_mut()
-                && guest.nds.run_frame() == 0
-            {
-                // A guest that has stopped stops being run, rather than taking
-                // down the console the player is actually using.
-                guest_stopped = true;
-                break;
+            if let Some(guest) = guest.as_mut() {
+                guest.nds.run_frame();
+                if !guest.nds.is_running() {
+                    // A guest that has stopped stops being run, rather than
+                    // taking down the console the player is actually using.
+                    guest_note = guest.stop_reason();
+                    guest_stopped = true;
+                    break;
+                }
             }
         }
         if guest_stopped {
             self.guest = None;
             self.guest_textures = None;
-            self.post("second instance stopped");
+            let note = guest_note.unwrap_or_else(|| "stopped".to_owned());
+            eprintln!("melon_egui: second instance {note}");
+            self.post(format!("second instance {note}"));
+            self.write_crash_report("second instance", &note);
+        }
+        if stopped {
+            let note = stop_note.unwrap_or_else(|| "stopped".to_owned());
+            eprintln!("melon_egui: console {note}");
+            self.post(format!("console {note}"));
+            self.write_crash_report("console 0", &note);
         }
 
         if ran > 0 {
