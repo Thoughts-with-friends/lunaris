@@ -28,7 +28,8 @@
 
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
+    time::{Duration, Instant},
 };
 
 /// How many consoles can share these airwaves. Two is what "Launch new
@@ -43,6 +44,22 @@ const REPLY_SLOT: usize = 1024;
 /// How far behind the host's clock a reply may be and still count. melonDS uses
 /// the same 32 microseconds in `RecvReplies`.
 const STALE_MICROSECONDS: u64 = 32;
+
+/// How long a blocking receive waits, in *wall* time. melonDS's
+/// `MPInterface::RecvTimeout` is 25 ms and its receives wait on a semaphore for
+/// that long; this waits on a condvar instead, for the same reason and the same
+/// duration — the peer is another thread now, and the answer is expected while
+/// we wait.
+const RECV_TIMEOUT: Duration = Duration::from_millis(25);
+
+/// How stale a peer's last activity may be before a blocking receive stops
+/// waiting for it.
+///
+/// A console that is paused, stopped, or still booting cannot answer, and
+/// waiting out the full timeout on every round for one that never will is what
+/// turns "the second window is paused" into a front end running at two frames a
+/// second. Generous enough that a console merely running slowly still counts.
+const PEER_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// The largest frame the wifi hardware moves, melonDS's `kMaxFrameSize`.
 /// `SendPacketGeneric` refuses anything bigger and warns rather than truncating
@@ -116,6 +133,9 @@ struct Mailbox {
     /// "my host has gone" is answered from what this console has actually
     /// heard rather than from who spoke last on the medium.
     last_host: Option<usize>,
+    /// When this console last did anything on the air. `None` until it does.
+    /// See [`PEER_TIMEOUT`].
+    active: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -138,8 +158,13 @@ pub struct Event {
 const LOG_LIMIT: usize = 400;
 
 /// The shared medium. Cheap to clone; every console holds one.
+///
+/// The condvar is what melonDS's per-instance semaphores are: a sender wakes
+/// whoever is waiting for something to arrive. One for the medium rather than
+/// one per console — with two consoles the difference is a spurious wake-up
+/// nobody notices, and the waiters re-check what they are waiting for anyway.
 #[derive(Clone)]
-pub struct Airwaves(Arc<Mutex<Shared>>);
+pub struct Airwaves(Arc<(Mutex<Shared>, Condvar)>);
 
 impl Default for Airwaves {
     fn default() -> Self {
@@ -151,7 +176,7 @@ impl Airwaves {
     pub fn new() -> Self {
         let mut shared = Shared::default();
         shared.boxes.resize_with(MAX_INSTANCES, Mailbox::default);
-        Self(Arc::new(Mutex::new(shared)))
+        Self(Arc::new((Mutex::new(shared), Condvar::new())))
     }
 
     /// A handle for console `instance`, to hand to [`crate::emu::Emu`].
@@ -161,24 +186,24 @@ impl Airwaves {
 
     /// Per-console counters, for the diagnostics window.
     pub fn counters(&self) -> Vec<Counters> {
-        let shared = self.0.lock().unwrap();
+        let shared = self.0.0.lock().unwrap();
         shared.boxes.iter().map(|b| b.counters).collect()
     }
 
     /// Which consoles have called `mp_begin` and not `mp_end`.
     pub fn connected(&self) -> Vec<bool> {
-        let shared = self.0.lock().unwrap();
+        let shared = self.0.0.lock().unwrap();
         shared.boxes.iter().map(|b| b.connected).collect()
     }
 
     /// The rolling traffic log, oldest first.
     pub fn log(&self) -> Vec<Event> {
-        let shared = self.0.lock().unwrap();
+        let shared = self.0.0.lock().unwrap();
         shared.log.iter().cloned().collect()
     }
 
     pub fn clear_log(&self) {
-        self.0.lock().unwrap().log.clear();
+        self.0.0.lock().unwrap().log.clear();
     }
 
     /// The bitmask of connected consoles, as melonDS's `ConnectedBitmask`.
@@ -201,12 +226,12 @@ pub struct Client {
 
 impl Client {
     fn begin(&self) {
-        let mut shared = self.airwaves.0.lock().unwrap();
+        let mut shared = self.airwaves.0.0.lock().unwrap();
         shared.boxes[self.instance].connected = true;
     }
 
     fn end(&self) {
-        let mut shared = self.airwaves.0.lock().unwrap();
+        let mut shared = self.airwaves.0.0.lock().unwrap();
         let mailbox = &mut shared.boxes[self.instance];
         mailbox.connected = false;
         // Anything still queued for a console that has left is not going to be
@@ -228,7 +253,7 @@ impl Client {
             return 0;
         }
 
-        let mut shared = self.airwaves.0.lock().unwrap();
+        let mut shared = self.airwaves.0.0.lock().unwrap();
 
         let packet = Packet { sender: self.instance, kind, timestamp, data: data.to_vec() };
         if kind == Kind::Cmd {
@@ -273,13 +298,32 @@ impl Client {
             shared.log.pop_front();
         }
 
+        shared.boxes[self.instance].active = Some(Instant::now());
+        drop(shared);
+        // Whoever is blocked waiting for this: melonDS posts the receiving
+        // instances' semaphores here, and for the same reason.
+        self.airwaves.0.1.notify_all();
+
         data.len() as i32
+    }
+
+    /// Whether any *other* console could still answer.
+    ///
+    /// Blocking only makes sense against a peer that is connected and actually
+    /// executing; one that is paused, stopped or still booting would cost a
+    /// full timeout per round and give nothing back.
+    fn peer_is_live(shared: &Shared, me: usize) -> bool {
+        shared.boxes.iter().enumerate().any(|(i, mailbox)| {
+            i != me
+                && mailbox.connected
+                && mailbox.active.is_some_and(|at| at.elapsed() < PEER_TIMEOUT)
+        })
     }
 
     /// Take the next ordinary packet, if one is waiting. `now` is the
     /// receiving console's own wifi clock, for the trace only.
     fn recv(&self, out: &mut [u8], now: u64, timestamp: &mut u64) -> i32 {
-        let mut shared = self.airwaves.0.lock().unwrap();
+        let mut shared = self.airwaves.0.0.lock().unwrap();
         let Some(packet) = shared.boxes[self.instance].packets.pop_front() else {
             return 0;
         };
@@ -343,7 +387,7 @@ impl melonds::Host for Client {
     /// client learns its host has gone rather than waiting forever.
     fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
         {
-            let shared = self.airwaves.0.lock().unwrap();
+            let shared = self.airwaves.0.0.lock().unwrap();
             if let Some(host) = shared.boxes[self.instance].last_host
                 && host != self.instance
                 && !shared.boxes[host].connected
@@ -351,7 +395,21 @@ impl melonds::Host for Client {
                 return Some(-1);
             }
         }
-        Some(self.recv(data, now, timestamp))
+
+        // This is the one receive melonDS blocks on (`RecvPacketGeneric` with
+        // `block = true`): a client waiting on its host's frame expects it to
+        // arrive while it waits, which it does now that the two consoles run
+        // on threads of their own.
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        loop {
+            let len = self.recv(data, now, timestamp);
+            if len != 0 {
+                return Some(len);
+            }
+            if !self.wait_for_traffic(deadline) {
+                return Some(0);
+            }
+        }
     }
 
     /// Drain the reply queue into per-AID slots, returning the mask of AIDs that
@@ -362,15 +420,67 @@ impl melonds::Host for Client {
     /// `(aid - 1) * 1024`, and the drain stops early once every connected
     /// console — or everyone the caller asked for — has been heard from.
     fn mp_recv_replies(&self, data: &mut [u8], _now: u64, timestamp: u64, aidmask: u16) -> u16 {
-        let mut shared = self.airwaves.0.lock().unwrap();
-        let connected = Airwaves::connected_mask(&shared);
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        let mut mask = 0u16;
         let mut seen = 1u16 << self.instance;
+        loop {
+            let done = self.collect_replies(data, timestamp, aidmask, &mut mask, &mut seen);
+            if done || !self.wait_for_traffic(deadline) {
+                break;
+            }
+        }
+        self.airwaves.0.0.lock().unwrap().boxes[self.instance].counters.last_reply_mask = mask;
+        mask
+    }
+
+    fn mp_clock(&self, now: u64) {
+        let mut shared = self.airwaves.0.0.lock().unwrap();
+        shared.boxes[self.instance].counters.clock = now;
+        // The clock advancing is this console saying it is still executing,
+        // which is what a peer's blocking receive waits on.
+        shared.boxes[self.instance].active = Some(Instant::now());
+    }
+}
+
+impl Client {
+    /// Wait for anything to arrive, up to `deadline`. Returns whether waiting
+    /// is still worth it — false once the deadline has passed or no peer is in
+    /// a position to answer.
+    fn wait_for_traffic(&self, deadline: Instant) -> bool {
+        let (lock, condvar) = &*self.airwaves.0;
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return false;
+        };
+        let shared = lock.lock().unwrap();
+        if !Self::peer_is_live(&shared, self.instance) {
+            return false;
+        }
+        let (_guard, result) = condvar.wait_timeout(shared, remaining).unwrap();
+        !result.timed_out()
+    }
+
+    /// One pass over whatever replies have arrived, returning whether the round
+    /// is answered — every connected console has spoken, or every aid the
+    /// caller asked for has.
+    ///
+    /// Ported from melonDS's `RecvReplies`: replies from this console itself
+    /// and replies older than the round are skipped, and each reply is written
+    /// at `(aid - 1) * 1024`.
+    fn collect_replies(
+        &self,
+        data: &mut [u8],
+        timestamp: u64,
+        aidmask: u16,
+        mask: &mut u16,
+        seen: &mut u16,
+    ) -> bool {
+        let mut shared = self.airwaves.0.0.lock().unwrap();
+        let connected = Airwaves::connected_mask(&shared);
         // Nobody else is on the air, so there is nothing to wait for.
-        if seen & connected == connected {
-            return 0;
+        if *seen & connected == connected {
+            return true;
         }
 
-        let mut mask = 0u16;
         while let Some(packet) = shared.boxes[self.instance].replies.pop_front() {
             let Kind::Reply(aid) = packet.kind else {
                 continue;
@@ -386,24 +496,17 @@ impl melonds::Host for Client {
                 let start = (aid as usize - 1) * REPLY_SLOT;
                 if let Some(slot) = data.get_mut(start..start + packet.data.len()) {
                     slot.copy_from_slice(&packet.data);
-                    mask |= 1 << aid;
+                    *mask |= 1 << aid;
                 }
             }
             shared.boxes[self.instance].counters.recv_reply += 1;
 
-            seen |= 1 << packet.sender;
-            if seen & connected == connected || (mask & aidmask) == aidmask {
-                break;
+            *seen |= 1 << packet.sender;
+            if *seen & connected == connected || (*mask & aidmask) == aidmask {
+                return true;
             }
         }
-
-        shared.boxes[self.instance].counters.last_reply_mask = mask;
-        mask
-    }
-
-    fn mp_clock(&self, now: u64) {
-        let mut shared = self.airwaves.0.lock().unwrap();
-        shared.boxes[self.instance].counters.clock = now;
+        false
     }
 }
 
@@ -420,6 +523,67 @@ mod tests {
         a.mp_begin();
         b.mp_begin();
         (air, a, b)
+    }
+
+    /// The whole point of the second console having a thread: a receive that
+    /// blocks is answered by a peer that is running *now*.
+    #[test]
+    fn a_blocking_receive_is_answered_by_a_peer_that_is_still_running() {
+        let (_air, a, b) = pair();
+        // The peer has to look alive, or waiting for it is refused outright.
+        a.mp_clock(1_000);
+
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            a.mp_send_cmd(b"round", 2_000);
+        });
+
+        let started = std::time::Instant::now();
+        let mut buf = [0u8; 64];
+        let mut ts = 0;
+        let len = b.mp_recv_host_packet(&mut buf, 0, &mut ts).unwrap();
+        let waited = started.elapsed();
+        sender.join().unwrap();
+
+        assert_eq!(len, 5, "the CMD arrived while the receive was waiting");
+        assert!(waited < super::RECV_TIMEOUT, "it returned on the packet, not on the timeout");
+        assert!(waited >= std::time::Duration::from_millis(4), "it really did wait");
+    }
+
+    /// And the other half: waiting on a console that is not executing would
+    /// cost a full timeout every round, so it is not done at all.
+    #[test]
+    fn nothing_waits_on_a_peer_that_is_not_running() {
+        let (_air, _a, b) = pair();
+        // `a` never says anything, so it has no activity to be within
+        // PEER_TIMEOUT of.
+        let started = std::time::Instant::now();
+        let mut buf = [0u8; 64];
+        let mut ts = 0;
+        assert_eq!(b.mp_recv_host_packet(&mut buf, 0, &mut ts), Some(0));
+        assert!(started.elapsed() < std::time::Duration::from_millis(5), "returned at once");
+    }
+
+    /// The host's reply collection waits the same way, which is what a
+    /// wireless round needs: the answer is produced by the other console after
+    /// the CMD goes out, and the host is still asking when it arrives.
+    #[test]
+    fn a_reply_that_arrives_late_is_still_collected() {
+        let (_air, host, client) = pair();
+        client.mp_clock(4_900);
+        host.mp_send_cmd(b"cmd", 5_000);
+
+        let answering = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            client.mp_send_reply(b"hello", 5_010, 1);
+        });
+
+        let mut buf = vec![0u8; 15 * 1024];
+        let mask = host.mp_recv_replies(&mut buf, 0, 5_000, 0b10);
+        answering.join().unwrap();
+
+        assert_eq!(mask, 0b10, "AID 1 answered, late but within the round's wait");
+        assert_eq!(&buf[..5], b"hello");
     }
 
     #[test]

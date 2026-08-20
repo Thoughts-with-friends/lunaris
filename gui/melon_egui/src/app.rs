@@ -132,6 +132,9 @@ pub struct MelonEgui {
     /// The Cheat codes dialog's name/text boxes, kept here so the pane itself
     /// stays a function of the app rather than owning state of its own.
     pub cheat_draft: (String, String),
+    /// Which system font is filling in for the characters egui's own fonts
+    /// cannot draw, for the Interface pane.
+    pub font_note: String,
     /// What the last stopped console left behind: the reason, the state of the
     /// airwaves, and the tail of the core's own log. Shown in a pane and
     /// written to a file, because a console that stops has to explain itself
@@ -165,7 +168,9 @@ pub struct MelonEgui {
     pub airwaves: Airwaves,
     /// The second console, when "Launch new instance" has opened one. It is a
     /// separate DS on the same airwaves, not another view of the first.
-    guest: Option<Emu>,
+    /// The second console, which runs on a thread of its own — see
+    /// [`crate::guest`] for why local wireless play requires that.
+    guest: Option<crate::guest::Guest>,
     guest_textures: Option<[TextureHandle; 2]>,
     /// Where the guest's bottom screen was drawn, for its own touch input.
     guest_bottom: Option<Rect>,
@@ -209,6 +214,7 @@ impl MelonEgui {
         rom: Option<PathBuf>,
         shot: Option<(u64, PathBuf)>,
         renderer: Option<(crate::video::Renderer, u32)>,
+        launch_second: bool,
     ) -> Self {
         let settings = Settings::load();
         let now = Instant::now();
@@ -232,6 +238,7 @@ impl MelonEgui {
             applied_cheats: None,
             cheat_draft: (String::new(), String::new()),
             crash_report: None,
+            font_note: String::new(),
             pads: crate::pad::Pads::new(),
             // Opened here rather than lazily: `CreationContext` already runs
             // after winit has taken the UI thread, and `Audio::spawn` puts the
@@ -299,6 +306,14 @@ impl MelonEgui {
         // Logged at startup because a missing sound card is otherwise only
         // visible if the user opens Config > Audio settings.
         eprintln!("melon_egui: {}", app.audio_status());
+        // Before the theme, so the first frame drawn already has it: a ROM
+        // title in kana is otherwise a row of boxes until something else
+        // rebuilds the font atlas.
+        app.font_note = match crate::fonts::install(&cc.egui_ctx) {
+            Some(path) => format!("CJK fallback: {}", path.display()),
+            None => "No CJK font found; Japanese text will show as boxes.".to_owned(),
+        };
+        eprintln!("melon_egui: {}", app.font_note);
         app.set_theme(&cc.egui_ctx, app.dark_theme);
         if settings.ui_scale > 0.0 {
             cc.egui_ctx.set_zoom_factor(settings.ui_scale);
@@ -306,6 +321,10 @@ impl MelonEgui {
         match rom {
             Some(rom) => app.load(&rom),
             None => app.post("no cart loaded — File ▸ Open ROM..."),
+        }
+        // `--mp`, which only means anything once a cart is loaded.
+        if launch_second && app.is_loaded() {
+            app.launch_instance();
         }
         app
     }
@@ -352,6 +371,14 @@ impl MelonEgui {
     }
 
     /// Whether a second console is running.
+    /// The second console's frame count, or `None` when there is no second
+    /// console. Its thread publishes this each frame, so a number that keeps
+    /// climbing is the visible proof that the pair really is running
+    /// concurrently rather than taking turns.
+    pub fn guest_frames(&self) -> Option<u32> {
+        self.guest.as_ref().map(crate::guest::Guest::frame_count)
+    }
+
     pub const fn has_guest(&self) -> bool {
         self.guest.is_some()
     }
@@ -476,8 +503,8 @@ impl MelonEgui {
                 emu.nds.frame_count()
             ));
         }
-        if let Some(guest) = &mut self.guest {
-            report.push_str(&format!(", second instance = {}", guest.nds.frame_count()));
+        if let Some(guest) = &self.guest {
+            report.push_str(&format!(", second instance = {}", guest.frame_count()));
         }
         report.push('\n');
 
@@ -864,30 +891,21 @@ impl MelonEgui {
         // two consoles are two carts, and pointing both at one `.sav` means
         // whichever writes last wins -- with a real save on the line.
         let save_dir = self.guest_save_dir(&rom);
-        match Emu::boot_mp(
+        // Put the newcomer on console 0's wireless timebase. melonDS starts a
+        // console's wifi clock at `frames * 16716` when wifi powers on, so a
+        // console booted mid-session would stamp its frames however far behind
+        // it started -- minutes, here -- and the two would read each other's
+        // traffic as ancient.
+        let start_frame = self.emu.as_mut().map_or(0, |host| host.nds.frame_count());
+        self.guest = Some(crate::guest::Guest::spawn(
             &rom,
-            save_dir.as_ref(),
-            self.state_dir.as_ref(),
+            save_dir,
+            self.state_dir.clone(),
             1,
             self.airwaves.client(1),
-        ) {
-            Ok(mut guest) => {
-                // Put the newcomer on console 0's wireless timebase. melonDS
-                // starts a console's wifi clock at `frames * 16716` when wifi
-                // powers on, so a console booted mid-session would stamp its
-                // frames however far behind it started -- minutes, here -- and
-                // the two would read each other's traffic as ancient. Both run
-                // one frame per repaint from now on, so this holds.
-                if let Some(host) = &mut self.emu {
-                    let frames = host.nds.frame_count();
-                    guest.nds.set_frame_count(frames);
-                    eprintln!("melon_egui: second instance starts at frame {frames}, as console 0");
-                }
-                self.guest = Some(guest);
-                self.post("second instance launched - both consoles share the airwaves");
-            }
-            Err(e) => self.post(format!("cannot launch second instance: {e}")),
-        }
+            start_frame,
+        ));
+        self.post("second instance launched - both consoles share the airwaves");
     }
 
     /// Show this front end's directory in the system file manager.
@@ -1079,18 +1097,22 @@ impl MelonEgui {
 
         let mut ran = 0;
         let mut stopped = false;
-        let mut guest_stopped = false;
         // The core's account of why, which only exists for as long as it takes
         // to read it out of the console that gave it.
         let mut stop_note = None;
-        let mut guest_note = None;
         self.apply_render_settings();
         self.apply_renderer();
         self.apply_cheats();
         let mic_static = self.mic_static;
 
-        // Destructured so both consoles can be driven from the same loop.
-        let Self { emu, guest, .. } = self;
+        // The second console runs on its own thread; all that reaches it from
+        // here is the input its window collected.
+        if let Some(guest) = &self.guest {
+            guest.set_input(guest_keys, guest_touch);
+            guest.set_paused(self.paused || unfocused);
+        }
+
+        let Self { emu, .. } = self;
 
         if let Some(emu) = emu.as_mut() {
             emu.nds.set_keys(keys);
@@ -1100,18 +1122,6 @@ impl MelonEgui {
                 None => emu.nds.release_screen(),
             }
         }
-        if let Some(guest) = guest.as_mut() {
-            guest.nds.set_keys(guest_keys);
-            match guest_touch {
-                Some((x, y)) => guest.nds.touch(x, y),
-                None => guest.nds.release_screen(),
-            }
-        }
-
-        // Strictly alternating, one frame each, rather than running one console
-        // to completion and then the other. A paired console's wifi clock must
-        // not drift: melonDS runs its instances as concurrent processes, and an
-        // MP round spanning a gap of several frames times out mid-handshake.
         //
         // Whether a console is still running is *asked*, not inferred from the
         // frame's scanline count. A console asleep — which is a state a cart
@@ -1128,24 +1138,20 @@ impl MelonEgui {
                 }
                 ran += 1;
             }
-            if let Some(guest) = guest.as_mut() {
-                guest.nds.run_frame();
-                if !guest.nds.is_running() {
-                    // A guest that has stopped stops being run, rather than
-                    // taking down the console the player is actually using.
-                    guest_note = guest.stop_reason();
-                    guest_stopped = true;
-                    break;
-                }
+        }
+
+        // Whatever the second console's thread has to say. Its own stop is
+        // reported the same way the first console's is, but it is closed rather
+        // than paused: a console that has stopped is not going to draw again.
+        if let Some(note) = self.guest.as_ref().and_then(crate::guest::Guest::take_note) {
+            self.post(format!("second instance {note}"));
+            if self.guest.as_ref().is_some_and(crate::guest::Guest::finished) {
+                self.write_crash_report("second instance", &note);
             }
         }
-        if guest_stopped {
+        if self.guest.as_ref().is_some_and(crate::guest::Guest::finished) {
             self.guest = None;
             self.guest_textures = None;
-            let note = guest_note.unwrap_or_else(|| "stopped".to_owned());
-            eprintln!("melon_egui: second instance {note}");
-            self.post(format!("second instance {note}"));
-            self.write_crash_report("second instance", &note);
         }
         if stopped {
             let note = stop_note.unwrap_or_else(|| "stopped".to_owned());
@@ -1471,12 +1477,11 @@ impl MelonEgui {
         // Upload the guest's picture with the same conversion the host uses.
         let filter =
             if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
-        if let Some(guest) = &mut self.guest
-            && let Some((top, bottom)) = guest.nds.framebuffers()
-        {
+        if let Some(screens) = self.guest.as_ref().and_then(crate::guest::Guest::take_screens) {
+            let [top, bottom] = screens;
             let images = [
-                to_image(top, upscale::Method::None, 1),
-                to_image(bottom, upscale::Method::None, 1),
+                to_image(&top, upscale::Method::None, 1),
+                to_image(&bottom, upscale::Method::None, 1),
             ];
             match &mut self.guest_textures {
                 Some(textures) => {

@@ -717,6 +717,14 @@ fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
 
     // -- the verdict ----------------------------------------------------
     ui.heading("Status");
+    match app.guest_frames() {
+        // The second console runs on a thread of its own, so this climbing is
+        // what says the pair is running *concurrently* -- which is what makes
+        // a wireless round's reply arrive while the host is still asking for
+        // it. See `crate::guest`.
+        Some(frames) => ui.label(format!("Second console: running, frame {frames}")),
+        None => ui.label("No second console. System ▸ Multiplayer ▸ Launch new instance."),
+    };
     if live.is_empty() {
         ui.label(
             "No console is on the air yet. A cart only joins when it opens its \
@@ -831,6 +839,10 @@ fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
 }
 
 fn interface(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    ui.label(&app.font_note).on_hover_text(
+        "egui's own fonts are Latin-only, so a system font is borrowed for          Japanese, Chinese and Korean. Set MELON_EGUI_FONT to a .ttf/.otf/.ttc          to choose a different one.",
+    );
+    ui.separator();
     let mut dark = app.dark_theme;
     if ui.checkbox(&mut dark, "Dark theme").changed() {
         app.set_theme(ui.ctx(), dark);

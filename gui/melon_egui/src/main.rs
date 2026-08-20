@@ -81,7 +81,11 @@ mod config;
 #[cfg(feature = "melonds")]
 mod emu;
 #[cfg(feature = "melonds")]
+mod fonts;
+#[cfg(feature = "melonds")]
 mod gl_screen;
+#[cfg(feature = "melonds")]
+mod guest;
 #[cfg(feature = "melonds")]
 mod logger;
 #[cfg(feature = "melonds")]
@@ -128,6 +132,9 @@ fn main() -> eframe::Result<()> {
     // Pulled out before the positional arguments are read, so it can be
     // written last on the command line where it reads naturally.
     let renderer = take_renderer(&mut argv);
+    // `--mp` opens the second console as soon as the cart is loaded, which is
+    // what makes a link testable from a shell.
+    let mp = take_flag(&mut argv, "--mp");
     let mut args = argv.into_iter();
     let first = args.next();
 
@@ -184,8 +191,18 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "melon_egui",
         options,
-        Box::new(move |cc| Ok(Box::new(app::MelonEgui::new(cc, rom, shot, renderer)))),
+        Box::new(move |cc| Ok(Box::new(app::MelonEgui::new(cc, rom, shot, renderer, mp)))),
     )
+}
+
+/// Take a bare flag out of `argv`, reporting whether it was there.
+#[cfg(feature = "melonds")]
+fn take_flag(argv: &mut Vec<String>, flag: &str) -> bool {
+    let Some(at) = argv.iter().position(|arg| arg == flag) else {
+        return false;
+    };
+    argv.remove(at);
+    true
 }
 
 /// Take `--renderer <software|opengl|compute>[@scale]` out of `argv`, if it is
