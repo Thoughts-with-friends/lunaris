@@ -41,6 +41,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Setup environment
+        uses: ./.github/actions/setup-deps
+        with:
+          platform: ${{ matrix.target.os }}
+          build_profile: ${{ env.PROFILE }}
 
       - name: Build and Compress
         uses: ./.github/actions/build-and-compress
