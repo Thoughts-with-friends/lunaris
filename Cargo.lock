@@ -2378,6 +2378,7 @@ dependencies = [
  "indexmap 2.14.0",
  "log",
  "melonds",
+ "pollster 1.0.1",
  "rfd",
  "ringbuf",
  "serde",

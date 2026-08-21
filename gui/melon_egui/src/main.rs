@@ -76,6 +76,7 @@ mod app;
 mod audio;
 #[cfg(feature = "melonds")]
 mod cheats;
+// Depends on the view and video option types, which only exist with the core.
 #[cfg(feature = "melonds")]
 mod config;
 #[cfg(feature = "melonds")]
@@ -105,7 +106,15 @@ mod video;
 #[cfg(feature = "melonds")]
 mod view;
 
-mod i18n;
+pub(crate) mod fs;
+pub(crate) mod i18n;
+/// The VPN-tolerant LAN transport. Built without the core too, so its latency
+/// harness can run on a machine with no LLVM toolchain.
+pub(crate) mod lan;
+/// Remote Desktop mode: both consoles on the host, picture and sound out,
+/// buttons and stylus back. Core-free for the same reason as [`lan`] — its
+/// codec measurements run anywhere.
+pub(crate) mod remote;
 
 /// Without the `melonds` feature there is no core to drive, so the binary can
 /// only explain itself. Failing loudly beats a window that renders nothing.

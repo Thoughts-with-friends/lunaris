@@ -38,7 +38,28 @@ pub struct Settings {
     /// egui's UI scale. 0 means "follow the system".
     pub ui_scale: f32,
     pub dark_theme: bool,
+    /// Which translation the UI is drawn in.
+    pub language: crate::i18n::Language,
+    /// The address the guest join box is pre-filled with — the last one that
+    /// was typed into it. Persisted because on a VPN it is a number nobody
+    /// remembers and it does not change between sessions.
+    pub lan_host_address: String,
+    /// The address the host binds. Persisted for the same reason, though it
+    /// changes less often.
+    pub lan_bind_address: String,
+    /// How the LAN transport behaves on a slow link. See [`crate::lan::Tuning`].
+    pub lan: crate::lan::Tuning,
+    /// How Remote Desktop mode behaves. See [`crate::remote::Tuning`].
+    pub remote: crate::remote::Tuning,
 }
+
+/// What the guest join box holds before anyone has typed in it: this machine,
+/// so that two front ends on one computer link without any typing at all.
+pub const DEFAULT_LAN_HOST: &str = "127.0.0.1:7064";
+
+/// What the host bind box holds before anyone has typed in it: every interface,
+/// which is what a guest on another machine — or through a tunnel — needs.
+pub const DEFAULT_LAN_BIND: &str = "0.0.0.0:7064";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -56,6 +77,11 @@ impl Default for Settings {
             ui_scale: 0.0,
             // The core's picture is pixel art, and a pale theme washes it out.
             dark_theme: true,
+            language: crate::i18n::Language::default(),
+            lan_host_address: DEFAULT_LAN_HOST.to_owned(),
+            lan_bind_address: DEFAULT_LAN_BIND.to_owned(),
+            lan: crate::lan::Tuning::default(),
+            remote: crate::remote::Tuning::default(),
         }
     }
 }
@@ -74,8 +100,11 @@ impl Settings {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        match serde_json::from_str(&text) {
-            Ok(settings) => settings,
+        match serde_json::from_str::<Self>(&text) {
+            Ok(mut settings) => {
+                settings.normalize();
+                settings
+            }
             Err(e) => {
                 eprintln!("melon_egui: ignoring unreadable {}: {e}", path.display());
                 Self::default()
@@ -110,6 +139,22 @@ impl Settings {
         }
     }
 
+    /// Clamp anything a hand-edited file could put out of range, so a bad
+    /// `settings.json` cannot put the front end in a state its own UI could not
+    /// produce. `lunaris` does the same to its `config.json`, for the same
+    /// reason.
+    pub fn normalize(&mut self) {
+        self.lan.normalize();
+        self.remote.normalize();
+        if self.lan_host_address.trim().is_empty() {
+            self.lan_host_address = DEFAULT_LAN_HOST.to_owned();
+        }
+        if self.lan_bind_address.trim().is_empty() {
+            self.lan_bind_address = DEFAULT_LAN_BIND.to_owned();
+        }
+        self.recents.truncate(RECENT_LIMIT);
+    }
+
     /// Record `rom` as the newest entry, moving it up if it was already there and
     /// dropping the oldest past [`RECENT_LIMIT`].
     pub fn push_recent(&mut self, rom: &Path) {
@@ -140,14 +185,24 @@ pub fn config_dir() -> PathBuf {
     instance_dir(1)
 }
 
-/// The directory containing all per-instance data, beside the executable.
+/// The directory containing all per-instance data.
+///
+/// `./instances`, relative to the working directory — deliberately the same
+/// expression `lunaris` itself uses (`lunaris_gui_common::config::Config::
+/// INSTANCES_DIR`), so that running the two front ends from one directory puts
+/// their instance trees in the same place and a save made under one is where
+/// the other looks for it. That is the point of the request: these are two
+/// front ends onto the same games, not two unrelated programs.
+///
+/// Working-directory-relative rather than executable-relative for the same
+/// reason: matching `lunaris` matters more than being relocatable, and the two
+/// cannot both be had.
 pub fn instances_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("instances")
+    PathBuf::from(INSTANCES_DIR)
 }
+
+/// Where per-instance data lives, as `lunaris` spells it.
+pub const INSTANCES_DIR: &str = "./instances";
 
 /// Return the root directory for one emulator instance.
 pub fn instance_dir(instance: u32) -> PathBuf {
@@ -174,6 +229,25 @@ pub fn ensure_instance_layout() {
             && let Err(error) = std::fs::write(&settings, json)
         {
             eprintln!("melon_egui: cannot write {}: {error}", settings.display());
+        }
+    }
+    ensure_translation_templates();
+}
+
+/// Write a full translation file for each language, once.
+///
+/// At startup rather than on exit, because a front end that is closed by the
+/// task manager — or that crashes — never reaches `on_exit`, and a user looking
+/// for something to edit would find nothing. Existing files are left alone:
+/// they are the user's, not ours.
+fn ensure_translation_templates() {
+    for language in crate::i18n::Language::ALL {
+        let path = crate::i18n::I18nMap::i18n_path(*language);
+        if path.exists() {
+            continue;
+        }
+        if let Err(error) = crate::i18n::I18nMap::built_in(*language).save_template() {
+            eprintln!("melon_egui: {error}");
         }
     }
 }

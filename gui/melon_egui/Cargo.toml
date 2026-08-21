@@ -35,6 +35,7 @@ egui = "0.33"
 # The paint callback that draws the core's GL texture inside eframe's context.
 egui_glow = "0.33"
 rfd = "0.14"
+pollster = { version = "1.0.1" }
 
 # Audio output. Same versions the core already uses, so no extra crates enter
 # the build.

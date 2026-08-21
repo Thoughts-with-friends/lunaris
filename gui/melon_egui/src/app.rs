@@ -27,10 +27,116 @@ use crate::{
     view::{self, Rotation, ScreenSizing, ViewOptions},
 };
 
+/// A LAN link that finished its handshake on the connection thread, on its way
+/// to being handed to a console.
+///
+/// Carries the link's own measurement handles alongside the transport, because
+/// `Box<dyn melonds::Host>` erases them and the front end needs both: the stats
+/// for the Wireless pane, and the pace for [`MelonEgui::advance`].
 struct LanConnection {
     host: Box<dyn melonds::Host>,
     local_addr: String,
     remote_addr: String,
+    /// Reads the live link counters. `None` would mean a transport with no
+    /// measurement, which this front end no longer has.
+    stats: Box<dyn Fn() -> crate::lan::LinkStats + Send>,
+    pace: crate::lan::LinkPace,
+}
+
+/// Lets a link be both the console's `Host` and the pane's counter source.
+///
+/// `Nds::new` takes ownership of a `Box<dyn Host>`, but the Wireless pane has
+/// to keep reading the same link's counters for as long as it is up. Sharing
+/// the transport behind an `Arc` is the whole of the trick; every method simply
+/// forwards.
+struct ArcHost<T>(std::sync::Arc<T>);
+
+impl<T: melonds::Host + Sync> melonds::Host for ArcHost<T> {
+    fn write_save(&self, data: &[u8], writeoffset: u32, writelen: u32) {
+        self.0.write_save(data, writeoffset, writelen);
+    }
+
+    fn signal_stop(&self, reason: i32) {
+        self.0.signal_stop(reason);
+    }
+
+    fn mp_begin(&self) {
+        self.0.mp_begin();
+    }
+
+    fn mp_end(&self) {
+        self.0.mp_end();
+    }
+
+    fn mp_send_packet(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.0.mp_send_packet(data, timestamp)
+    }
+
+    fn mp_recv_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        self.0.mp_recv_packet(data, now, timestamp)
+    }
+
+    fn mp_send_cmd(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.0.mp_send_cmd(data, timestamp)
+    }
+
+    fn mp_send_reply(&self, data: &[u8], timestamp: u64, aid: u16) -> i32 {
+        self.0.mp_send_reply(data, timestamp, aid)
+    }
+
+    fn mp_send_ack(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.0.mp_send_ack(data, timestamp)
+    }
+
+    fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        self.0.mp_recv_host_packet(data, now, timestamp)
+    }
+
+    fn mp_recv_replies(&self, data: &mut [u8], now: u64, timestamp: u64, aidmask: u16) -> u16 {
+        self.0.mp_recv_replies(data, now, timestamp, aidmask)
+    }
+
+    fn mp_clock(&self, now: u64) {
+        self.0.mp_clock(now);
+    }
+}
+
+/// Where a Remote Desktop session's other end is.
+///
+/// The port comes from [`crate::remote::Tuning::port`] and **replaces** whatever
+/// the address field carries, rather than merely filling in for a missing one.
+/// The address boxes are shared with LAN mode, so they usually hold that mode's
+/// port; honouring it here would silently point Remote Desktop at the LAN
+/// listener. One box on the pane deciding the port for this mode is easier to
+/// reason about than two fields that have to agree.
+fn parse_remote_address(text: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+    let ip = text
+        .parse::<std::net::SocketAddr>()
+        .map(|addr| addr.ip())
+        .or_else(|_| text.parse::<std::net::IpAddr>())
+        .map_err(|error| format!("invalid Remote Desktop address {text}: {error}"))?;
+    Ok(std::net::SocketAddr::new(ip, port))
+}
+
+#[cfg(test)]
+mod remote_address_tests {
+    use super::parse_remote_address;
+
+    /// The tuning's port wins, so the LAN boxes' port cannot misdirect a
+    /// Remote Desktop session.
+    #[test]
+    fn the_tuned_port_replaces_whatever_the_field_holds() {
+        assert_eq!(
+            parse_remote_address("192.168.1.20:7064", 7065).unwrap().to_string(),
+            "192.168.1.20:7065"
+        );
+        assert_eq!(
+            parse_remote_address("192.168.1.20", 7065).unwrap().to_string(),
+            "192.168.1.20:7065"
+        );
+        assert_eq!(parse_remote_address("0.0.0.0:1", 9000).unwrap().to_string(), "0.0.0.0:9000");
+        assert!(parse_remote_address("not an address", 7065).is_err());
+    }
 }
 
 fn parse_lan_address(text: &str, default_port: u16) -> Result<std::net::SocketAddr, String> {
@@ -60,6 +166,74 @@ mod lan_address_tests {
             "192.168.1.20:8000"
         );
     }
+}
+
+/// Which of the three things this window is.
+///
+/// A type rather than a scattering of `is_some()` checks, for the reason
+/// [`DialogPurpose`] is a type: several places have to agree about it — whether
+/// a cart is loaded, whether to repaint, which menu entries do anything — and a
+/// `match` that must be exhaustive is what keeps them agreeing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Mode {
+    /// An ordinary console, possibly with a second one beside it.
+    #[default]
+    Local,
+    /// Both consoles run here; the second one's picture and sound go out over
+    /// the network and its controls come back. See [`crate::remote`].
+    RemoteHost,
+    /// No emulation at all: a screen and a pair of speakers for a console
+    /// running somewhere else.
+    ///
+    /// **Owns nothing.** Saves, savestates, cheats and instance directories all
+    /// belong to the host, which is the whole point — a client that stored
+    /// anything would be a second copy of the save to keep in step.
+    RemoteClient,
+}
+
+impl Mode {
+    /// Whether this window runs an emulator of its own.
+    #[must_use]
+    pub const fn emulates(self) -> bool {
+        matches!(self, Self::Local | Self::RemoteHost)
+    }
+}
+
+/// A Remote Desktop session being established off the UI thread.
+enum RemoteSession {
+    // Boxed because the two ends are very different sizes — the host carries an
+    // encoder with a whole frame of reference pixels in it — and this value
+    // only ever travels once, down a channel, on the way to being unwrapped.
+    Host(Box<crate::remote::RemoteHost>),
+    Client(Box<crate::remote::RemoteClient>),
+}
+
+/// What an open file dialog is asking about.
+///
+/// Held alongside the dialog so that its answer cannot be applied to the wrong
+/// command — the dialog is answered several repaints after it was opened, by
+/// which time the menu that opened it is long gone. See [`crate::fs`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DialogPurpose {
+    /// A cart to boot.
+    OpenRom,
+    /// A `.sav` to write into the cart's backup memory.
+    ImportSave,
+    /// Where to write a savestate.
+    SaveState,
+    /// A savestate to read.
+    LoadState,
+    /// A `.mch` cheat file to merge in.
+    ImportCheats,
+    /// Which console the answer is for: the second one, for each of the above.
+    /// Kept as separate variants rather than a flag so that a missing case is a
+    /// compile error rather than a command that quietly drives the wrong
+    /// console — which is the bug this whole mechanism exists to prevent.
+    GuestImportSave,
+    GuestSaveState,
+    GuestLoadState,
+    /// A directory for one of the Path settings.
+    Directory(crate::panes::PathSetting),
 }
 
 /// The DS video frame rate: `33_513_982 / 560_190` Hz. Slightly under the 60 Hz
@@ -133,7 +307,8 @@ pub const BINDINGS: &[(egui::Key, u32, &str)] = &[
 pub struct MelonEgui {
     emu: Option<Emu>,
 
-    pub i18n: crate::i18n::I18nMap,
+    /// Every language's strings, read once at startup.
+    pub translations: crate::i18n::Translations,
 
     /// Uploaded once per emulated frame; `[top, bottom]`.
     textures: Option<[TextureHandle; 2]>,
@@ -213,6 +388,31 @@ pub struct MelonEgui {
     /// A LAN host or guest connection being established off the UI thread.
     lan_pending: Option<Receiver<Result<LanConnection, String>>>,
     lan_rom: Option<PathBuf>,
+    /// Reads the live link counters, once a link is up.
+    lan_stats: Option<Box<dyn Fn() -> crate::lan::LinkStats + Send>>,
+    /// The frame rate the link can sustain. Present only while a LAN game is
+    /// running, which is the only time emulation is paced by anything but the
+    /// wall clock.
+    lan_pace: Option<crate::lan::LinkPace>,
+    /// How the LAN transport behaves on a slow link, as the Wireless pane sets
+    /// it. Read when a connection is started, so a change applies to the next
+    /// link rather than the one already up.
+    pub lan_tuning: crate::lan::Tuning,
+    /// Which of the three things this window is.
+    pub mode: Mode,
+    /// The Remote Desktop session this window is the host of, if it is one.
+    /// Shared with the second console's thread, which is where the encoding
+    /// happens.
+    remote_host: Option<std::sync::Arc<crate::remote::RemoteHost>>,
+    /// The Remote Desktop session this window is the client of, if it is one.
+    remote_client: Option<crate::remote::RemoteClient>,
+    /// A Remote Desktop session being established off the UI thread.
+    remote_pending: Option<Receiver<Result<RemoteSession, String>>>,
+    /// How Remote Desktop behaves, as the Wireless pane sets it.
+    pub remote_tuning: crate::remote::Tuning,
+    /// What the live Remote Desktop session is doing, sampled each repaint so
+    /// the pane and the menu read one consistent set of numbers.
+    pub remote_stats: Option<crate::remote::RemoteStats>,
     /// Guest's editable LAN host address.
     pub lan_guest_address: String,
     /// Host's editable local bind address.
@@ -250,6 +450,14 @@ pub struct MelonEgui {
     undo_state: Option<Vec<u8>>,
     /// Emulated frames run since the cart booted, for [`Self::service_shot`].
     frames_run: u64,
+    /// The file dialog that is open, if any, and what it is asking about.
+    ///
+    /// One at a time: the dialogs are not parented to the window, so two open
+    /// at once would be two unrelated windows with no way to tell which
+    /// belonged to which command.
+    dialog: Option<crate::fs::Pending<DialogPurpose>>,
+    /// The UI's language and the strings that go with it.
+    pub language: crate::i18n::Language,
     /// `--shot`: capture the window once this many frames have run, write it
     /// there, and quit. `None` in normal use.
     shot: Option<(u64, PathBuf)>,
@@ -272,7 +480,11 @@ impl MelonEgui {
         let now = Instant::now();
         let mut app = Self {
             emu: None,
-            i18n: crate::i18n::I18nMap::load_with_fallback().unwrap_or_default(),
+            // Every language, once. A translation file that is present but
+            // broken must not stop the emulator starting: the built-in text
+            // stands in and the reason is said out loud.
+            translations: crate::i18n::Translations::load(),
+            language: settings.language,
             textures: None,
             paused: false,
             step_pending: false,
@@ -318,9 +530,22 @@ impl MelonEgui {
             guest: None,
             lan_pending: None,
             lan_rom: None,
+            lan_stats: None,
+            lan_pace: None,
+            lan_tuning: settings.lan,
+            mode: Mode::Local,
+            remote_host: None,
+            remote_client: None,
+            remote_pending: None,
+            remote_tuning: settings.remote,
+            remote_stats: None,
+            dialog: None,
+            // The environment variable still wins, because it is what a
+            // scripted two-machine test sets; otherwise the address is the last
+            // one that was typed, read back out of `settings.json`.
             lan_guest_address: std::env::var("MELON_EGUI_LAN_ADDR")
-                .unwrap_or_else(|_| "127.0.0.1:7064".to_owned()),
-            lan_bind_address: "0.0.0.0:7064".to_owned(),
+                .unwrap_or_else(|_| settings.lan_host_address.clone()),
+            lan_bind_address: settings.lan_bind_address.clone(),
             lan_status: "LAN room is offline".to_owned(),
             lan_room: "No LAN room".to_owned(),
             instance2_settings,
@@ -406,9 +631,10 @@ impl MelonEgui {
     fn persist(&self) {
         self.settings().save();
 
-        if !crate::i18n::I18nMap::i18n_path().exists() {
-            let _ = crate::i18n::I18nMap::save();
-        }
+        // The translation templates are written at startup instead — see
+        // `crate::config::ensure_instance_layout`. A front end killed by the
+        // task manager never reaches here, and a template nobody can find is
+        // no better than none.
     }
 
     /// Everything worth remembering, gathered up.
@@ -426,6 +652,13 @@ impl MelonEgui {
             save_dir: self.save_dir.clone(),
             ui_scale: self.ui_scale,
             dark_theme: self.dark_theme,
+            language: self.language,
+            // Remembered so a VPN address, which nobody has memorised, is typed
+            // once rather than once per session.
+            lan_host_address: self.lan_guest_address.clone(),
+            lan_bind_address: self.lan_bind_address.clone(),
+            lan: self.lan_tuning,
+            remote: self.remote_tuning,
         }
     }
 
@@ -448,6 +681,9 @@ impl MelonEgui {
             .or_else(|| Some(crate::config::instance_data_dir(instance, "states")));
         self.recents = settings.recents.clone();
         self.panes = settings.open_panes.clone();
+        self.lan_tuning = settings.lan;
+        self.remote_tuning = settings.remote;
+        self.set_language(settings.language);
         if let Ok(audio) = &mut self.audio {
             audio.volume = settings.volume;
         }
@@ -579,6 +815,13 @@ impl MelonEgui {
             Vec::new()
         };
         emu.nds.set_cheats(&installed);
+        // The second console is a second cart, and a cheat that is on for one
+        // player and off for the other desynchronises a linked game outright.
+        // Its own `.mch` was read when it booted; this is the master switch and
+        // any code edited since, which have to reach both.
+        if let Some(guest) = &self.guest {
+            guest.send(crate::guest::Command::SetCheats(installed.clone()));
+        }
         self.applied_cheats = Some(wanted);
     }
 
@@ -749,6 +992,12 @@ impl MelonEgui {
             }
             None => self.clock_note = "no cart loaded".to_owned(),
         }
+        // Both consoles, always: two carts that disagree about the date behave
+        // differently in any game that checks it, and on a link that is a
+        // desync waiting to happen.
+        if let Some(guest) = &self.guest {
+            guest.send(crate::guest::Command::SetClock(clock));
+        }
     }
 
     // -- the RAM search -----------------------------------------------------
@@ -811,6 +1060,172 @@ impl MelonEgui {
 
     // -- commands -----------------------------------------------------------
 
+    /// Open a system file dialog, off the UI thread.
+    ///
+    /// Refuses while one is already open rather than stacking two unparented
+    /// dialogs the user cannot tell apart. See [`crate::fs`] for why this is not
+    /// a blocking call.
+    fn ask(&mut self, purpose: DialogPurpose, request: crate::fs::Request) {
+        if self.dialog.is_some() {
+            self.post("a file dialog is already open");
+            return;
+        }
+        match crate::fs::Pending::spawn(purpose, request) {
+            Ok(pending) => self.dialog = Some(pending),
+            // Reported rather than swallowed: from the user's side a dialog
+            // that never appears is a menu entry that was ignored.
+            Err(error) => self.post(error),
+        }
+    }
+
+    /// Act on a dialog the user has finished with.
+    ///
+    /// Called once per repaint from [`Self::advance`], which is what keeps the
+    /// window drawing and the console running while a dialog is on screen.
+    fn poll_dialog(&mut self) {
+        let Some((purpose, path)) = crate::fs::Pending::take_answer(&mut self.dialog) else {
+            return;
+        };
+        // Cancelled. Not worth an OSD message: the user knows they cancelled.
+        let Some(path) = path else { return };
+        match purpose {
+            DialogPurpose::OpenRom => self.load(&path),
+            DialogPurpose::ImportSave => self.import_savefile_from(&path),
+            DialogPurpose::SaveState => self.write_state_to(&path),
+            DialogPurpose::LoadState => self.read_state_from(&path),
+            DialogPurpose::ImportCheats => self.import_cheats(&path),
+            DialogPurpose::GuestImportSave => match std::fs::read(&path) {
+                Ok(data) => self.command_guest(crate::guest::Command::ImportSave(data)),
+                Err(error) => self.post(format!("cannot read {}: {error}", path.display())),
+            },
+            DialogPurpose::GuestSaveState => {
+                self.command_guest(crate::guest::Command::SaveState(None, Some(path)));
+            }
+            DialogPurpose::GuestLoadState => {
+                self.command_guest(crate::guest::Command::LoadState(None, Some(path)));
+            }
+            DialogPurpose::Directory(setting) => {
+                setting.set(self, path);
+                self.persist();
+            }
+        }
+    }
+
+    /// Where a dialog for `extension` should open: this instance's own
+    /// directory when there is one, so a savestate dialog lands in `states`
+    /// rather than wherever the system last was.
+    fn dialog_dir(&self, kind: &str) -> Option<PathBuf> {
+        match kind {
+            "saves" => self.save_dir.clone(),
+            "states" => self.state_dir.clone(),
+            _ => Some(crate::config::instance_data_dir(1, kind)),
+        }
+    }
+
+    /// Hand a command to the second console, if there is one.
+    pub fn command_guest(&mut self, command: crate::guest::Command) {
+        match &self.guest {
+            Some(guest) => guest.send(command),
+            None => self.post("no second console is running"),
+        }
+    }
+
+    /// Switch the UI's language.
+    ///
+    /// A lookup, not a load: every language's strings were read once at
+    /// startup ([`crate::i18n::Translations`]). That matters because the two
+    /// consoles may be set to different languages, and `guest_view` applies
+    /// each console's settings once per repaint — a load here would be two file
+    /// reads and two map rebuilds per frame for as long as the second window is
+    /// open.
+    pub fn set_language(&mut self, language: crate::i18n::Language) {
+        self.language = language;
+    }
+
+    /// The strings for the language currently in force.
+    #[must_use]
+    pub fn i18n(&self) -> &crate::i18n::I18nMap {
+        self.translations.get(self.language)
+    }
+
+    /// Ask for a `.mch` cheat file to merge into the current cart's list.
+    pub fn ask_for_cheat_file(&mut self) {
+        self.ask(
+            DialogPurpose::ImportCheats,
+            crate::fs::Request::open("Open melonDS cheats")
+                .filter("melonDS cheats", &["mch"])
+                .directory(self.dialog_dir("cheats")),
+        );
+    }
+
+    /// Ask for a directory for one of the Path settings.
+    pub fn ask_for_directory(&mut self, setting: crate::panes::PathSetting) {
+        self.ask(
+            DialogPurpose::Directory(setting),
+            crate::fs::Request::folder("Choose a directory")
+                .directory(Some(crate::config::instances_dir())),
+        );
+    }
+
+    /// Write the settings out, for a pane that changed one.
+    pub fn save_settings(&self) {
+        self.persist();
+    }
+
+    /// Post an OSD message from a pane.
+    pub fn post_message(&mut self, message: impl Into<String>) {
+        self.post(message);
+    }
+
+    /// Show `dir` in the system file manager, creating it first.
+    pub fn reveal(&mut self, dir: &Path) {
+        if let Err(error) = std::fs::create_dir_all(dir) {
+            self.post(format!("cannot create {}: {error}", dir.display()));
+            return;
+        }
+        let command = if cfg!(windows) {
+            "explorer"
+        } else if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        match std::process::Command::new(command).arg(dir).spawn() {
+            // `explorer` exits non-zero even on success, so a spawned child is
+            // as much confirmation as there is to be had.
+            Ok(_) => self.post(format!("opened {}", dir.display())),
+            Err(error) => self.post(format!("cannot open {}: {error}", dir.display())),
+        }
+    }
+
+    /// Whether a Remote Desktop session is up or being established.
+    #[must_use]
+    pub const fn remote_running(&self) -> bool {
+        self.remote_host.is_some() || self.remote_client.is_some() || self.remote_pending.is_some()
+    }
+
+    /// What the live LAN link is doing, for the Wireless pane.
+    #[must_use]
+    pub fn lan_stats(&self) -> Option<crate::lan::LinkStats> {
+        self.lan_stats.as_ref().map(|read| read())
+    }
+
+    /// Recompute the throughput readout from the frames counted since the last
+    /// window closed.
+    ///
+    /// Split out so a Remote Desktop client — which counts *received* frames
+    /// rather than emulated ones — reports its rate the same way, and the
+    /// number in the corner means "frames a second on this screen" in both
+    /// modes.
+    fn report_fps(&mut self) {
+        let elapsed = self.fps_since.elapsed();
+        if elapsed >= Duration::from_millis(500) {
+            self.fps = f64::from(self.fps_frames) / elapsed.as_secs_f64();
+            self.fps_frames = 0;
+            self.fps_since = Instant::now();
+        }
+    }
+
     /// Post an OSD message. Also where every command reports its outcome, so
     /// that failures are visible without a console.
     fn post(&mut self, message: impl Into<String>) {
@@ -825,6 +1240,7 @@ impl MelonEgui {
         // Dropped first so the outgoing cart's save is flushed before the
         // incoming one can be handed the same file.
         self.emu = None;
+        self.drop_link();
         self.undo_state = None;
         self.textures = None;
         self.frames_run = 0;
@@ -880,6 +1296,7 @@ impl MelonEgui {
             return;
         };
         self.emu = None;
+        self.drop_link();
         self.textures = None;
         self.undo_state = None;
         self.lan_rom = Some(rom);
@@ -888,18 +1305,29 @@ impl MelonEgui {
         let address = self.lan_guest_address.clone();
         let bind_for_thread = bind.clone();
         let address_for_thread = address.clone();
+        // Read once, here, so that a link keeps whatever tuning it was started
+        // with even if the pane is edited while it runs — the two ends have to
+        // agree about nothing, but a budget that changes underneath a round in
+        // flight is needlessly confusing to reason about.
+        let tuning = self.lan_tuning;
         let spawned = std::thread::Builder::new()
             .name(if host { "melon-egui-lan-host" } else { "melon-egui-lan-guest" }.to_owned())
             .spawn(move || {
                 let result = if host {
                     parse_lan_address(&bind_for_thread, 7064).and_then(|addr| {
-                        melonds::lan::LanHost::accept(addr)
+                        crate::lan::LanHost::accept(addr, tuning)
                             .and_then(|transport| {
                                 let local_addr = transport.local_addr()?;
+                                let remote_addr = transport.remote_addr().to_string();
+                                let pace = transport.pace();
+                                let transport = std::sync::Arc::new(transport);
+                                let reader = std::sync::Arc::clone(&transport);
                                 Ok(LanConnection {
                                     local_addr: local_addr.to_string(),
-                                    remote_addr: "waiting guest".to_owned(),
-                                    host: Box::new(transport),
+                                    remote_addr,
+                                    stats: Box::new(move || reader.stats()),
+                                    pace,
+                                    host: Box::new(ArcHost(transport)),
                                 })
                             })
                             .map_err(|e| format!("LAN host failed: {e}"))
@@ -909,13 +1337,18 @@ impl MelonEgui {
                     local.parse().map_err(|e| format!("invalid LAN client address: {e}")).and_then(
                         |local| {
                             parse_lan_address(&address_for_thread, 7064).and_then(|remote| {
-                                melonds::lan::LanGuest::connect(local, remote)
+                                crate::lan::LanGuest::connect(local, remote, tuning)
                                     .and_then(|transport| {
                                         let local_addr = transport.local_addr()?;
+                                        let pace = transport.pace();
+                                        let transport = std::sync::Arc::new(transport);
+                                        let reader = std::sync::Arc::clone(&transport);
                                         Ok(LanConnection {
                                             local_addr: local_addr.to_string(),
                                             remote_addr: remote.to_string(),
-                                            host: Box::new(transport),
+                                            stats: Box::new(move || reader.stats()),
+                                            pace,
+                                            host: Box::new(ArcHost(transport)),
                                         })
                                     })
                                     .map_err(|e| format!("LAN guest failed: {e}"))
@@ -932,6 +1365,10 @@ impl MelonEgui {
             return;
         }
         self.lan_pending = Some(receiver);
+        // Saved on the attempt rather than on success: an address that did not
+        // answer is still the one the user meant to type, and having to type it
+        // again to retry is the annoyance this exists to remove.
+        self.persist();
         self.lan_room = if host { "Hosting LAN room" } else { "Joining LAN room" }.to_owned();
         self.lan_status = if host {
             format!("Checking: waiting for guest on {bind}")
@@ -943,6 +1380,237 @@ impl MelonEgui {
         } else {
             format!("connecting to LAN host {address}")
         });
+    }
+
+    /// Begin a Remote Desktop session, without blocking the UI thread.
+    ///
+    /// As host: both consoles will run here, and the second one's picture and
+    /// sound go out to whoever connects. As client: this window stops being an
+    /// emulator and becomes a screen.
+    fn start_remote(&mut self, host: bool) {
+        if self.remote_pending.is_some() {
+            self.post("a Remote Desktop session is already being established");
+            return;
+        }
+        if host && !self.is_loaded() {
+            self.post("load a cart first — the host runs both consoles");
+            return;
+        }
+        let tuning = self.remote_tuning;
+        let bind = self.lan_bind_address.clone();
+        let address = self.lan_guest_address.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name(
+                if host { "melon-egui-remote-host" } else { "melon-egui-remote-client" }.to_owned(),
+            )
+            .spawn(move || {
+                let result = if host {
+                    parse_remote_address(&bind, tuning.port).and_then(|addr| {
+                        crate::remote::RemoteHost::accept(addr, tuning)
+                            .map(|host| RemoteSession::Host(Box::new(host)))
+                            .map_err(|error| format!("Remote Desktop host failed: {error}"))
+                    })
+                } else {
+                    parse_remote_address(&address, tuning.port).and_then(|remote| {
+                        // Any local port: the client only ever talks to the one
+                        // host, which answers wherever the hello came from.
+                        let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
+                        crate::remote::RemoteClient::connect(local, remote, tuning)
+                            .map(|client| RemoteSession::Client(Box::new(client)))
+                            .map_err(|error| format!("Remote Desktop client failed: {error}"))
+                    })
+                };
+                let _ = sender.send(result);
+            })
+            .map_err(|error| format!("cannot start a Remote Desktop session: {error}"));
+        if let Err(error) = spawned {
+            self.post(error);
+            return;
+        }
+        self.remote_pending = Some(receiver);
+        // Saved on the attempt: an address that did not answer is still the one
+        // the user meant to type.
+        self.persist();
+        self.lan_room =
+            if host { "Remote Desktop: hosting" } else { "Remote Desktop: joining" }.to_owned();
+        // The port shown is the one that will actually be used — see
+        // `parse_remote_address`.
+        self.lan_status = if host {
+            format!(
+                "waiting for a client on {}",
+                parse_remote_address(&self.lan_bind_address, self.remote_tuning.port)
+                    .map_or_else(|error| error, |addr| addr.to_string())
+            )
+        } else {
+            format!(
+                "connecting to {}",
+                parse_remote_address(&self.lan_guest_address, self.remote_tuning.port)
+                    .map_or_else(|error| error, |addr| addr.to_string())
+            )
+        };
+        let message = self.lan_status.clone();
+        self.post(message);
+    }
+
+    /// Finish a Remote Desktop session that the connection thread established.
+    fn poll_remote(&mut self) {
+        // Sampled every repaint so the pane and the menu agree, and so a
+        // session that has gone quiet is visible rather than merely stale.
+        self.remote_stats = match (&self.remote_host, &self.remote_client) {
+            (Some(host), _) => Some(host.stats()),
+            (_, Some(client)) => Some(client.stats()),
+            _ => None,
+        };
+
+        let Some(receiver) = &self.remote_pending else { return };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.remote_pending = None;
+                self.post("the Remote Desktop worker stopped unexpectedly");
+                return;
+            }
+        };
+        self.remote_pending = None;
+        match result {
+            Ok(RemoteSession::Host(host)) => {
+                let host = *host;
+                let local = host.local_addr().map_or_else(|_| "?".to_owned(), |a| a.to_string());
+                let remote = host.remote_addr();
+                self.remote_host = Some(std::sync::Arc::new(host));
+                self.mode = Mode::RemoteHost;
+                // The remote player's console. Launched *after* the session
+                // exists, because the stream is fixed when the thread starts.
+                self.close_guest();
+                self.launch_instance();
+                self.lan_room = "Remote Desktop: hosting".to_owned();
+                self.lan_status = format!("Client {remote} connected; listening on {local}");
+                self.post(format!("Remote Desktop: {remote} is playing instance 2"));
+            }
+            Ok(RemoteSession::Client(client)) => {
+                let client = *client;
+                // A client emulates nothing, so whatever was running here stops
+                // — and its save is flushed on the way out.
+                self.emu = None;
+                self.drop_link();
+                self.close_guest();
+                self.textures = None;
+                let remote = client.remote_addr();
+                self.remote_client = Some(client);
+                self.mode = Mode::RemoteClient;
+                self.paused = false;
+                let local = self
+                    .remote_client
+                    .as_ref()
+                    .and_then(|client| client.local_addr().ok())
+                    .map_or_else(|| "?".to_owned(), |addr| addr.to_string());
+                self.lan_room = "Remote Desktop: connected".to_owned();
+                self.lan_status = format!("Watching {remote} from {local}");
+                self.post(format!("Remote Desktop: connected to {remote}"));
+            }
+            Err(error) => {
+                self.lan_room = "Remote Desktop: offline".to_owned();
+                self.lan_status = error.clone();
+                self.post(error);
+            }
+        }
+    }
+
+    /// End a Remote Desktop session and go back to being an ordinary window.
+    fn stop_remote(&mut self) {
+        if self.remote_host.is_none() && self.remote_client.is_none() {
+            self.post("no Remote Desktop session is running");
+            return;
+        }
+        // The host's second console was the remote player's; it goes with them.
+        self.close_guest();
+        self.remote_host = None;
+        self.remote_client = None;
+        self.remote_stats = None;
+        self.textures = None;
+        self.mode = Mode::Local;
+        self.lan_room = "Remote Desktop: offline".to_owned();
+        self.lan_status = "No Remote Desktop session".to_owned();
+        self.post("Remote Desktop session ended");
+    }
+
+    /// Close the second console, if one is open.
+    fn close_guest(&mut self) {
+        self.guest = None;
+        self.guest_textures = None;
+    }
+
+    /// Show the picture and play the sound a host is sending.
+    ///
+    /// Everything a client does in place of emulating: there is no core here,
+    /// so the textures are filled from the decoder and the audio ring from the
+    /// network rather than from an [`Emu`].
+    fn service_remote_client(&mut self, ctx: &egui::Context) {
+        let Some(client) = &self.remote_client else { return };
+
+        if let Some([top, bottom]) = client.take_screens() {
+            let filter =
+                if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
+            let images = [
+                to_image(&top, self.video.upscale, self.video.upscale_factor()),
+                to_image(&bottom, self.video.upscale, self.video.upscale_factor()),
+            ];
+            match &mut self.textures {
+                Some(textures) => {
+                    for (texture, image) in textures.iter_mut().zip(images) {
+                        texture.set(image, filter);
+                    }
+                }
+                None => {
+                    let [t, b] = images;
+                    self.textures = Some([
+                        ctx.load_texture("remote-top", t, filter),
+                        ctx.load_texture("remote-bottom", b, filter),
+                    ]);
+                }
+            }
+            self.screens_live = [true, true];
+            self.frames_run += 1;
+            self.fps_frames += 1;
+        }
+
+        let samples = client.take_audio();
+        if let (Ok(audio), false) = (&mut self.audio, samples.is_empty()) {
+            audio.push(&samples);
+        }
+
+        // The controls, sent every repaint whatever the player is doing — see
+        // `crate::remote::Input`.
+        let keys = ctx.input(|i| {
+            BINDINGS
+                .iter()
+                .filter(|(key, ..)| i.key_down(*key))
+                .fold(0, |mask, (_, bit, _)| mask | bit)
+        }) | self.pads.poll();
+        let touch = self.sample_touch(ctx);
+        client.send_input(keys, touch);
+    }
+
+    /// Forget the LAN link the last console was on.
+    ///
+    /// Both handles have to go, and for two different reasons.
+    ///
+    /// `lan_pace` is the one that bites: [`crate::lan::LinkPace`] is only
+    /// updated from inside `mp_recv_replies`, so once the console that made
+    /// those calls is gone the last value it wrote **freezes**. A LAN game over
+    /// a 100 ms link leaves it at about 10 fps; stopping that game and opening
+    /// an ordinary cart would then run the new console at 10 fps for the rest
+    /// of the session, with nothing on screen to explain why.
+    ///
+    /// `lan_stats` holds an `Arc` on the transport, so leaving it behind also
+    /// keeps the link's receive and probe threads alive — pinging a peer that
+    /// is no longer there — and leaves the Wireless pane reporting a dead
+    /// link's counters as though they were live.
+    fn drop_link(&mut self) {
+        self.lan_stats = None;
+        self.lan_pace = None;
     }
 
     /// Finish a background LAN connection and boot the current cart on it.
@@ -965,11 +1633,14 @@ impl MelonEgui {
         match result.and_then(|connection| {
             let local_addr = connection.local_addr.clone();
             let remote_addr = connection.remote_addr.clone();
-            Emu::boot_lan(&rom, self.save_dir.as_ref(), self.state_dir.as_ref(), connection.host)
-                .map(|emu| (emu, local_addr, remote_addr))
+            let LanConnection { host, stats, pace, .. } = connection;
+            Emu::boot_lan(&rom, self.save_dir.as_ref(), self.state_dir.as_ref(), host)
+                .map(|emu| (emu, local_addr, remote_addr, stats, pace))
         }) {
-            Ok((emu, local_addr, remote_addr)) => {
+            Ok((emu, local_addr, remote_addr, stats, pace)) => {
                 self.emu = Some(emu);
+                self.lan_stats = Some(stats);
+                self.lan_pace = Some(pace);
                 self.cheats = cheats::load(&Self::cheat_path(&rom)).unwrap_or_default();
                 self.applied_cheats = None;
                 self.paused = false;
@@ -980,6 +1651,8 @@ impl MelonEgui {
                 self.post(format!("LAN game connected: {}", rom.display()));
             }
             Err(error) => {
+                self.lan_stats = None;
+                self.lan_pace = None;
                 self.lan_status = format!("Connection check failed: {error}");
                 self.lan_room = "LAN room offline".to_owned();
                 self.post(format!("LAN game failed: {error}"));
@@ -987,18 +1660,174 @@ impl MelonEgui {
         }
     }
 
-    fn apply(&mut self, action: Action, ctx: &egui::Context) {
+    /// Perform a menu action for the second console rather than the first.
+    ///
+    /// The second console's window draws the same menu bar, and until this
+    /// existed every entry in it acted on the *first* console — which is why
+    /// only the entries that happen to be pure UI appeared to work there. What
+    /// cannot be done for the second console (opening a different cart, LAN,
+    /// launching a third) says so instead of silently doing it to the first.
+    fn apply_to_guest(&mut self, action: Action) {
+        use crate::guest::Command;
         match action {
-            Action::OpenRom | Action::InsertCart => {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Nintendo DS ROM", &["nds", "dsi", "srl"])
-                    .pick_file()
-                {
-                    self.load(&path);
-                }
+            Action::TogglePause => {
+                self.paused = !self.paused;
+                self.last_tick = Instant::now();
+                self.frame_debt = 0.0;
             }
+            Action::Reset => self.command_guest(Command::Reset),
+            Action::FrameStep => {
+                self.paused = true;
+                self.command_guest(Command::FrameStep);
+            }
+            Action::Stop | Action::EjectCart => {
+                self.command_guest(Command::Stop);
+                self.guest = None;
+                self.guest_textures = None;
+                self.post("second console stopped");
+            }
+            Action::SaveState(Some(slot)) => {
+                self.command_guest(Command::SaveState(Some(slot), None));
+            }
+            Action::LoadState(Some(slot)) => {
+                self.command_guest(Command::LoadState(Some(slot), None));
+            }
+            Action::SaveState(None) => self.ask(
+                DialogPurpose::GuestSaveState,
+                crate::fs::Request::save("Save instance 2 state")
+                    .filter("savestate", &["ml1"])
+                    .directory(Some(crate::config::instance_data_dir(2, "states"))),
+            ),
+            Action::LoadState(None) => self.ask(
+                DialogPurpose::GuestLoadState,
+                crate::fs::Request::open("Load instance 2 state")
+                    .filter("savestate", &["ml1"])
+                    .directory(Some(crate::config::instance_data_dir(2, "states"))),
+            ),
+            Action::UndoStateLoad => self.command_guest(Command::UndoStateLoad),
+            Action::ImportSavefile => self.ask(
+                DialogPurpose::GuestImportSave,
+                crate::fs::Request::open("Import a save into instance 2")
+                    .filter("save file", &["sav", "dsv", "bin"])
+                    .directory(Some(crate::config::instance_data_dir(2, "saves"))),
+            ),
+            Action::OpenDirectory => self.open_instance_directory(2),
+            // Handled against the guest viewport's own context, in
+            // `guest_view`; reaching here means the window had already gone.
+            Action::ScreenSize(_) => {}
+            Action::Quit => {
+                self.guest = None;
+                self.guest_textures = None;
+                self.post("second console closed");
+            }
+            // These belong to the console that owns the airwaves and the
+            // window, so they are refused rather than misapplied.
+            Action::OpenRom
+            | Action::InsertCart
+            | Action::OpenRecent(_)
+            | Action::LaunchInstance
+            | Action::HostLanGame
+            | Action::GuestLanGame
+            | Action::HostRemoteDesktop
+            | Action::JoinRemoteDesktop
+            | Action::StopRemoteDesktop => {
+                self.post("that command belongs to the first console");
+            }
+            // Purely the window's own business, and already handled where the
+            // guest window collected it.
+            other => self.apply_ui_only(other),
+        }
+    }
+
+    /// The actions that change how a window looks rather than what a console
+    /// does, which are the same for either console.
+    fn apply_ui_only(&mut self, action: Action) {
+        match action {
+            Action::ClearRecent => {
+                self.recents.clear();
+                self.persist();
+            }
+            Action::NewWindow => self.second_window = !self.second_window,
+            Action::TogglePane(pane) => self.toggle_pane(pane),
+            // `ScreenSize` resizes the window it was clicked in, which the
+            // guest window handles itself; everything else is already covered.
+            _ => {}
+        }
+    }
+
+    /// Open or close one of the auxiliary windows.
+    pub fn toggle_pane(&mut self, pane: Pane) {
+        if let Some(at) = self.panes.iter().position(|open| *open == pane) {
+            self.panes.remove(at);
+        } else {
+            self.panes.push(pane);
+        }
+    }
+
+    /// Perform a menu action on a window that emulates nothing.
+    ///
+    /// A Remote Desktop client has no cart, no save and no savestate — they all
+    /// belong to the host, which is the point of the mode. Rather than let
+    /// those entries appear to work and silently do nothing, everything that
+    /// needs a console says where it actually lives.
+    ///
+    /// Exhaustive on purpose: adding a menu entry should be a compile error
+    /// here until somebody has decided what a client does with it.
+    fn apply_as_client(&mut self, action: Action, ctx: &egui::Context) {
+        match action {
+            Action::StopRemoteDesktop | Action::Stop | Action::EjectCart => self.stop_remote(),
+            Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Action::OpenDirectory => self.open_directory(),
+            Action::ScreenSize(scale) => {
+                let size = view::window_size_for_scale(scale, &self.view, CHROME_HEIGHT);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            }
+            Action::NewWindow => {
+                self.second_window = !self.second_window;
+            }
+            Action::TogglePane(pane) => self.toggle_pane(pane),
+            Action::ClearRecent => {
+                self.recents.clear();
+                self.persist();
+            }
+            // Everything below drives a console. There is not one here.
+            Action::OpenRom
+            | Action::OpenRecent(_)
+            | Action::InsertCart
+            | Action::ImportSavefile
+            | Action::SaveState(_)
+            | Action::LoadState(_)
+            | Action::UndoStateLoad
+            | Action::TogglePause
+            | Action::Reset
+            | Action::FrameStep
+            | Action::LaunchInstance
+            | Action::HostLanGame
+            | Action::GuestLanGame
+            | Action::HostRemoteDesktop
+            | Action::JoinRemoteDesktop => {
+                self.post("this window is a Remote Desktop client — the host owns the console");
+            }
+        }
+    }
+
+    fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        // A window that emulates nothing cannot run an emulator's commands.
+        if !self.mode.emulates() {
+            return self.apply_as_client(action, ctx);
+        }
+        match action {
+            Action::OpenRom | Action::InsertCart => self.ask(
+                DialogPurpose::OpenRom,
+                crate::fs::Request::open("Open a Nintendo DS ROM")
+                    .filter("Nintendo DS ROM", &["nds", "dsi", "srl"])
+                    .directory(
+                        self.recents.first().and_then(|rom| rom.parent().map(Path::to_path_buf)),
+                    ),
+            ),
             Action::EjectCart | Action::Stop => {
                 self.emu = None;
+                self.drop_link();
                 self.textures = None;
                 self.undo_state = None;
                 self.post("cart ejected");
@@ -1051,6 +1880,9 @@ impl MelonEgui {
             Action::LaunchInstance => self.launch_instance(),
             Action::HostLanGame => self.start_lan(true),
             Action::GuestLanGame => self.start_lan(false),
+            Action::HostRemoteDesktop => self.start_remote(true),
+            Action::JoinRemoteDesktop => self.start_remote(false),
+            Action::StopRemoteDesktop => self.stop_remote(),
             Action::TogglePane(pane) => {
                 if let Some(at) = self.panes.iter().position(|open| *open == pane) {
                     self.panes.remove(at);
@@ -1114,6 +1946,11 @@ impl MelonEgui {
         // it started -- minutes, here -- and the two would read each other's
         // traffic as ancient.
         let start_frame = self.emu.as_mut().map_or(0, |host| host.nds.frame_count());
+        // In Remote Desktop mode this console is the remote player's: its
+        // picture and sound go out over the session, and its controls come back
+        // from it. See `crate::remote`.
+        let stream = self.remote_host.clone();
+        let streamed = stream.is_some();
         self.guest = Some(crate::guest::Guest::spawn(
             &rom,
             save_dir,
@@ -1122,39 +1959,40 @@ impl MelonEgui {
             1,
             self.airwaves.client(1),
             start_frame,
+            stream,
         ));
-        self.post("second instance launched - both consoles share the airwaves");
+        self.post(if streamed {
+            "second instance launched — its picture and sound go to the remote player"
+        } else {
+            "second instance launched - both consoles share the airwaves"
+        });
     }
 
     /// Show this front end's directory in the system file manager.
     fn open_directory(&mut self) {
-        let dir = crate::config::config_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.post(format!("cannot create {}: {e}", dir.display()));
-            return;
-        }
-        let command = if cfg!(windows) {
-            "explorer"
-        } else if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        match std::process::Command::new(command).arg(&dir).spawn() {
-            // `explorer` exits non-zero even on success, so a spawned child is
-            // as much confirmation as there is to be had.
-            Ok(_) => self.post(format!("opened {}", dir.display())),
-            Err(e) => self.post(format!("cannot open {}: {e}", dir.display())),
-        }
+        self.open_instance_directory(1);
     }
 
+    /// Show one instance's directory, so the second console's window opens its
+    /// own `saves`/`states`/`cheats` rather than the first console's.
+    fn open_instance_directory(&mut self, instance: u32) {
+        let dir = crate::config::instance_dir(instance);
+        self.reveal(&dir);
+    }
+
+    /// Ask for a save file to write into the cart's backup memory.
     fn import_savefile(&mut self) {
-        let Some(path) =
-            rfd::FileDialog::new().add_filter("save file", &["sav", "dsv", "bin"]).pick_file()
-        else {
-            return;
-        };
-        let outcome = std::fs::read(&path)
+        self.ask(
+            DialogPurpose::ImportSave,
+            crate::fs::Request::open("Import a save file")
+                .filter("save file", &["sav", "dsv", "bin"])
+                .directory(self.dialog_dir("saves")),
+        );
+    }
+
+    /// Perform the import the dialog asked about.
+    fn import_savefile_from(&mut self, path: &Path) {
+        let outcome = std::fs::read(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))
             .and_then(|data| {
                 self.emu
@@ -1173,22 +2011,35 @@ impl MelonEgui {
         }
     }
 
+    /// A numbered slot writes straight away; "File..." asks first and lands in
+    /// [`Self::write_state_to`] once the dialog is answered.
     fn save_state(&mut self, slot: Option<u8>) {
         let Some(emu) = &mut self.emu else { return };
-        let path = match slot {
-            Some(slot) => emu.state_path(slot),
-            None => {
-                let Some(path) =
-                    rfd::FileDialog::new().add_filter("savestate", &["ml1"]).save_file()
-                else {
-                    return;
-                };
-                path
-            }
+        let Some(slot) = slot else {
+            // Pre-filled with the cart's own name, so "File..." does not open
+            // on an empty name box beside eight slots that are named for you.
+            let suggestion = emu
+                .rom_path
+                .file_stem()
+                .map_or_else(|| "state".to_owned(), |stem| stem.to_string_lossy().into_owned());
+            let directory = self.dialog_dir("states");
+            return self.ask(
+                DialogPurpose::SaveState,
+                crate::fs::Request::save("Save state")
+                    .filter("savestate", &["ml1"])
+                    .file_name(format!("{suggestion}.ml1"))
+                    .directory(directory),
+            );
         };
+        let path = emu.state_path(slot);
+        self.write_state_to(&path);
+    }
+
+    fn write_state_to(&mut self, path: &Path) {
+        let Some(emu) = &mut self.emu else { return };
         let mut buf = Vec::new();
         let outcome = emu.nds.save_state(&mut buf).map_err(|e| e.to_string()).and_then(|()| {
-            std::fs::write(&path, &buf).map_err(|e| format!("cannot write {}: {e}", path.display()))
+            std::fs::write(path, &buf).map_err(|e| format!("cannot write {}: {e}", path.display()))
         });
         match outcome {
             Ok(()) => {
@@ -1199,26 +2050,30 @@ impl MelonEgui {
         }
     }
 
+    /// As [`Self::save_state`]: a slot acts at once, "File..." asks first.
     fn load_state(&mut self, slot: Option<u8>) {
         let Some(emu) = &mut self.emu else { return };
-        let path = match slot {
-            Some(slot) => emu.state_path(slot),
-            None => {
-                let Some(path) =
-                    rfd::FileDialog::new().add_filter("savestate", &["ml1"]).pick_file()
-                else {
-                    return;
-                };
-                path
-            }
+        let Some(slot) = slot else {
+            return self.ask(
+                DialogPurpose::LoadState,
+                crate::fs::Request::open("Load state")
+                    .filter("savestate", &["ml1"])
+                    .directory(self.dialog_dir("states")),
+            );
         };
+        let path = emu.state_path(slot);
+        self.read_state_from(&path);
+    }
+
+    fn read_state_from(&mut self, path: &Path) {
+        let Some(emu) = &mut self.emu else { return };
 
         // Snapshot first: a load with nothing to go back to is a load that
         // cannot be undone, and melonDS offers exactly that undo.
         let mut before = Vec::new();
         let snapshot = emu.nds.save_state(&mut before).is_ok();
 
-        let outcome = std::fs::read(&path)
+        let outcome = std::fs::read(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))
             .and_then(|buf| emu.nds.load_state(&buf).map_err(|e| e.to_string()));
         match outcome {
@@ -1249,6 +2104,20 @@ impl MelonEgui {
         let elapsed = self.last_tick.elapsed();
         self.last_tick = Instant::now();
         self.poll_lan();
+        self.poll_remote();
+        // Before the early return: a dialog may be the only thing that will
+        // produce a cart to run.
+        self.poll_dialog();
+
+        // A client has no console to advance: its picture arrives over the
+        // network and its input goes back the same way. Everything below this
+        // point is about running an emulator, which is precisely what a client
+        // does not do.
+        if self.mode == Mode::RemoteClient {
+            self.service_remote_client(ctx);
+            self.report_fps();
+            return;
+        }
 
         // Pumped before the early return: gilrs only notices a pad being
         // plugged in while its queue is drained, and the Input pane lists
@@ -1276,7 +2145,15 @@ impl MelonEgui {
         } else if !self.limit_framerate {
             UNLIMITED_BURST
         } else {
-            self.frame_debt += elapsed.as_secs_f64() * FRAME_RATE;
+            // Ordinarily the DS's own rate. On a LAN link it is instead what
+            // the link can sustain: `mp_recv_replies` blocks inside a frame for
+            // as long as a reply takes to come back, so a console on a slow
+            // link genuinely cannot issue 59.83 frames a second. Pacing to the
+            // native rate anyway only builds a debt that is discharged as a
+            // burst of rounds, which floods the peer — the very thing that
+            // turns a slow link into a broken one.
+            let rate = self.lan_pace.as_ref().map_or(FRAME_RATE, crate::lan::LinkPace::frame_rate);
+            self.frame_debt += elapsed.as_secs_f64() * rate;
             let due = (self.frame_debt as u32).min(MAX_CATCH_UP);
             self.frame_debt -= f64::from(due);
             // Whatever is still owed after the cap is dropped rather than
@@ -1404,6 +2281,12 @@ impl MelonEgui {
             self.last_save_flush = Instant::now();
             if let Some(emu) = &self.emu {
                 emu.flush_save();
+            }
+            // The second console keeps its own `.sav` under `instance2/saves`,
+            // and a window closed by the task manager would otherwise lose
+            // whatever it had not written.
+            if let Some(guest) = &self.guest {
+                guest.send(crate::guest::Command::FlushSave);
             }
         }
     }
@@ -1760,26 +2643,30 @@ impl MelonEgui {
                 },
             );
             panes::show(self, ctx);
+            // Resizing has to happen against *this* viewport's context, so it
+            // is taken here rather than in `apply_to_guest`: sending it to the
+            // main window's context would resize the wrong window.
+            if let Some(Action::ScreenSize(scale)) = action {
+                let size = view::window_size_for_scale(scale, &self.view, CHROME_HEIGHT);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                action = None;
+            }
             if ctx.input(|i| i.viewport().close_requested()) {
                 closed = true;
             }
         });
         self.guest_bottom = bottom_rect;
-        if let Some(Action::TogglePane(pane)) = action.take() {
-            if let Some(at) = self.panes.iter().position(|open| *open == pane) {
-                self.panes.remove(at);
-            } else {
-                self.panes.push(pane);
-            }
-        }
         let updated = self.settings();
         updated.save_for(2);
         self.instance2_settings = updated;
         self.apply_runtime_settings(&host_settings, 1);
         ctx.set_zoom_factor(self.ui_scale);
         self.set_theme(ctx, self.dark_theme);
+        // Routed to the *second* console. Before this existed the second
+        // window's menu bar drove the first console, which is what "only some
+        // of it works over there" was.
         if let Some(action) = action {
-            self.apply(action, ctx);
+            self.apply_to_guest(action);
         }
         if closed {
             self.guest = None;
@@ -1937,7 +2824,19 @@ impl eframe::App for MelonEgui {
         // The core is paced off wall-clock time, so the window has to keep
         // repainting rather than wait for input. Paused, there is nothing to
         // redraw until something happens.
-        if self.emu.is_some() && (!self.paused || self.step_pending) || self.lan_pending.is_some() {
+        // A dialog is answered on another thread, so the window has to keep
+        // repainting to notice — that is what makes the console keep running
+        // while it is open rather than freezing behind it.
+        // A client repaints continuously: its picture arrives from the network
+        // and its input has to leave on the same cadence, neither of which
+        // egui knows to wake up for.
+        if self.emu.is_some() && (!self.paused || self.step_pending)
+            || self.mode == Mode::RemoteClient
+            || self.lan_pending.is_some()
+            || self.remote_pending.is_some()
+            || self.dialog.is_some()
+            || self.guest.is_some()
+        {
             ctx.request_repaint();
         }
     }

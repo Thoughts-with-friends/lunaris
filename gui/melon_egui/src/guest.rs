@@ -39,7 +39,13 @@ use std::{
 
 use melonds::{Cheat, SCREEN_HEIGHT, SCREEN_WIDTH};
 
-use crate::{emu::Emu, mp::Client};
+use crate::{emu::Emu, mp::Client, remote::RemoteHost};
+
+/// How many sample pairs are drained from the console in one go.
+///
+/// A frame produces about 800 at 48 kHz; this is generous headroom for a pass
+/// that ran several frames, and bounds the allocation either way.
+const AUDIO_DRAIN_PAIRS: usize = 8192;
 
 /// The DS's video frame rate, as [`crate::app`] uses it.
 const FRAME_RATE: f64 = 33_513_982.0 / 560_190.0;
@@ -61,6 +67,46 @@ struct Input {
     touch: Option<(u16, u16)>,
 }
 
+/// A one-off instruction for the second console.
+///
+/// # Why commands rather than direct calls
+///
+/// Everything the first console's menu does — reset, savestates, cheats — is a
+/// `melonds` call, and every `melonds` call for this console has to happen on
+/// *this console's thread*: the core is not re-entrant across threads, and the
+/// UI thread is inside `run_frame` on the first console for much of a repaint.
+/// So the menu posts a command and the run loop performs it between frames,
+/// which is the only place it is safe.
+///
+/// Without this the second console's menu bar drew every entry and only the
+/// ones that happen to be pure UI (screen layout, panes) did anything — the
+/// rest silently acted on the *first* console.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Command {
+    /// Reboot the cart, as `System ▸ Reset` does.
+    Reset,
+    /// Advance exactly one frame while paused.
+    FrameStep,
+    /// Write a savestate: a numbered slot, or an explicit path.
+    SaveState(Option<u8>, Option<PathBuf>),
+    /// Read one back.
+    LoadState(Option<u8>, Option<PathBuf>),
+    /// Take back the last [`Command::LoadState`].
+    UndoStateLoad,
+    /// Replace the cart's backup memory and reboot, as `File ▸ Import
+    /// savefile` does.
+    ImportSave(Vec<u8>),
+    /// Hand the console a fresh cheat list, or an empty one when cheats are
+    /// switched off.
+    SetCheats(Vec<Cheat>),
+    /// Write pending backup memory out now rather than on the next tick.
+    FlushSave,
+    /// Set the emulated real-time clock.
+    SetClock(crate::emu::Clock),
+    /// Stop the console for good, closing its window.
+    Stop,
+}
+
 /// What the console hands up.
 #[derive(Default)]
 struct Output {
@@ -78,6 +124,9 @@ struct Output {
 pub struct Guest {
     input: Arc<Mutex<Input>>,
     output: Arc<Mutex<Output>>,
+    /// Menu commands waiting to be performed between frames. A queue rather
+    /// than a single slot so that two clicks in one repaint both land.
+    commands: Arc<Mutex<Vec<Command>>>,
     /// Asks the thread to wind up. Set by [`Drop`], so closing the window and
     /// dropping the handle are the same thing.
     quit: Arc<AtomicBool>,
@@ -97,6 +146,13 @@ impl Guest {
     /// other thread. `start_frame` is the frame count to begin at — the wifi
     /// clock's epoch, which has to match the console it is joining (see
     /// `melonds::Nds::set_frame_count`).
+    /// `stream` is set in Remote Desktop mode: this console's picture and
+    /// sound then go out over it, and its controls come back from it. See
+    /// [`crate::remote`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each is a distinct decision the caller makes once, at boot;                   gathering them into a struct would only move the same list"
+    )]
     pub fn spawn(
         rom: &Path,
         save_dir: Option<PathBuf>,
@@ -105,18 +161,21 @@ impl Guest {
         instance_id: u32,
         mp: Client,
         start_frame: u32,
+        stream: Option<Arc<RemoteHost>>,
     ) -> Self {
         let input = Arc::new(Mutex::new(Input::default()));
         let output = Arc::new(Mutex::new(Output::default()));
+        let commands = Arc::new(Mutex::new(Vec::new()));
         let quit = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
         let frames = Arc::new(AtomicU32::new(start_frame));
 
         let handle = {
-            let (rom, input, output, quit, paused, frames) = (
+            let (rom, input, output, commands, quit, paused, frames) = (
                 rom.to_path_buf(),
                 Arc::clone(&input),
                 Arc::clone(&output),
+                Arc::clone(&commands),
                 Arc::clone(&quit),
                 Arc::clone(&paused),
                 Arc::clone(&frames),
@@ -132,13 +191,26 @@ impl Guest {
                         instance_id,
                         mp,
                         start_frame,
-                        shared: &Shared { input, output, quit, paused, frames },
+                        stream,
+                        shared: &Shared { input, output, commands, quit, paused, frames },
                     });
                 })
                 .ok()
         };
 
-        Self { input, output, quit, paused, frames, handle }
+        Self { input, output, commands, quit, paused, frames, handle }
+    }
+
+    /// Post a menu command, to be performed between frames on the console's own
+    /// thread.
+    ///
+    /// Returns immediately: the answer — a savestate written, a boot failure —
+    /// comes back through [`Self::take_note`], because the work has not
+    /// happened yet when this returns.
+    pub fn send(&self, command: Command) {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.push(command);
+        }
     }
 
     /// Hand down this repaint's input.
@@ -195,6 +267,7 @@ impl Drop for Guest {
 struct Shared {
     input: Arc<Mutex<Input>>,
     output: Arc<Mutex<Output>>,
+    commands: Arc<Mutex<Vec<Command>>>,
     quit: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     frames: Arc<AtomicU32>,
@@ -217,13 +290,24 @@ struct RunConfig<'a> {
     instance_id: u32,
     mp: Client,
     start_frame: u32,
+    /// Present in Remote Desktop mode; see [`Guest::spawn`].
+    stream: Option<Arc<RemoteHost>>,
     shared: &'a Shared,
 }
 
 /// The thread body: boot, then run frames on the wall clock until asked to stop.
 fn run(config: RunConfig) {
-    let RunConfig { rom, save_dir, state_dir, cheat_dir, instance_id, mp, start_frame, shared } =
-        config;
+    let RunConfig {
+        rom,
+        save_dir,
+        state_dir,
+        cheat_dir,
+        instance_id,
+        mp,
+        start_frame,
+        stream,
+        shared,
+    } = config;
 
     let mut emu = match Emu::boot_mp(rom, save_dir.as_ref(), state_dir.as_ref(), instance_id, mp) {
         Ok(emu) => emu,
@@ -258,12 +342,39 @@ fn run(config: RunConfig) {
     let mut next = Instant::now();
     let mut last_flush = Instant::now();
 
+    // Savestate taken before the last `LoadState`, so it can be taken back.
+    let mut undo: Option<Vec<u8>> = None;
+    // Frames owed by `Command::FrameStep`, which is the only way a paused
+    // console advances.
+    let mut stepping = 0u32;
+
     while !shared.quit.load(Ordering::Relaxed) {
-        if shared.paused.load(Ordering::Relaxed) {
+        // Between frames, which is the only safe point: every arm of this makes
+        // `melonds` calls, and the console is not re-entrant.
+        if perform_commands(&mut emu, shared, &mut undo, &mut stepping) == Outcome::Stopped {
+            return;
+        }
+
+        if shared.paused.load(Ordering::Relaxed) && stepping == 0 {
             // Held: the other console is not running either, so there is
             // nothing to stay in step with.
             next = Instant::now();
-            std::thread::sleep(frame_time);
+            std::thread::sleep(Duration::from_millis(4));
+            continue;
+        }
+
+        // A step is owed regardless of the clock: `Frame step` is what advances
+        // a paused console, and waiting for wall time it is not accruing would
+        // make the entry do nothing.
+        if stepping > 0 {
+            let step = std::mem::take(&mut stepping);
+            if run_frames(&mut emu, shared, step) == Outcome::Stopped {
+                return;
+            }
+            shared.frames.store(emu.nds.frame_count(), Ordering::Relaxed);
+            publish(&mut emu, shared, stream.as_deref());
+            drain_audio(&mut emu, stream.as_deref());
+            next = Instant::now();
             continue;
         }
 
@@ -286,26 +397,32 @@ fn run(config: RunConfig) {
             next = now;
         }
 
-        let input = shared.input.lock().map(|input| *input).unwrap_or_default();
-        emu.nds.set_keys(input.keys);
-        match input.touch {
+        // In Remote Desktop mode the console belongs to the remote player, so
+        // their controls arrive over the network. The host's own window can
+        // still press buttons — the masks are OR-ed — but the stylus is the
+        // remote player's alone: two pointers fighting over one touchscreen
+        // produces a stylus that jitters between them, which is worse for both
+        // than one of them simply not having it.
+        let local = shared.input.lock().map(|input| *input).unwrap_or_default();
+        let (keys, touch) = match &stream {
+            Some(stream) => {
+                let remote = stream.input();
+                (local.keys | remote.keys, remote.touch)
+            }
+            None => (local.keys, local.touch),
+        };
+        emu.nds.set_keys(keys);
+        match touch {
             Some((x, y)) => emu.nds.touch(x, y),
             None => emu.nds.release_screen(),
         }
 
-        for _ in 0..due {
-            emu.nds.run_frame();
-            if !emu.nds.is_running() {
-                let note = emu.stop_reason().unwrap_or_else(|| "stopped".to_owned());
-                shared.say(note);
-                if let Ok(mut out) = shared.output.lock() {
-                    out.finished = true;
-                }
-                return;
-            }
+        if run_frames(&mut emu, shared, due) == Outcome::Stopped {
+            return;
         }
         shared.frames.store(emu.nds.frame_count(), Ordering::Relaxed);
-        publish(&mut emu, shared);
+        publish(&mut emu, shared, stream.as_deref());
+        drain_audio(&mut emu, stream.as_deref());
 
         if last_flush.elapsed() >= Duration::from_secs(1) {
             emu.flush_save();
@@ -315,19 +432,167 @@ fn run(config: RunConfig) {
     emu.flush_save();
 }
 
-/// Copy the console's picture up to the UI thread.
+/// Whether the run loop may carry on, or the console has stopped for good.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Continue,
+    Stopped,
+}
+
+/// Run `count` frames, reporting a console that stopped part way.
+fn run_frames(emu: &mut Emu, shared: &Shared, count: u32) -> Outcome {
+    for _ in 0..count {
+        emu.nds.run_frame();
+        if !emu.nds.is_running() {
+            let note = emu.stop_reason().unwrap_or_else(|| "stopped".to_owned());
+            shared.say(note);
+            if let Ok(mut out) = shared.output.lock() {
+                out.finished = true;
+            }
+            return Outcome::Stopped;
+        }
+    }
+    Outcome::Continue
+}
+
+/// Perform everything the second console's menu has asked for since the last
+/// pass.
 ///
-/// Copied rather than shared: the framebuffers belong to the console and are
-/// overwritten as it draws, and the UI thread must never be looking at one
-/// while that happens.
-fn publish(emu: &mut Emu, shared: &Shared) {
+/// The queue is drained under its lock and acted on outside it, so that a
+/// savestate — which takes a moment for a large cart — does not hold up a UI
+/// thread that only wants to post the next command.
+fn perform_commands(
+    emu: &mut Emu,
+    shared: &Shared,
+    undo: &mut Option<Vec<u8>>,
+    stepping: &mut u32,
+) -> Outcome {
+    let queued: Vec<Command> = match shared.commands.lock() {
+        Ok(mut commands) => std::mem::take(&mut *commands),
+        Err(_) => return Outcome::Continue,
+    };
+    for command in queued {
+        match command {
+            Command::Reset => {
+                emu.nds.boot();
+                shared.say("reset".to_owned());
+            }
+            Command::FrameStep => *stepping += 1,
+            Command::SaveState(slot, path) => {
+                let Some(path) = state_path(emu, slot, path) else { continue };
+                let mut buffer = Vec::new();
+                let outcome =
+                    emu.nds.save_state(&mut buffer).map_err(|e| e.to_string()).and_then(|()| {
+                        std::fs::write(&path, &buffer)
+                            .map_err(|e| format!("cannot write {}: {e}", path.display()))
+                    });
+                shared.say(match outcome {
+                    Ok(()) => format!(
+                        "state saved to {} ({:.1} MiB)",
+                        path.display(),
+                        buffer.len() as f64 / (1024.0 * 1024.0)
+                    ),
+                    Err(error) => format!("save state failed: {error}"),
+                });
+            }
+            Command::LoadState(slot, path) => {
+                let Some(path) = state_path(emu, slot, path) else { continue };
+                // Snapshot first, so the load can be taken back — the same undo
+                // the first console offers.
+                let mut before = Vec::new();
+                let snapshot = emu.nds.save_state(&mut before).is_ok();
+                let outcome = std::fs::read(&path)
+                    .map_err(|e| format!("cannot read {}: {e}", path.display()))
+                    .and_then(|buffer| emu.nds.load_state(&buffer).map_err(|e| e.to_string()));
+                shared.say(match outcome {
+                    Ok(()) => {
+                        *undo = snapshot.then_some(before);
+                        format!("state loaded from {}", path.display())
+                    }
+                    Err(error) => format!("load state failed: {error}"),
+                });
+            }
+            Command::UndoStateLoad => {
+                let Some(before) = undo.take() else {
+                    shared.say("nothing to undo".to_owned());
+                    continue;
+                };
+                shared.say(match emu.nds.load_state(&before) {
+                    Ok(()) => "state load undone".to_owned(),
+                    Err(error) => format!("undo failed: {error}"),
+                });
+            }
+            Command::ImportSave(data) => {
+                shared.say(match emu.import_save(&data) {
+                    Ok(()) => "save imported; console rebooted".to_owned(),
+                    Err(error) => format!("import failed: {error}"),
+                });
+            }
+            Command::SetCheats(cheats) => emu.nds.set_cheats(cheats.as_slice()),
+            Command::FlushSave => emu.flush_save(),
+            Command::SetClock(clock) => emu.set_clock(clock),
+            Command::Stop => {
+                emu.flush_save();
+                shared.say("stopped".to_owned());
+                if let Ok(mut out) = shared.output.lock() {
+                    out.finished = true;
+                }
+                return Outcome::Stopped;
+            }
+        }
+    }
+    Outcome::Continue
+}
+
+/// Where a savestate goes: the explicit path if the menu asked for one,
+/// otherwise the numbered slot in this instance's own `states` directory.
+fn state_path(emu: &Emu, slot: Option<u8>, path: Option<PathBuf>) -> Option<PathBuf> {
+    path.or_else(|| slot.map(|slot| emu.state_path(slot)))
+}
+
+/// Hand the console's picture to everyone who wants it: the UI thread, and —
+/// in Remote Desktop mode — the encoder.
+///
+/// Both are served from **one** read of the framebuffers. Serving them
+/// separately through [`Guest::take_screens`] would have them competing for the
+/// same slot, and each would get roughly every other frame.
+///
+/// The UI thread's copy really is a copy: the framebuffers belong to the
+/// console and are overwritten as it draws, and the UI thread must never be
+/// looking at one while that happens. The encoder is served in place, on this
+/// thread, so it costs nothing extra.
+fn publish(emu: &mut Emu, shared: &Shared, stream: Option<&RemoteHost>) {
     let Some((top, bottom)) = emu.nds.framebuffers() else {
         return;
     };
+    // Encoded here, on the console's own thread. Doing it on the UI thread
+    // would spend the other console's frame time on it, which is exactly the
+    // frame rate loss Remote Desktop exists to remove.
+    if let Some(stream) = stream {
+        stream.send_frame(top, bottom);
+    }
     let screens = [top.to_vec(), bottom.to_vec()];
     debug_assert_eq!(screens[0].len(), SCREEN_WIDTH * SCREEN_HEIGHT);
     if let Ok(mut out) = shared.output.lock() {
         out.screens = Some(screens);
         out.frames = emu.nds.frame_count();
+    }
+}
+
+/// Take the console's audio, and stream it if anyone is listening.
+///
+/// Drained **whether or not** there is a stream. The core buffers what its SPU
+/// produces until somebody reads it, and this console's output was never read
+/// before Remote Desktop existed; leaving it unread now would be a backlog that
+/// only grows. Draining and discarding costs a memcpy a frame.
+fn drain_audio(emu: &mut Emu, stream: Option<&RemoteHost>) {
+    let queued = emu.nds.audio_queued();
+    if queued == 0 {
+        return;
+    }
+    let mut buffer = vec![0i16; queued.min(AUDIO_DRAIN_PAIRS) * 2];
+    let pairs = emu.nds.read_audio(&mut buffer);
+    if let Some(stream) = stream {
+        stream.send_audio(&buffer[..pairs * 2]);
     }
 }

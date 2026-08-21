@@ -50,27 +50,20 @@ impl NdsGui {
                     let selected_idx = self
                         .selected_game
                         .as_ref()
-                        .and_then(|selected| {
-                            game_names
-                                .iter()
-                                .position(|n| n == selected)
-                        })
+                        .and_then(|selected| game_names.iter().position(|n| n == selected))
                         .unwrap_or(0);
 
                     let mut selected_idx_mut = selected_idx;
-                    let game_names_im: Vec<imgui::ImString> = game_names
-                        .iter()
-                        .map(|s| imgui::ImString::new(s.clone()))
-                        .collect();
-                    let game_names_refs: Vec<&imgui::ImStr> = 
+                    let game_names_im: Vec<imgui::ImString> =
+                        game_names.iter().map(|s| imgui::ImString::new(s.clone())).collect();
+                    let game_names_refs: Vec<&imgui::ImStr> =
                         game_names_im.iter().map(|s| s.as_ref()).collect();
-                    
-                    imgui::ComboBox::new(imgui::im_str!("##game_combo"))
-                        .build_simple_string(
-                            ui,
-                            &mut selected_idx_mut,
-                            &game_names_refs,
-                        );
+
+                    imgui::ComboBox::new(imgui::im_str!("##game_combo")).build_simple_string(
+                        ui,
+                        &mut selected_idx_mut,
+                        &game_names_refs,
+                    );
 
                     if selected_idx != selected_idx_mut && selected_idx_mut < game_names.len() {
                         self.selected_game = Some(game_names[selected_idx_mut].clone());

@@ -15,6 +15,35 @@ use crate::{
     view::AspectRatio,
 };
 
+/// Which directory a folder dialog was opened for.
+///
+/// The dialog is answered several repaints after the button was clicked, so
+/// "which box did this belong to" has to be carried along with it rather than
+/// inferred from what happens to be on screen when the answer arrives.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub enum PathSetting {
+    Saves,
+    States,
+}
+
+impl PathSetting {
+    /// Point the setting at `dir`.
+    pub fn set(self, app: &mut MelonEgui, dir: std::path::PathBuf) {
+        match self {
+            Self::Saves => app.save_dir = Some(dir),
+            Self::States => app.state_dir = Some(dir),
+        }
+    }
+
+    /// The label the settings row is drawn under.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Saves => "Save files",
+            Self::States => "Savestates",
+        }
+    }
+}
+
 /// One auxiliary window.
 ///
 /// Serialisable so that whichever dialogs were open are reopened next run, the
@@ -256,11 +285,8 @@ fn cheat_codes(app: &mut MelonEgui, ui: &mut egui::Ui) {
         if ui.add_enabled(app.cheat_file().is_some(), egui::Button::new("Save")).clicked() {
             app.save_cheats();
         }
-        if ui.button("Open .mch...").clicked()
-            && let Some(path) =
-                rfd::FileDialog::new().add_filter("melonDS cheats", &["mch"]).pick_file()
-        {
-            app.import_cheats(&path);
+        if ui.button("Open .mch...").clicked() {
+            app.ask_for_cheat_file();
         }
     });
 }
@@ -714,8 +740,13 @@ fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
     });
     ui.horizontal(|ui| {
         ui.label("Guest IP");
+        // Persisted on connect, so the last address typed here comes back next
+        // session — see `MelonEgui::settings`.
         ui.text_edit_singleline(&mut app.lan_guest_address);
     });
+    link_quality(app, ui);
+    remote_desktop(app, ui);
+    vpn_tuning(app, ui);
     ui.separator();
 
     let counters = app.airwaves.counters();
@@ -852,6 +883,8 @@ fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
 }
 
 fn interface(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    language_picker(app, ui);
+    ui.separator();
     ui.label(&app.font_note).on_hover_text(
         "egui's own fonts are Latin-only, so a system font is borrowed for          Japanese, Chinese and Korean. Set MELON_EGUI_FONT to a .ttf/.otf/.ttc          to choose a different one.",
     );
@@ -873,30 +906,373 @@ fn interface(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.view.show_osd, "Show OSD");
 }
 
-fn paths(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.label("Empty means \"beside the ROM\", which is melonDS's behaviour.");
+/// What the live LAN link is measured to be doing.
+///
+/// The number to read is **rounds completed**. A DS multiplayer round has to
+/// finish inside one emulated frame, so a link that cannot deliver a reply in
+/// time produces a communication error in the game however healthy everything
+/// else looks — see [`crate::lan`].
+fn link_quality(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let Some(stats) = app.lan_stats() else {
+        return;
+    };
     ui.separator();
-    for (label, dir) in [("Save files", &mut app.save_dir), ("Savestates", &mut app.state_dir)] {
+    ui.heading("Link quality");
+    egui::Grid::new("link-quality").striped(true).show(ui, |ui| {
+        ui.label("Round trip");
+        ui.monospace(format!("{:.1} ms (jitter {:.1} ms)", stats.rtt_ms, stats.jitter_ms));
+        ui.end_row();
+
+        ui.label("Reply budget");
+        ui.monospace(format!("{:.0} ms", stats.budget_ms));
+        ui.end_row();
+
+        ui.label("Rounds completed");
+        match stats.round_success() {
+            Some(fraction) => {
+                let colour = if fraction > 0.95 {
+                    egui::Color32::from_rgb(0x50, 0xC0, 0x60)
+                } else if fraction > 0.8 {
+                    egui::Color32::from_rgb(0xE0, 0xA0, 0x40)
+                } else {
+                    egui::Color32::from_rgb(0xE0, 0x60, 0x50)
+                };
+                ui.colored_label(
+                    colour,
+                    format!(
+                        "{:.1}%  ({} of {})",
+                        fraction * 100.0,
+                        stats.rounds_answered,
+                        stats.rounds_answered + stats.rounds_timed_out
+                    ),
+                );
+            }
+            None => {
+                ui.label("no round yet");
+            }
+        }
+        ui.end_row();
+
+        ui.label("Sustainable frame rate");
+        ui.monospace(format!("{:.1} fps", stats.sustainable_fps));
+        ui.end_row();
+
+        ui.label("Datagrams");
+        ui.monospace(format!(
+            "{} sent, {} received, {} duplicates discarded",
+            stats.datagrams_sent, stats.datagrams_received, stats.duplicates_dropped
+        ));
+        ui.end_row();
+
+        // Frames rather than datagrams: the difference between the two is what
+        // batching bought, and the difference between datagrams sent and frames
+        // sent is what redundancy cost.
+        ui.label("Wireless frames");
+        ui.monospace(format!("{} sent, {} received", stats.frames_sent, stats.frames_received));
+        ui.end_row();
+
+        ui.label("Stale replies");
+        ui.monospace(stats.stale_replies.to_string());
+        ui.end_row();
+
+        ui.label("Wireless");
+        ui.label(if stats.wireless_on {
+            "on (the cart has opened its wireless menu)"
+        } else {
+            "off (the cart has not started multiplayer yet)"
+        });
+        ui.end_row();
+    });
+}
+
+/// Remote Desktop mode: what it is for, what it is doing, and its knobs.
+///
+/// Placed above the VPN tuning deliberately. The numbers directly above this —
+/// a round success rate below 100% and a sustainable frame rate below 59.83 —
+/// are what send someone looking for a setting to change, and for a link past a
+/// few milliseconds there **is** no setting: a synchronous round inside every
+/// emulated frame caps the rate at `1/(16.7 ms + round trip)` whatever the
+/// tuning says. This is the answer to that, so it belongs where the question is
+/// asked.
+fn remote_desktop(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    use crate::i18n::I18nKey as K;
+    ui.separator();
+    ui.heading(app.i18n().t(K::RemoteDesktop));
+    ui.small(app.i18n().t(K::RemoteDesktopExplained));
+
+    if let Some(stats) = app.remote_stats {
+        ui.separator();
+        egui::Grid::new("remote-stats").striped(true).show(ui, |ui| {
+            ui.label(app.i18n().t(K::InputLatency));
+            // A button press reaches the console in half a round trip and the
+            // resulting picture comes back in the other half, plus the frame it
+            // was drawn in. Saying so is more use than the raw round trip.
+            ui.monospace(format!("{:.0} ms", stats.rtt_ms + 16.7));
+            ui.end_row();
+
+            ui.label(app.i18n().t(K::RoundTrip));
+            ui.monospace(format!("{:.1} ms", stats.rtt_ms));
+            ui.end_row();
+
+            ui.label(app.i18n().t(K::Video));
+            ui.monospace(format!(
+                "{:.2} Mbit/s  ({} tiles, {} B in the last frame)",
+                stats.megabits_per_second(),
+                stats.last_frame_tiles,
+                stats.last_frame_bytes,
+            ));
+            ui.end_row();
+
+            ui.label("Frames");
+            ui.monospace(format!(
+                "{} ({} datagrams, {} MiB, {} discarded)",
+                stats.frames,
+                stats.video_datagrams,
+                stats.video_bytes / (1024 * 1024),
+                stats.discarded
+            ));
+            ui.end_row();
+
+            ui.label("Session");
+            ui.label(if stats.connected { "connected" } else { "not connected" });
+            ui.end_row();
+
+            ui.label(app.i18n().t(K::StreamAudio));
+            ui.monospace(format!(
+                "{} pairs, {} dropped to stay in step",
+                stats.audio_pairs, stats.audio_dropped
+            ));
+            ui.end_row();
+
+            ui.label("Input samples");
+            ui.monospace(stats.inputs.to_string());
+            ui.end_row();
+        });
+        ui.small(app.i18n().t(K::RemoteClientOwnsNothing));
+    }
+
+    egui::CollapsingHeader::new(app.i18n().s(K::RemoteDesktopSettings)).default_open(false).show(
+        ui,
+        |ui| {
+            ui.label("Applies to the next Remote Desktop session.");
+            let (refresh, audio, lag, port) = (
+                app.i18n().s(K::RefreshPeriod),
+                app.i18n().s(K::StreamAudio),
+                app.i18n().s(K::AudioLagLimit),
+                app.i18n().s(K::Port),
+            );
+            let tuning = &mut app.remote_tuning;
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.refresh_period).range(1..=60));
+                ui.label(refresh);
+            })
+            .response
+            .on_hover_text(
+                "Every tile is repainted at least this often, which is the whole of the \
+                 loss recovery: a dropped datagram costs a few stale tiles for this many \
+                 frames and nothing more. Lower recovers faster and costs bandwidth.",
+            );
+            ui.checkbox(&mut tuning.audio, audio);
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.max_audio_lag_ms).range(20..=1000));
+                ui.label(lag);
+            })
+            .response
+            .on_hover_text(
+                "Audio queued past this is dropped rather than played. Sound that is \
+                 queued is sound that is late, and a queue that is never trimmed slides \
+                 further behind the picture for as long as the session lasts.",
+            );
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.port).range(1..=65535));
+                ui.label(port);
+            });
+            if ui.button("Reset to defaults").clicked() {
+                *tuning = crate::remote::Tuning::default();
+            }
+            app.remote_tuning.normalize();
+        },
+    );
+}
+
+/// The knobs behind the LAN transport's behaviour on a slow link.
+///
+/// Deliberately editable rather than hidden: what a VPN needs varies enormously,
+/// and a value that is right for a 30 ms tunnel wastes a whole frame on a 3 ms
+/// one. Changes apply to the *next* connection.
+fn vpn_tuning(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    ui.separator();
+    egui::CollapsingHeader::new("VPN tuning").default_open(false).show(ui, |ui| {
+        ui.label(
+            "Applies to the next LAN connection. The reply budget is measured from the \
+             link itself; these only bound and shape it.",
+        );
+        let tuning = &mut app.lan_tuning;
         ui.horizontal(|ui| {
-            ui.label(label);
+            ui.add(egui::DragValue::new(&mut tuning.min_budget_ms).range(1..=200));
+            ui.label("Minimum reply wait (ms)");
+        });
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut tuning.max_budget_ms).range(1..=1000));
+            ui.label("Maximum reply wait (ms)");
+        })
+        .response
+        .on_hover_text(
+            "The worst link that will still be played over. Past this a game's own \
+             timeouts give up anyway.",
+        );
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut tuning.jitter_factor).range(0..=16));
+            ui.label("Jitter allowance");
+        })
+        .response
+        .on_hover_text("Multiples of the measured jitter added on top of the round trip.");
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut tuning.reply_copies).range(1..=4));
+            ui.label("Copies of each reply");
+        })
+        .response
+        .on_hover_text(
+            "A lost reply is a lost round, and a lost round is a communication error. \
+             Sending two copies costs bandwidth and removes most single-packet losses.",
+        );
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut tuning.batch_window_ms).range(0..=50));
+            ui.label("Batch window (ms)");
+        })
+        .response
+        .on_hover_text(
+            "How long ordinary frames (beacons, association) may wait to share one \
+             datagram. 0 sends each on its own. Rounds are never batched: a round has \
+             to finish inside its own emulated frame.",
+        );
+        ui.checkbox(&mut tuning.pace_to_link, "Follow the link's frame rate").on_hover_text(
+            "Run the console at the rate the link can sustain instead of dropping the \
+             rounds it cannot service.",
+        );
+        if ui.button("Reset to defaults").clicked() {
+            *tuning = crate::lan::Tuning::default();
+        }
+        app.lan_tuning.normalize();
+    });
+}
+
+fn paths(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    ui.label(
+        "Empty means \"beside the ROM\". By default each console keeps its own files under \
+         instances/instanceN/, which is where lunaris keeps its.",
+    );
+    ui.separator();
+    // What each row does, gathered first: the buttons need `&mut app` and the
+    // labels need to read the directories, which cannot both borrow at once.
+    let mut asked = None;
+    let mut reset = None;
+    for setting in [PathSetting::Saves, PathSetting::States] {
+        let dir = match setting {
+            PathSetting::Saves => app.save_dir.clone(),
+            PathSetting::States => app.state_dir.clone(),
+        };
+        ui.horizontal(|ui| {
+            ui.label(setting.label());
             let shown = dir
                 .as_ref()
                 .map_or_else(|| "(beside the ROM)".to_owned(), |d| d.display().to_string());
             ui.monospace(shown);
         });
         ui.horizontal(|ui| {
-            if ui.button(format!("Choose {}...", label.to_lowercase())).clicked()
-                && let Some(picked) = rfd::FileDialog::new().pick_folder()
-            {
-                *dir = Some(picked);
+            if ui.button(format!("Choose {}...", setting.label().to_lowercase())).clicked() {
+                asked = Some(setting);
             }
             if ui.add_enabled(dir.is_some(), egui::Button::new("Reset")).clicked() {
-                *dir = None;
+                reset = Some(setting);
             }
         });
         ui.separator();
     }
+    if let Some(setting) = asked {
+        app.ask_for_directory(setting);
+    }
+    if let Some(setting) = reset {
+        match setting {
+            PathSetting::Saves => app.save_dir = None,
+            PathSetting::States => app.state_dir = None,
+        }
+    }
+
+    ui.separator();
+    ui.heading("Per-instance directories");
+    ui.label(
+        "Each console gets saves/, states/, cheats/ and its own settings.json. \
+         Instance 2 is the console System ▸ Multiplayer ▸ Launch new instance opens.",
+    );
+    egui::Grid::new("instance-paths").striped(true).show(ui, |ui| {
+        ui.label("");
+        for kind in ["saves", "states", "cheats"] {
+            ui.label(kind);
+        }
+        ui.end_row();
+        for instance in 1..=config::INSTANCE_COUNT {
+            ui.label(format!("instance{instance}"));
+            for kind in ["saves", "states", "cheats"] {
+                ui.monospace(config::instance_data_dir(instance, kind).display().to_string());
+            }
+            ui.end_row();
+        }
+    });
+    if ui.button("Open the instances folder").clicked() {
+        app.reveal(&config::instances_dir());
+    }
+    ui.separator();
     ui.label("These take effect for the next cart loaded.");
+}
+
+/// Choose the language the UI is drawn in.
+///
+/// Each language is offered under its own name, which is how a language picker
+/// has to read: someone looking for Japanese is looking for 日本語, not for a
+/// word they may not read. See [`crate::i18n`].
+fn language_picker(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    use crate::i18n::{I18nKey, Language};
+    let mut chosen = app.language;
+    ui.horizontal(|ui| {
+        ui.label(app.i18n().t(I18nKey::LanguageLabel));
+        egui::ComboBox::from_id_salt("language").selected_text(chosen.label()).show_ui(ui, |ui| {
+            for language in Language::ALL {
+                ui.selectable_value(&mut chosen, *language, language.label());
+            }
+        });
+    });
+    if chosen != app.language {
+        app.set_language(chosen);
+        app.save_settings();
+    }
+    if ui
+        .button("Write translation templates")
+        .on_hover_text(
+            "Writes instances/translation.<lang>.json for every language. Edit one to              change a wording without rebuilding; it is read over the built-in text at              startup.",
+        )
+        .clicked()
+    {
+        let mut written = Vec::new();
+        for language in Language::ALL {
+            match crate::i18n::I18nMap::built_in(*language).save_template() {
+                Ok(path) => written.push(path.display().to_string()),
+                Err(error) => app.post_message(format!("{error}")),
+            }
+        }
+        if !written.is_empty() {
+            app.post_message(format!("wrote {}", written.join(", ")));
+        }
+    }
+    // The built-in Japanese covers the keyed strings only; the rest of the UI
+    // is still English, and saying so is better than leaving it to be noticed.
+    if app.language == Language::Japanese {
+        ui.small(format!(
+            "{} of {} strings are keyed for translation; the rest are still English.",
+            I18nKey::ALL.len() - I18nKey::UNTRANSLATED.len(),
+            I18nKey::ALL.len(),
+        ));
+    }
 }
 
 fn about(ui: &mut egui::Ui) {
