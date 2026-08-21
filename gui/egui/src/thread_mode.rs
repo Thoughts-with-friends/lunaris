@@ -341,6 +341,31 @@ impl ThreadMode {
                 nds_core::net::set_assoc_trace(self.assoc_trace);
             }
 
+            // The trace also goes to stderr, which a GUI build started from
+            // the desktop does not have. Showing it here is what makes it
+            // usable during an actual reproduction.
+            if self.assoc_trace {
+                ui.horizontal(|ui| {
+                    if ui.button("Clear trace").clicked() {
+                        nds_core::net::clear_assoc_trace();
+                    }
+                    let lines = nds_core::net::assoc_trace_lines();
+                    ui.weak(format!("{} lines", lines.len()));
+                    if ui.button("Copy").clicked() {
+                        ui.ctx().copy_text(lines.join("
+"));
+                    }
+                });
+                egui::ScrollArea::vertical().max_height(220.0).stick_to_bottom(true).show(
+                    ui,
+                    |ui| {
+                        for line in nds_core::net::assoc_trace_lines() {
+                            ui.label(egui::RichText::new(line).monospace().size(10.0));
+                        }
+                    },
+                );
+            }
+
             ui.separator();
             ui.strong("guest");
             let diag = self.frame.lock().unwrap_or_else(|e| e.into_inner()).diag.clone();
@@ -349,6 +374,24 @@ impl ThreadMode {
             ui.strong("host");
             ui.weak(diag_line(&host.wifi_diag_snapshot()));
             ui.weak(host.wifi_diag_snapshot().verdict(true));
+
+            // The medium itself, which neither console can see. A host that
+            // reports client failures while `stale` climbs is being answered
+            // -- just always about the previous round, which means the two
+            // wireless clocks have drifted apart rather than that the link is
+            // down. Both counters flat means nobody is replying at all.
+            if let Some(hub) = &self.hub {
+                let status = hub.status();
+                ui.add_space(4.0);
+                ui.strong("airwaves");
+                ui.weak(format!(
+                    "connected=0x{:04X} host_inst={} replies collected={} stale={}",
+                    status.connected_bitmask,
+                    status.mp_host_inst,
+                    status.collected_replies,
+                    status.stale_replies,
+                ));
+            }
         });
         self.is_open = open;
     }
@@ -741,11 +784,26 @@ fn diag_line(d: &nds_core::nds::MpDiag) -> String {
     // sentence, and omitting them made a real 88%-loss reading unactionable.
     let k = &d.drops;
     format!(
-        "channel {} · is_mp {} / client {} / aid {} · rx {} of {} polls (empty {}) · loc {} \
-         beacon {} cmd {} reply {} · irq12 {}\ndropped: rx_disabled {} ring_unconfigured {} \
-         too_short {} bad_length {} channel_mismatch {} foreign_mp {} filtered {} ring_full {} \
-         wep_off {}",
+        "channel {} (ever {}, changes {}, on-channel {}% of {}ms) · tx dropped off-channel {} · \
+         rf v{} idx {:?} now {:02X?} transfers {} \
+         last id 0x{:02X} cmd {} · is_mp {} / client {} / aid {} · rx {} of {} polls (empty {}) \
+         · loc {} beacon {} cmd {} reply {} · irq12 {}\nclassified: beacon {} mgmt {} cmd {} \
+         ack {} reply {} · last assoc-resp: aid {} mac_good {} ts {}\ndelivered: irq0 {} \
+         (masked {}) · driver reads: ring-RAM {} port {}\ndropped: rx_disabled {} powered_down {} \
+         ring_unconfigured {} too_short {} bad_length {} channel_mismatch {} foreign_mp {} \
+         filtered {} ring_full {} wep_off {}",
         d.channel,
+        d.channel_ever,
+        d.channel_changes,
+        (d.channel_us * 100).checked_div(d.radio_us).unwrap_or(0),
+        d.radio_us / 1000,
+        d.tx_dropped_no_channel,
+        d.rf_version,
+        d.rf_channel_index,
+        d.rf_regs_now,
+        d.rf_transfers,
+        d.rf_last_id,
+        d.rf_last_cmd,
         d.is_mp,
         d.is_mp_client,
         d.aid,
@@ -757,7 +815,20 @@ fn diag_line(d: &nds_core::nds::MpDiag) -> String {
         d.cmd_tx,
         d.reply_tx,
         d.irq12,
+        d.rxflags_beacon,
+        d.rxflags_mgmt,
+        d.rxflags_cmd,
+        d.rxflags_ack,
+        d.rxflags_reply,
+        d.last_assoc_aid,
+        d.last_assoc_mac_good,
+        d.last_assoc_timestamp,
+        d.irq0_raised,
+        d.irq0_masked,
+        d.rx_ram_reads,
+        d.rx_ring_reads,
         k.rx_disabled,
+        k.rx_powered_down,
         k.ring_unconfigured,
         k.too_short,
         k.bad_length,

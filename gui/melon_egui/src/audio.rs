@@ -421,7 +421,7 @@ mod tests {
         assert!(rate_trim(1.0) <= MAX_RATE_TRIM + 1e-6);
         assert!(rate_trim(0.0) >= -MAX_RATE_TRIM - 1e-6);
         // The cap has to stay inaudible; 0.5% is about eight cents.
-        assert!(MAX_RATE_TRIM <= 0.01);
+        const { assert!(MAX_RATE_TRIM <= 0.01) };
     }
 
     #[test]

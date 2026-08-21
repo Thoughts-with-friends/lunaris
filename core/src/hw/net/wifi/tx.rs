@@ -17,7 +17,7 @@
 //! | 4    | `0x0010`       | `W_TXSlotBeacon`   | beacon                   |
 //! | 5    | `0x0080`       | `W_TXSlotReply1`   | client MP reply (auto)   |
 
-use super::{Wifi, regs::*};
+use super::{Wifi, assoc_trace, regs::*};
 use crate::hw::interrupt_controller::InterruptRequest;
 
 const SLOT_BUSY_BITS: [u16; 6] = [0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0080];
@@ -92,7 +92,7 @@ impl Wifi {
     /// Ends with `UpdatePowerStatus(1)` to force-wake the transceiver, as
     /// melonDS does (`Wifi.cpp:735`): the host must be awake to run the
     /// command round it just armed.
-    fn start_tx_cmd(&mut self) {
+    fn start_tx_cmd(&mut self, request: &mut InterruptRequest) {
         let (addr, length, rate) = self.read_slot_frame_info(W_TXSlotCmd);
 
         // Latch the client mask this command addresses, clearing any
@@ -119,7 +119,7 @@ impl Wifi {
             self.tx_slots[1].phase_time = self.cmd_counter as i32 - 100;
         }
 
-        self.update_power_status(1);
+        self.update_power_status(1, request);
     }
 
     /// Starts the beacon slot (4). Ported from `StartTX_Beacon`
@@ -147,7 +147,7 @@ impl Wifi {
     /// [`Wifi::mp_client_fail`] to `0xFFFE` right before starting a CMD
     /// slot (Gap 1.1) -- without this, `mp_client_mask` is always `0` and
     /// the host never expects a single reply.
-    pub(super) fn fire_tx(&mut self) {
+    pub(super) fn fire_tx(&mut self, request: &mut InterruptRequest) {
         self.diag.fire_tx_calls += 1;
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
             self.diag.fire_tx_rx_disabled += 1;
@@ -180,7 +180,7 @@ impl Wifi {
         // (`W_TXReqRead`), already busy (`W_TXBusy`, i.e. a previous transfer
         // on that slot never completed), or reception disarmed.
         if super::assoc_trace_enabled() && armed & !txstart != 0 {
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}] fire_tx declined slots 0x{:04X}: armed=0x{armed:04X} \
                  txreq=0x{txreq:04X} txbusy=0x{txbusy:04X} com_status={} tx_cur_slot={} \
                  (us_timestamp={})",
@@ -218,7 +218,7 @@ impl Wifi {
         } else if txstart & 0x0002 != 0 {
             self.diag.cmd_tx += 1;
             self.mp_client_fail = 0xFFFE;
-            self.start_tx_cmd();
+            self.start_tx_cmd(request);
         } else if txstart & 0x0001 != 0 {
             self.start_tx_locn(0);
         }
@@ -357,6 +357,19 @@ impl Wifi {
         self.tx_slots[slot].phase_time -= super::Wifi::TIMER_INTERVAL_US as i32;
 
         if self.tx_slots[slot].phase_time > 0 {
+            // melonDS walks `W_RXTXAddr` through the frame one halfword at a
+            // time during phase 1 (`Wifi.cpp:951-955`). **Not ported**, and
+            // the difference is not cosmetic: melonDS's receive path re-derives
+            // its write position from this same register on every halfword it
+            // moves, so the two uses interleave the way the hardware's single
+            // shared pointer does. This port instead copies a received frame
+            // into Wi-Fi RAM up front and latches where it ended
+            // ([`PendingRxHeader::end_addr`]), so a transmission that stepped
+            // this register mid-reception would only corrupt what the receive
+            // path publishes -- which is exactly what happened when it was
+            // added: reception kept working, but the driver was handed RX
+            // headers pointing at the wrong place and the game stopped seeing
+            // rooms at all.
             // Phase 2 (host reply-collection window) keeps polling replies
             // in as they arrive, paced by `mp_reply_timer`, exactly as
             // melonDS's `MPReplyTimer` countdown inside `ProcessTX`'s
@@ -404,12 +417,15 @@ impl Wifi {
         // frame. Ported from `ProcessTX`'s `if (num != 5) TXSendFrame(...)`.
         if slot != 5 && self.cur_channel != 0 {
             self.send_slot_frame(slot);
-        } else if slot != 5 && super::assoc_trace_enabled() {
+        } else if slot != 5 {
+            self.diag.tx_dropped_no_channel += 1;
+        }
+        if slot != 5 && self.cur_channel == 0 && super::assoc_trace_enabled() {
             // The phase machine below still runs to completion and still raises
             // IRQ 1, so from the driver's side the transmission "succeeded"
             // while nothing reached the wire. Silent, and indistinguishable
             // from a peer that simply is not listening.
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}] TX DROPPED slot={slot}: no RF channel resolved \
                  (cur_channel=0), frame never reached the transport",
                 self.ioport(W_MACAddr2),
@@ -482,7 +498,7 @@ impl Wifi {
                 }
                 self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !0x0080);
                 self.tx_slots[5].valid = false;
-                self.fire_tx();
+                self.fire_tx(request);
                 self.reselect_tx_slot();
             }
             _ => {
@@ -502,7 +518,7 @@ impl Wifi {
                     _ => {}
                 }
                 self.tx_slots[slot].valid = false;
-                self.fire_tx();
+                self.fire_tx(request);
                 self.reselect_tx_slot();
             }
         }
@@ -513,7 +529,7 @@ impl Wifi {
         self.set_ioport(W_TXBusy, self.ioport(W_TXBusy) & !0x0080);
         self.tx_slots[5].valid = false;
         let _ = request;
-        self.fire_tx();
+        self.fire_tx(request);
         self.reselect_tx_slot();
     }
 
@@ -579,7 +595,7 @@ impl Wifi {
         }
         self.diag.irq12 += 1;
         self.raise_irq(12, request);
-        self.fire_tx();
+        self.fire_tx(request);
         self.reselect_tx_slot();
     }
 
@@ -596,7 +612,7 @@ impl Wifi {
         self.tx_slots[1].valid = false;
         self.diag.irq12 += 1;
         self.raise_irq(12, request);
-        self.fire_tx();
+        self.fire_tx(request);
         self.reselect_tx_slot();
     }
 
@@ -604,6 +620,16 @@ impl Wifi {
     /// idle when none is left. Ported from `USTimer`'s post-`ProcessTX`
     /// re-selection (`Wifi.cpp:1866-1881`).
     fn reselect_tx_slot(&mut self) {
+        // A transfer that finished while the transceiver was powered down
+        // cancels the pending requests and parks the radio
+        // (`Wifi.cpp:1860-1866`). Restored along with the rest of the power
+        // model: a driver polling `W_RFStatus` / `W_RFPins` must not read
+        // "idle, ready to send" from a radio that is off.
+        if self.ioport(W_PowerState) & (1 << 9) != 0 {
+            self.set_ioport(W_TXBusy, 0);
+            self.set_ioport(W_TRXPower, 0);
+            self.set_status(9);
+        }
         // Back to idle before picking the next slot (`Wifi.cpp:1081`,
         // `1109`, `1120`, `1177`, `1194`).
         self.set_status(1);
@@ -683,7 +709,7 @@ impl Wifi {
             // while nothing reached the wire. Silent, and indistinguishable
             // from a peer that is not listening -- worth naming.
             if super::assoc_trace_enabled() {
-                eprintln!(
+                assoc_trace!(
                     "[assoc-trace][{:04X}] TX DROPPED slot={slot}: no RF channel resolved \
                      (cur_channel=0), frame never reached the transport",
                     self.ioport(W_MACAddr2),
@@ -704,7 +730,7 @@ impl Wifi {
             // way out because it names *which side* gave up, which the frame
             // lengths alone cannot: both peers send one, microseconds apart.
             if super::assoc_trace_enabled() && fc & 0x00FF == 0x00C0 {
-                eprintln!(
+                assoc_trace!(
                     "[assoc-trace][{:04X}] TX DEAUTH (was_mp_client={}, aid={}, us_timestamp={})",
                     self.ioport(W_MACAddr2),
                     self.is_mp_client,

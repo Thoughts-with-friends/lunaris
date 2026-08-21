@@ -41,4 +41,7 @@ pub use mp_interface::{
     DummyMp, MAX_INSTANCES, MpFrameCategory, MpFrameType, MpInterface, MpInterfaceType,
     MpPacketHeader, MpRecvResult,
 };
-pub use wifi::{Net, NetDriver, NullNetDriver, PacketDispatcher, set_assoc_trace};
+pub use wifi::{
+    Net, NetDriver, NullNetDriver, PacketDispatcher, assoc_trace_lines, clear_assoc_trace,
+    set_assoc_trace,
+};

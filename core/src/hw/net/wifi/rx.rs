@@ -24,7 +24,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{
-    Wifi,
+    Wifi, assoc_trace,
     mp::{MpFrameKind, MpRecv},
     regs::*,
 };
@@ -81,6 +81,19 @@ pub(super) struct PendingRxHeader {
     pub tx_rate: u8,
     /// Cropped frame length, per `W_RXLenCrop`.
     pub framelen: u16,
+    /// Byte address one past the last body byte written into Wi-Fi RAM, i.e.
+    /// where the visible write cursor has to land once this frame completes.
+    ///
+    /// Latched here rather than re-read from `W_RXTXAddr` at completion.
+    /// The hardware has one shared RX/TX address pointer and melonDS models
+    /// it as such -- but melonDS's receive path re-derives its position from
+    /// that register on every halfword it moves, whereas this port copies the
+    /// whole body up front and only publishes the cursor once the simulated
+    /// transfer time has elapsed. Anything that writes `W_RXTXAddr` inside
+    /// that window (any transmission does, at its preamble) would otherwise
+    /// decide where a received frame *appears* to end, handing the driver an
+    /// RX header pointing into the middle of nothing.
+    pub end_addr: u16,
 }
 
 /// A frame's classification, stashed by [`Wifi::check_rx`] when it must
@@ -281,29 +294,19 @@ impl Wifi {
     /// hardware RX byte-pump and/or updates MP sync state. Returns `true`
     /// if a frame was accepted.
     pub(super) fn check_rx(&mut self, kind: RxKind, request: &mut InterruptRequest) -> bool {
-        // melonDS aborts here when `W_PowerState` bit 9 reports the
-        // transceiver powered down (`Wifi.cpp:1566-1567`).
+        // Reception stops while `W_PowerState` bit 9 reports the transceiver
+        // powered down (`Wifi.cpp:1566-1567`).
         //
-        // **Deliberate deviation:** this port does not gate on it, because a
-        // radio that goes down here has no reliable way back. Measured against
-        // a real game, an instance that took this branch simply stopped
-        // receiving for the rest of the session: reception froze mid-session
-        // and the link dropped, with the driver polling `W_PowerState` tens of
-        // millions of times waiting for a wake-up that never came.
-        //
-        // This comment used to blame the gap on melonDS modelling things this
-        // port does not -- `IOPORT(0x27C)`, the partial `W_PowerDownCtrl`
-        // states, `W_RFStatus` 2/4/7. That was wrong on every count: `27Ch` is
-        // implemented (see [`super::regs`]), and melonDS carries `TODO`s for
-        // the other two rather than implementations (`Wifi.cpp:455`, `509`).
-        // The real difference is narrower -- the `W_ModeReset` master-enable
-        // pair documented in [`Wifi::update_power_status`] -- and there is no
-        // more complete reference to port from.
-        //
-        // The power state itself is still modelled and still reported to the
-        // driver through `W_PowerState`/`W_TRXPower`/`W_RFStatus`; only this
-        // one hard gate on the receive path is dropped, so a stalled
-        // power-down can no longer take the link with it.
+        // This port used to skip this gate deliberately, on the grounds that
+        // its power-down state had no reliable way back. That escape hatch is
+        // gone along with the two power deviations it was paired with (see
+        // [`Wifi::update_power_status`]), so this is melonDS's behaviour
+        // again. A radio that stays down now shows up as the diagnostic's
+        // `powered_down` verdict instead of as silent reception.
+        if self.ioport(W_PowerState) & (1 << 9) != 0 {
+            self.diag.drops.rx_powered_down += 1;
+            return false;
+        }
         if self.ioport(W_RXCnt) & 0x8000 == 0 {
             self.diag.drops.rx_disabled += 1;
             if super::debug_enabled() && rx_gate_warn_latch() {
@@ -693,6 +696,7 @@ impl Wifi {
             header_addr: header_addr as u16,
             tx_rate,
             framelen: cropped_framelen,
+            end_addr: addr as u16,
         };
 
         self.com_status |= 0x1;
@@ -718,8 +722,16 @@ impl Wifi {
         self.com_status &= !0x1;
         self.rx_counter = 0;
         if self.com_status == 0 {
-            // Back to idle (`Wifi.cpp:1255-1258`).
-            self.set_status(1);
+            // Back to idle, or parked if the transceiver went down while the
+            // frame was arriving (`Wifi.cpp:1250-1259`). This port used to
+            // report idle unconditionally; a driver polling `W_RFStatus` /
+            // `W_RFPins` then reads "ready" from a radio that is off.
+            if self.ioport(W_PowerState) & (1 << 9) != 0 {
+                self.set_ioport(W_TRXPower, 0);
+                self.set_status(9);
+            } else {
+                self.set_status(1);
+            }
         }
 
         let pending = self.rx_pending;
@@ -800,7 +812,7 @@ impl Wifi {
             write_field(&mut self.ram, &mut addr, 2, pending.framelen);
             write_field(&mut self.ram, &mut addr, 2, 0x4080);
 
-            let mut cursor = u32::from(self.ioport(W_RXTXAddr)) << 1;
+            let mut cursor = u32::from(pending.end_addr);
             if cursor & 0x2 != 0 {
                 increment_rx_addr(&mut cursor, 2, base, end);
             }
@@ -822,7 +834,7 @@ impl Wifi {
                 // local MAC's high word -- the one value guaranteed to differ
                 // between them (see `loader::load_rom_for_instance`).
                 let who = self.ioport(W_MACAddr2);
-                eprintln!(
+                assoc_trace!(
                     "[assoc-trace][{who:04X}] committed assoc-resp: header@0x{hdr:04X} \
                      rxflags=0x{:04X} rate=0x{:04X} framelen={} write_cursor=0x{:04X} \
                      read_cursor=0x{:04X} ring=0x{:04X}..0x{:04X}",
@@ -844,7 +856,7 @@ impl Wifi {
                 // **Status is what decides acceptance**: a nonzero code is a
                 // refusal the host itself sent, which would mean the fault is
                 // on the host's side of the handshake, not in this RX path.
-                eprintln!(
+                assoc_trace!(
                     "[assoc-trace][{who:04X}]   body[0..16] = {} (capability=0x{:04X} \
                      status=0x{:04X} aid=0x{:04X})",
                     body.join(" "),
@@ -925,6 +937,18 @@ impl Wifi {
 
         let total = (12 + framelen as usize).min(reply.len()).min(self.rx_buffer.len());
         self.rx_buffer[..total].copy_from_slice(&reply[..total]);
+
+        // The WEP branch also slides the 802.11 body down over the 4-byte IV,
+        // exactly as the regular receive path does
+        // (`Wifi.cpp:1546-1549`). Subtracting the cropped length without
+        // moving the body -- what this used to do -- leaves every field the
+        // driver reads out of a client's reply four bytes off.
+        if reply_ctl & (1 << 14) != 0 && framelen > 24 {
+            let src = 12 + 28;
+            let dst = 12 + 24;
+            let len = (framelen as usize).min(self.rx_buffer.len().saturating_sub(src));
+            self.rx_buffer.copy_within(src..src + len, dst);
+        }
 
         // No classification here either: like the regular path, this frame is
         // classified and filtered at completion in [`Wifi::step_rx`], matching

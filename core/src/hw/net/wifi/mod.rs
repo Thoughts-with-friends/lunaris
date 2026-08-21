@@ -108,6 +108,47 @@ pub(super) fn assoc_trace_enabled() -> bool {
 /// PowerShell, which is this project's primary shell. A UI toggle cannot be
 /// mistyped, and lets a trace be armed at the moment of reproduction rather
 /// than for a whole session.
+/// The association trace's most recent lines, newest last.
+///
+/// The trace used to go to stderr only. lunaris is a GUI binary, so on Windows
+/// a copy started from the desktop has no console attached and every line was
+/// written into nothing -- the one diagnostic built for this problem was
+/// invisible to the person reproducing it. Lines are kept here as well so a
+/// front end can show them.
+static ASSOC_TRACE_LOG: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// How many trace lines are retained. The trace is armed by hand around a
+/// reproduction, so this only has to cover the handshake and the teardown
+/// after it.
+const ASSOC_TRACE_LOG_LIMIT: usize = 500;
+
+/// Records one trace line, and echoes it to stderr for terminal runs.
+pub(crate) fn assoc_trace_log(line: String) {
+    eprintln!("{line}");
+    let mut log = ASSOC_TRACE_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    if log.len() >= ASSOC_TRACE_LOG_LIMIT {
+        log.remove(0);
+    }
+    log.push(line);
+}
+
+/// A copy of the retained trace lines, oldest first.
+#[must_use]
+pub fn assoc_trace_lines() -> Vec<String> {
+    ASSOC_TRACE_LOG.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Discards the retained trace lines.
+pub fn clear_assoc_trace() {
+    ASSOC_TRACE_LOG.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// `eprintln!`, but the line is also retained for [`assoc_trace_lines`].
+macro_rules! assoc_trace {
+    ($($arg:tt)*) => { crate::hw::net::wifi::assoc_trace_log(format!($($arg)*)) };
+}
+pub(crate) use assoc_trace;
+
 pub fn set_assoc_trace(enabled: bool) {
     // Run the environment seed first, so a later `set_assoc_trace(false)` is
     // not undone by lazy initialisation on the next read.
@@ -267,12 +308,6 @@ pub struct Wifi {
     #[savestate(skip)]
     irq_trace_remaining: u32,
 
-    /// Set by [`Wifi::update_power_status`] when the transceiver starts
-    /// powering up, and drained by [`Wifi::tick`]. Latched rather than
-    /// raised directly because power status is re-evaluated from register
-    /// writes that do not all have an [`InterruptRequest`] to hand.
-    pending_irq11: bool,
-
     /// Per-register read tally, indexed like [`Wifi::io`]. Not serialized:
     /// purely diagnostic. A driver that stalls waiting on the hardware
     /// spins on one register, so the most-read port names what it is
@@ -360,7 +395,6 @@ impl Wifi {
             assoc_trace_reads: 0,
             read_count_baseline: vec![0; Self::IO_WORDS],
             irq_trace_remaining: 0,
-            pending_irq11: false,
             reg_read_counts: vec![0; Self::IO_WORDS],
             diag: diag::MpDiag::default(),
             us_until_power_on: 0,
@@ -463,6 +497,28 @@ impl Wifi {
         self.mp_last_seqno = 0xFFFF;
         self.rx_deferred = DeferredRxParams::default();
         self.rx_pending = PendingRxHeader::default();
+
+        // The rest of the state melonDS's `Reset` clears (`Wifi.cpp:206-238`).
+        // This port used to leave every one of these alone, so a console
+        // reset carried the previous session's MP state -- `is_mp`,
+        // `next_sync`, the timestamps and the half-finished slot/buffer state
+        // -- straight into the next one, with only the register file zeroed.
+        self.us_timestamp = 0;
+        self.us_counter = 0;
+        self.us_compare = 0;
+        self.tx_slots = [TxSlot::default(); 6];
+        self.tx_buffer.iter_mut().for_each(|b| *b = 0);
+        self.rx_counter = 0;
+        self.rx_buffer.iter_mut().for_each(|b| *b = 0);
+        self.rx_time = 0;
+        self.mp_reply_timer = 0;
+        self.mp_client_replies.iter_mut().for_each(|b| *b = 0);
+        self.cmd_counter = 0;
+        self.us_until_power_on = 0;
+        self.is_mp = false;
+        self.is_mp_client = false;
+        self.next_sync = 0;
+        self.rx_timestamp = 0;
 
         // `W_ID` (000h) is a hardware-identification register a driver
         // reads during Wi-Fi init to confirm a real chip is present before
@@ -688,7 +744,7 @@ impl Wifi {
     ///
     /// Not ported: melonDS's partial power states (`W_PowerDownCtrl` 1 or 2),
     /// which it leaves as a TODO too.
-    pub(super) fn update_power_status(&mut self, power: i32) {
+    pub(super) fn update_power_status(&mut self, power: i32, request: &mut InterruptRequest) {
         let mut power = power;
         let mut mode_reset_forced = false;
         let mut curflags = 0;
@@ -703,32 +759,17 @@ impl Wifi {
         if self.ioport(W_PowerForce) & (1 << 15) != 0 {
             reqflags = if self.ioport(W_PowerForce) & 1 != 0 { 0 } else { 3 };
         } else if self.ioport(W_ModeReset) & 1 == 0 {
-            // melonDS forces the transceiver off here (`Wifi.cpp:481-483`).
+            // The master enable is clear, so the transceiver is forced off
+            // (`Wifi.cpp:481-483`).
             //
-            // **Deliberate deviation:** this port leaves the power state
-            // unchanged instead.
-            //
-            // The master enable is clear for a stretch of every driver
-            // re-initialisation, and forcing off during it deadlocks this
-            // port: the branch outranks every power-*on* request, so once
-            // the radio is down with `W_ModeReset` clear, neither
-            // `W_PowerState` bit 1, nor `W_PowerDownCtrl` bit 1, nor IRQ 15
-            // can bring it back -- the driver is left polling
-            // `W_PowerState`/`W_RFStatus` tens of millions of times while
-            // the link dies.
-            //
-            // This used to claim melonDS escapes by modelling the partial
-            // power states and `W_RFStatus` 2/4/7. It does not -- both are
-            // `TODO`s there too (`Wifi.cpp:509`, `455`), and the `rfpins`
-            // entries for 2/4/7 are zero. So there is nothing more faithful
-            // available to port; this deviation and the rising-edge
-            // `update_power_status(1)` in [`super::regs`]'s `W_ModeReset` arm
-            // are a matched pair, and removing either alone strands the radio.
-            //
-            // Leaving the state alone keeps every other power path
-            // faithful, and is the narrowest change that removes the
-            // deadlock.
-            reqflags = curflags;
+            // This port used to leave the power state unchanged here, paired
+            // with a `update_power_status(1)` on the `W_ModeReset` rising edge
+            // in [`super::regs`], to escape a power-down it could not come
+            // back from. Both halves are now removed: the behaviour is
+            // melonDS's, and a radio that stays down is visible as such in the
+            // diagnostic's `powered_down` verdict rather than being papered
+            // over.
+            reqflags = 0;
             mode_reset_forced = true;
         } else {
             if power == 0 {
@@ -763,7 +804,7 @@ impl Wifi {
         // happened, never which branch chose it. See
         // [`assoc_trace_enabled`] and `docs/design/review_mp_local2.md` §7.1h.
         if assoc_trace_enabled() {
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}] power {}: request={power} curflags={curflags} \
                  reqflags={reqflags} (W_ModeReset=0x{:04X} master_enable_held={mode_reset_forced} \
                  W_ModeWEP=0x{:04X} W_PowerTX=0x{:04X} W_PowerDownCtrl=0x{:04X} \
@@ -807,7 +848,12 @@ impl Wifi {
                 // The radio needs ~2ms to come up; `Wifi::tick` counts this
                 // down and then clears `W_PowerState`.
                 self.us_until_power_on = -2048;
-                self.pending_irq11 = true;
+                // Raised here, synchronously, as melonDS does
+                // (`SetIRQ(11)`, `Wifi.cpp:1748`). This port used to queue it
+                // for the next 8µs tick, so the interrupt edge did not appear
+                // during the register write that caused the power-up -- the
+                // driver saw the two in the opposite order from melonDS.
+                self.set_irq(11, request);
             }
         } else {
             let mut state = self.ioport(W_PowerState);
@@ -864,7 +910,7 @@ impl Wifi {
         // is waiting for, and `W_IF` is set either way.
         if self.irq_trace_remaining > 0 {
             self.irq_trace_remaining -= 1;
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}]   IRQ {irq} raised (enabled={}, us_timestamp={})",
                 self.ioport(W_MACAddr2),
                 self.ioport(W_IE) & (1 << irq) != 0,
@@ -877,13 +923,20 @@ impl Wifi {
             // the *period* between these is a property worth being able to
             // read straight off a log. They fire a handful of times a second,
             // so this costs nothing.
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}] IRQ {irq} (beacon cycle, enabled={}, interval={},                  us_timestamp={})",
                 self.ioport(W_MACAddr2),
                 self.ioport(W_IE) & (1 << irq) != 0,
                 self.ioport(W_BeaconInterval),
                 self.us_timestamp,
             );
+        }
+
+        if irq == 0 {
+            self.diag.irq0_raised += 1;
+            if self.ioport(W_IE) & 1 == 0 {
+                self.diag.irq0_masked += 1;
+            }
         }
 
         self.set_ioport(W_IF, self.ioport(W_IF) | (1 << irq));
@@ -917,19 +970,19 @@ impl Wifi {
         }
         self.power_on = on;
         if on {
-            // Start the wireless clock on the console's own timeline rather
-            // than wherever the last power-on left it.
+            // `USTimestamp = NumFrames * 16716` in melonDS (`Wifi.cpp:371`),
+            // i.e. simply how long this console has been running.
             //
-            // MP frames carry this clock, and a receiver holds a frame back
-            // until its own clock reaches the stamp on it. With a per-power-on
-            // epoch the two consoles of a pair disagree by however differently
-            // they reached their comm screens — one console's frames land
-            // minutes into the other's future or past, and discovery starves.
-            // Uptime is a timeline both consoles share (and `clock_epoch_us`
-            // carries the offset for one that joined late), so their clocks
-            // agree to within the moment wireless came up. Ported from
-            // melonDS's `USTimestamp = NumFrames * 16716`.
-            self.us_timestamp = self.clock_epoch_us + Self::uptime_us(scheduler);
+            // A `clock_epoch_us` offset used to be added here, so a console
+            // joining an existing session could be told where its peer's clock
+            // had reached. melonDS has no such mechanism and does not need
+            // one: a client adopts the host's clock wholesale the moment it
+            // accepts an association response (`Wifi::check_rx`), and until
+            // then nothing on the receive path is gated on timestamps at all.
+            // Two consoles booted minutes apart therefore associate fine in
+            // melonDS, and the offset was a deviation solving a problem that
+            // does not exist.
+            self.us_timestamp = Self::uptime_us(scheduler);
             self.timer_error = 0;
             self.schedule_timer(scheduler);
             if let Some(t) = self.transport.as_mut() {
@@ -1049,7 +1102,7 @@ impl Wifi {
 
         let top: Vec<String> =
             ranked.iter().take(8).map(|&(n, reg)| format!("{reg:03X}:{n}")).collect();
-        eprintln!(
+        assoc_trace!(
             "[assoc-trace][{:04X}] reads during {label}: {}",
             self.ioport(regs::W_MACAddr2),
             if top.is_empty() { "(none)".to_owned() } else { top.join("  ") },
@@ -1092,9 +1145,14 @@ impl Wifi {
     pub(crate) fn tick(&mut self, scheduler: &mut Scheduler, request: &mut InterruptRequest) {
         self.us_timestamp += Self::TIMER_INTERVAL_US;
 
-        if self.pending_irq11 {
-            self.pending_irq11 = false;
-            self.raise_irq(11, request);
+        // Radio-on time, split by whether a channel was resolved for it. See
+        // [`diag::MpDiag::channel_us`]. Accumulated unconditionally rather
+        // than under `diag_enabled()`, because the Thread Mode panel reads
+        // these live and a diagnostic that only works with an environment
+        // variable set is one nobody has when they need it.
+        self.diag.radio_us += Self::TIMER_INTERVAL_US;
+        if self.cur_channel != 0 {
+            self.diag.channel_us += Self::TIMER_INTERVAL_US;
         }
 
         // Keep the diagnostic summary's live fields current and let it decide
@@ -1162,7 +1220,7 @@ impl Wifi {
                 self.us_until_power_on = 0;
                 self.set_ioport(W_PowerState, 0);
                 self.set_status(1);
-                self.update_power_status(0);
+                self.update_power_status(0, request);
             }
         }
 
@@ -1178,6 +1236,14 @@ impl Wifi {
 
         if self.com_status == 0 {
             let busy = self.ioport(W_TXBusy);
+            // **Deliberate deviation:** melonDS refuses to start a slot while
+            // `W_PowerState` bit 9 reports the transceiver powered down
+            // (`Wifi.cpp:1841-1845`). This port does not, for the same reason
+            // [`Wifi::check_rx`] does not gate reception on it: lunaris's
+            // power-down state machine has no reliable way back up, so the
+            // gate is not a pause but an end. Measured against a real game,
+            // adding it stopped the host's beacons outright -- the guest then
+            // found no room at all, where before it had at least associated.
             if busy != 0 {
                 self.com_status = 0x2;
                 // Latch the slot *once*, on the idle -> transmitting
@@ -1186,10 +1252,18 @@ impl Wifi {
                 // Ported from `USTimer` (`Wifi.cpp:1833-1849`); see
                 // `docs/design/local-mp-melonds-parity-2.md` F3.
                 self.tx_cur_slot = tx::pick_busy_slot(busy).map_or(-1, |s| s as i32);
-            } else if !self.is_mp_client || self.us_timestamp > self.next_sync {
-                if self.rx_counter & 0x1FF == 0 {
+            } else {
+                if (!self.is_mp_client || self.us_timestamp > self.next_sync)
+                    && self.rx_counter & 0x1FF == 0
+                {
                     self.check_rx(RxKind::Regular, request);
                 }
+                // Advanced whether or not the poll above was allowed to run,
+                // as melonDS does (`Wifi.cpp:1855-1864`). Gating the counter
+                // on the MP sync test as well -- what this port used to do --
+                // freezes it for a client that is waiting on its host, so the
+                // `& 0x1FF` phase stops moving and the regular-frame poll
+                // resumes on a stale schedule once the client is released.
                 self.rx_counter = self.rx_counter.wrapping_add(Self::TIMER_INTERVAL_US as u32);
             }
         }
@@ -1268,7 +1342,7 @@ impl Wifi {
     fn set_irq13(&mut self, request: &mut InterruptRequest) {
         self.raise_irq(13, request);
         if self.ioport(W_ModeWEP) & 0x7 == 0 && self.ioport(W_PowerTX) & (1 << 1) == 0 {
-            self.update_power_status(-1);
+            self.update_power_status(-1, request);
         }
     }
 
@@ -1287,7 +1361,7 @@ impl Wifi {
     fn set_irq15(&mut self, request: &mut InterruptRequest) {
         self.raise_irq(15, request);
         if self.ioport(W_PowerTX) & (1 << 0) != 0 {
-            self.update_power_status(1);
+            self.update_power_status(1, request);
         }
     }
 
@@ -1506,6 +1580,64 @@ mod tests {
         assert_eq!(wifi.ram[0x0100], 0, "nothing may be written at the unshifted offset");
         // The cursor advanced past header + body, still in halfword units.
         assert!(wifi.ioport(W_RXBufWriteCursor) >= 0x0100 + ((12 + 32) / 2));
+    }
+
+    /// A transmission starting while a frame is still being received must not
+    /// decide where that frame ends.
+    ///
+    /// `W_RXTXAddr` is one shared pointer in hardware, and every transmission
+    /// writes it at its preamble. This port copies a received body into Wi-Fi
+    /// RAM up front and publishes the write cursor only once the simulated
+    /// transfer time elapses, so re-reading the register at that point hands
+    /// the driver whatever the last transmission left behind -- an RX header
+    /// pointing into the middle of nothing, for a frame that was received
+    /// perfectly. See [`rx::PendingRxHeader::end_addr`].
+    #[test]
+    fn a_transmission_mid_reception_does_not_move_the_rx_write_cursor() {
+        let mut wifi = Wifi::new();
+        let mut request = InterruptRequest::empty();
+        wifi.set_ioport(W_RXCnt, 0x8000);
+        wifi.set_ioport(W_RXBufBegin, 0x4000);
+        wifi.set_ioport(W_RXBufEnd, 0x4800);
+        wifi.set_ioport(W_RXBufReadCursor, 0x07FF);
+        wifi.set_ioport(W_RXBufWriteCursor, 0x0100);
+
+        stage_plain_data_frame(&mut wifi);
+        wifi.start_rx(&mut request, true, 0x14, 32);
+        let undisturbed = {
+            let mut probe = Wifi::new();
+            probe.set_ioport(W_RXCnt, 0x8000);
+            probe.set_ioport(W_RXBufBegin, 0x4000);
+            probe.set_ioport(W_RXBufEnd, 0x4800);
+            probe.set_ioport(W_RXBufReadCursor, 0x07FF);
+            probe.set_ioport(W_RXBufWriteCursor, 0x0100);
+            stage_plain_data_frame(&mut probe);
+            probe.start_rx(&mut request, true, 0x14, 32);
+            for _ in 0..64 {
+                if probe.com_status & 0x1 == 0 {
+                    break;
+                }
+                probe.step_rx(&mut request);
+            }
+            probe.ioport(W_RXBufWriteCursor)
+        };
+
+        // What a TX preamble does: point the shared register at the frame it
+        // is about to send.
+        wifi.set_ioport(W_RXTXAddr, 0x0600);
+
+        for _ in 0..64 {
+            if wifi.com_status & 0x1 == 0 {
+                break;
+            }
+            wifi.step_rx(&mut request);
+        }
+
+        assert_eq!(
+            wifi.ioport(W_RXBufWriteCursor),
+            undisturbed,
+            "the write cursor must come from the reception, not from W_RXTXAddr"
+        );
     }
 
     /// The MP reply slot's internal `W_TXBusy` bit 7 must never be visible to
@@ -1839,14 +1971,16 @@ mod tests {
     }
 
     /// Both edges of `W_ModeReset` bit 0 publish a status word at port
-    /// `27Ch` (`Wifi.cpp:2131-2143`).
+    /// `27Ch`, and clearing the bit forces the transceiver off
+    /// (`Wifi.cpp:481-483`, `2131-2143`).
     ///
-    /// The power state is deliberately left unchanged by the master-enable
-    /// branch itself -- see the deviation note on
-    /// [`Wifi::update_power_status`] -- so a driver re-initialisation, which
-    /// clears this bit for a stretch, cannot strand the radio.
+    /// The force-off is melonDS's behaviour. This port used to leave the power
+    /// state alone here so that a driver re-initialisation -- which clears the
+    /// bit for a stretch -- could not strand the radio; that deviation, and
+    /// the `update_power_status(1)` on the rising edge that compensated for
+    /// it, have both been removed.
     #[test]
-    fn mode_reset_bit0_publishes_port_27c_without_stranding_power() {
+    fn mode_reset_bit0_publishes_port_27c_and_gates_power() {
         let mut wifi = Wifi::new();
         let mut sc = Scheduler::new();
         let mut rq = InterruptRequest::empty();
@@ -1862,14 +1996,20 @@ mod tests {
 
         wifi.write16(W_ModeReset as u32, 0x0000, &mut sc, &mut rq);
         assert_eq!(wifi.ioport(0x27C), 0x000A, "falling edge publishes 000Ah");
-        assert_eq!(wifi.ioport(W_TRXPower), 1, "clearing it must not force the radio off");
+        assert_eq!(wifi.ioport(W_TRXPower), 0, "clearing the master enable forces the radio off");
 
-        // And with the master enable clear, an explicit power request still
-        // works -- the branch must not outrank it.
+        // `W_PowerForce` still outranks the master enable in both directions
+        // (`Wifi.cpp:476-479`).
+        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(W_TRXPower), 1, "W_PowerForce overrides the master enable");
         wifi.write16(W_PowerForce as u32, 0x8001, &mut sc, &mut rq);
         assert_eq!(wifi.ioport(W_TRXPower), 0, "explicit force-off still applies");
-        wifi.write16(W_PowerForce as u32, 0x8000, &mut sc, &mut rq);
-        assert_eq!(wifi.ioport(W_TRXPower), 1, "and the radio can still be brought back");
+
+        // Re-asserting the master enable re-evaluates rather than forcing on,
+        // which is what melonDS's `UpdatePowerStatus(0)` does.
+        wifi.write16(W_PowerForce as u32, 0x0000, &mut sc, &mut rq);
+        wifi.write16(W_ModeReset as u32, 0x0001, &mut sc, &mut rq);
+        assert_eq!(wifi.ioport(0x27C), 0x0005, "rising edge publishes 0005h again");
     }
 
     /// A client whose transceiver is down between beacons must be brought

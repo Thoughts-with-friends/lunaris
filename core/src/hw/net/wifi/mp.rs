@@ -66,6 +66,23 @@ pub struct LinkHints {
 
 impl Default for LinkHints {
     fn default() -> Self {
+        // Deliberately **below** melonDS's 25ms `MPInterface::RecvTimeout`
+        // default, and this is the one figure here that must not be raised to
+        // match it.
+        //
+        // A client past its sync point re-enters `recv_host_packet` on every
+        // 8µs tick, so this timeout is what one tick of *emulated* time costs
+        // in *wall* time whenever the host is not answering. melonDS can
+        // afford 25ms because its host is answering. When it is not -- a host
+        // that never opens a command round, which is the failure this port is
+        // still chasing -- the client pays 25ms of wall time per 8µs of
+        // emulated time and grinds to a crawl, which the game reads as the
+        // link dying. Raising this from 8ms to 25ms was measured doing exactly
+        // that: the guest's radio clock advanced at roughly a third of the
+        // host's.
+        //
+        // What the lower value costs is a client giving up on a frame still in
+        // flight and retrying on the next tick, which is cheap.
         LinkHints { runahead_us: 1000, recv_timeout: Duration::from_millis(8) }
     }
 }

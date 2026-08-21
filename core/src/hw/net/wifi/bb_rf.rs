@@ -31,6 +31,10 @@ impl Wifi {
                 break;
             }
         }
+        if self.cur_channel != previous {
+            self.diag.channel_changes += 1;
+            self.diag.channel_ever = self.diag.channel_ever.max(self.cur_channel);
+        }
         if super::debug_enabled() && self.cur_channel != previous {
             eprintln!(
                 "[wifi] channel resolved: {previous} -> {} (rf_regs[idx0]=0x{val1:X} rf_regs[idx1]=0x{val2:X})",

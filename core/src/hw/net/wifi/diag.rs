@@ -68,6 +68,14 @@ pub(super) fn diag_enabled() -> bool {
 pub struct RxDrops {
     /// `W_RXCnt` bit 15 clear: the driver has not armed reception.
     pub rx_disabled: u32,
+    /// `W_PowerState` bit 9 set: the transceiver is powered down, so nothing
+    /// can be received (`Wifi.cpp:1566-1567`).
+    ///
+    /// Kept apart from [`RxDrops::rx_disabled`] because the two say opposite
+    /// things about the driver: one is "reception is not armed yet", the other
+    /// is "the radio is asleep", and folding them together turned a power-down
+    /// into what looked like an un-armed receiver.
+    pub rx_powered_down: u32,
     /// `W_RXBufBegin == W_RXBufEnd`: the RX ring was never configured.
     pub ring_unconfigured: u32,
     /// Frame shorter than a 12-byte hardware header plus an 802.11 header.
@@ -101,6 +109,36 @@ pub struct MpDiag {
     pub rxbuf_cfg: u32,
     /// Resolved RF channel, or `0` if channel detection never succeeded.
     pub channel: i32,
+    /// The highest channel this session ever resolved, `0` if none ever did.
+    ///
+    /// `channel == 0` alone cannot tell "the driver has not picked a channel
+    /// yet" from "it picked one and then tore the radio back down", and those
+    /// two point at opposite halves of the driver's state machine. A nonzero
+    /// value here with `channel == 0` now is the second case.
+    pub channel_ever: i32,
+    /// How many times [`super::Wifi::change_channel`] changed the resolved
+    /// channel, in either direction. A number that keeps climbing means the
+    /// radio is being re-programmed in a loop rather than settling.
+    pub channel_changes: u32,
+    /// Microseconds of radio-on time spent holding a resolved channel, out of
+    /// [`MpDiag::radio_us`].
+    ///
+    /// A driver re-uploading its RF block briefly clears the channel on real
+    /// hardware too, so catching `channel == 0` in a snapshot proves nothing.
+    /// The *fraction* does: a host that holds a channel 95% of the time is
+    /// transmitting, one that holds it 5% of the time is stuck in an
+    /// initialisation loop and its beacons are going nowhere.
+    pub channel_us: u64,
+    /// Microseconds the radio has been powered on, the denominator for
+    /// [`MpDiag::channel_us`].
+    pub radio_us: u64,
+    /// Frames dropped on the way to the transport because no RF channel was
+    /// resolved at the moment they were due to go out.
+    ///
+    /// The phase machine still completes and still raises IRQ 1, so the
+    /// driver believes every one of these was transmitted. Nothing else in
+    /// the counters distinguishes "sent" from "sent nowhere".
+    pub tx_dropped_no_channel: u32,
     /// `RFChipType` from the firmware Wi-Fi config block (2 or 3).
     pub rf_version: u8,
     /// The two RF register ids the channel table is indexed by.
@@ -242,6 +280,33 @@ pub struct MpDiag {
     /// dropped because `CmdCounter` was zero (`Wifi.cpp:2425-2427`). That
     /// rule is the one way an armed CMD slot can vanish without a trace, and
     /// with CMD rounds stuck at zero it is the first thing to rule out.
+    /// RX-complete interrupts (IRQ 0) raised, and how many of those the
+    /// driver had masked off in `W_IE` at the time.
+    ///
+    /// A frame this port delivers perfectly is still invisible to a game whose
+    /// driver is not listening for it, and every other counter here reads
+    /// identically in both cases.
+    pub irq0_raised: u32,
+    /// Of [`MpDiag::irq0_raised`], how many were raised with `W_IE` bit 0
+    /// clear.
+    pub irq0_masked: u32,
+    /// Halfwords the driver read directly out of the RX ring's Wi-Fi RAM
+    /// window (`4804000h`-`4805FFFh`), which is how a DS driver normally
+    /// consumes a received frame.
+    ///
+    /// [`MpDiag::rx_ring_reads`] counts only the `W_RXBufDataRead` port, so on
+    /// its own it reads zero for a perfectly healthy driver. The two together
+    /// are what answer "did the game look at the frame at all".
+    pub rx_ram_reads: u32,
+    /// Halfwords the driver pulled out of the RX ring through
+    /// `W_RXBufDataRead`.
+    ///
+    /// This is the other half of [`MpDiag::irq0_raised`]: interrupts raised
+    /// with nothing read back means the driver never consumed the frames, so
+    /// the fault is in how reception is *signalled*, not in the frames
+    /// themselves. A healthy session reads back roughly one halfword per
+    /// halfword delivered.
+    pub rx_ring_reads: u32,
     pub tx_slot_cmd_writes: u32,
     pub tx_slot_cmd_bit15_dropped: u32,
     /// Writes to `W_CmdCount`, which is the only thing that makes
@@ -380,7 +445,17 @@ impl MpDiag {
             return "VERDICT: no MP transport installed -- this instance is not in a room."
                 .to_string();
         }
-        if self.channel == 0 {
+        // `channel == 0` *right now* is not evidence of anything on its own:
+        // a driver re-uploading its RF block clears the channel for a moment
+        // on real hardware too, and a client sweeping for a room clears it
+        // between every hop. Only a console that spends a substantial share of
+        // its radio-on time off-channel is actually failing here.
+        //
+        // Reporting on the instantaneous value sent two rounds of
+        // investigation after the radio while the real fault was downstream,
+        // which is worse than saying nothing.
+        let mostly_on_channel = self.channel_us * 10 > self.radio_us * 9;
+        if self.channel == 0 && !mostly_on_channel {
             if self.rf_transfers == 0 {
                 return format!(
                     "VERDICT: the driver never programmed the RF chip (0 RF transfers, {} BB \
@@ -484,6 +559,89 @@ impl MpDiag {
             return "VERDICT: frames are arriving but none classified as a beacon or management \
                     frame for our BSSID, so association never starts."
                 .to_string();
+        }
+        // Traffic flows both ways but neither side ever becomes an MP peer.
+        // This is the stage the counters used to fall straight through --
+        // ending on "the handshake looks healthy" for a pair that never
+        // associated, because every MP counter after this point is zero as a
+        // *consequence* of the failure rather than as evidence against it.
+        //
+        // The `last_assoc_*` fields are recorded by
+        // [`super::Wifi::check_rx`] before its own guards run, precisely so an
+        // association response that arrived and was rejected can be told from
+        // one that never came.
+        if !self.is_mp && self.rx_accepted >= 4 && self.cmd_tx == 0 && self.rxflags_cmd == 0 {
+            if self.last_assoc_timestamp == 0 && self.last_assoc_aid == 0 {
+                return format!(
+                    "VERDICT: frames are flowing ({} accepted, {} beacons, {} management) but no \
+                     association response (frame type 0010) has ever arrived, so this instance \
+                     never becomes an MP peer. If this is the client, the host is not answering \
+                     its association request; if this is the host, it never sent one.",
+                    self.rx_accepted, self.rxflags_beacon, self.rxflags_mgmt
+                );
+            }
+            if self.last_assoc_aid == 0 {
+                return "VERDICT: an association response arrived carrying AID 0 -- the host \
+                        refused the association rather than granting a slot."
+                    .to_string();
+            }
+            if !self.last_assoc_mac_good {
+                return format!(
+                    "VERDICT: an association response arrived granting AID {}, but its \
+                     destination address is not this instance's MAC and not a broadcast, so it \
+                     was ignored. The two instances' MACs are derived from their instance index; \
+                     check they actually differ.",
+                    self.last_assoc_aid
+                );
+            }
+            if self.last_assoc_timestamp == 0 {
+                return format!(
+                    "VERDICT: an association response arrived granting AID {}, addressed \
+                     correctly, but with a zero wireless timestamp. The promote path requires a \
+                     non-zero one (it is the host clock the client adopts), so the association \
+                     is dropped on the floor. The fault is in the transport's timestamp, not in \
+                     the handshake.",
+                    self.last_assoc_aid
+                );
+            }
+        }
+        // Associated at some point, but not in a session now and no MP round
+        // has ever run. This is the state a pair lands in when the link comes
+        // up (the game shows signal bars) and then decays -- and it used to
+        // fall through to "the handshake looks healthy", because every counter
+        // that would contradict that is zero *because* the round never
+        // started.
+        if !self.is_mp && self.last_assoc_aid != 0 && self.cmd_tx == 0 && self.rxflags_cmd == 0 {
+            return format!(
+                "VERDICT: an association response was accepted (AID 0x{:04X}) but no MP command \
+                 round has ever run and this instance is not in a session now -- it associated \
+                 and the link was then torn down. The host arms a round by writing W_TXSlotCmd \
+                 with bit 15: {} such writes, {} of them had bit 15 dropped because CmdCounter \
+                 was zero ({} W_CmdCount writes). W_TXSlotCmd=0x{:04X} W_TXReqRead=0x{:04X}.",
+                self.last_assoc_aid,
+                self.tx_slot_cmd_writes,
+                self.tx_slot_cmd_bit15_dropped,
+                self.cmd_count_writes,
+                self.tx_slot_cmd_reg,
+                self.tx_req_read_reg,
+            );
+        }
+        // The host side of the same failure: it beacons, it answers, but it
+        // never opens a round.
+        if !self.is_mp && self.beacon_tx > 0 && self.cmd_tx == 0 && self.rx_accepted > 0 {
+            return format!(
+                "VERDICT: this instance beaconed ({} beacons) and heard {} frames back, but \
+                 never armed an MP command round. W_TXSlotCmd writes: {} ({} had bit 15 dropped \
+                 for CmdCounter == 0), W_CmdCount writes: {}. W_TXSlotCmd=0x{:04X} \
+                 W_TXReqRead=0x{:04X}.",
+                self.beacon_tx,
+                self.rx_accepted,
+                self.tx_slot_cmd_writes,
+                self.tx_slot_cmd_bit15_dropped,
+                self.cmd_count_writes,
+                self.tx_slot_cmd_reg,
+                self.tx_req_read_reg,
+            );
         }
         if self.cmd_tx > 0 && self.replies_answered == 0 {
             return "VERDICT: the host is sending CMD frames but no client reply is being \

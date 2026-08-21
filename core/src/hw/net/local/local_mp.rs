@@ -73,6 +73,20 @@ pub struct MpStatusData {
     pub mp_host_inst: u16,
     /// Bitmask of instances that replied to that CMD frame in time.
     pub mp_reply_bitmask: u16,
+    /// Replies collected into a host's per-AID slots since the hub was
+    /// created.
+    ///
+    /// Not part of melonDS's `MPStatusData`. Local play fails in two ways that
+    /// look identical from the game's side -- the client never answers at all,
+    /// or it answers the round *before* the one the host is asking about --
+    /// and only the ratio of this to [`MpStatusData::stale_replies`]
+    /// distinguishes them.
+    pub collected_replies: u64,
+    /// Replies discarded for carrying a timestamp older than the round being
+    /// collected. A count that climbs alongside a host reporting client
+    /// failures means the two consoles' wireless clocks have drifted apart,
+    /// not that the link is silent.
+    pub stale_replies: u64,
 }
 
 /// Selects one of the two FIFOs. melonDS passes `int fifo` with `0` =
@@ -504,14 +518,23 @@ impl LocalMpHub {
                 return 0;
             };
 
-            // `timestamp - 32` is deliberately wrapping: melonDS relies on
-            // the unsigned underflow at the very start of a session, where
-            // it makes the staleness test vacuously true.
-            let stale = header.timestamp < timestamp.wrapping_sub(32);
+            // Saturating, not wrapping. melonDS writes `pktheader.Timestamp <
+            // (timestamp - 32)` on `u64`s, which underflows to `~0` for any
+            // round stamped before microsecond 32 and rejects *every* reply
+            // there. That is a defect rather than a behaviour to reproduce,
+            // and it is reachable here: a console whose wireless clock is
+            // reset by a power cycle stamps its first rounds from zero. The
+            // other two [`MpTransport`] implementations in this workspace
+            // already saturate, and the trait's contract requires it.
+            let stale = header.timestamp < timestamp.saturating_sub(32);
             if header.sender_id == index as u32 || stale {
+                if stale {
+                    queues.status.stale_replies += 1;
+                }
                 queues.skip(index, Fifo::Reply, header.length);
                 continue;
             }
+            queues.status.collected_replies += 1;
 
             let len = header.length as usize;
             if len != 0 {
@@ -755,12 +778,12 @@ mod tests {
     }
 
     #[test]
-    fn early_session_replies_are_all_treated_as_stale() {
-        // With `timestamp < 32`, `timestamp - 32` underflows to a huge
-        // value and melonDS's staleness test becomes vacuously true, so
-        // every reply is dropped. Reproduced deliberately: `wrapping_sub`
-        // keeps that behaviour while stopping the debug-build panic Rust
-        // would otherwise raise.
+    fn early_session_replies_still_count() {
+        // melonDS computes `timestamp - 32` on `u64`s, so a round stamped
+        // before microsecond 32 underflows to `~0` and rejects every reply.
+        // A console whose wireless clock restarted on a power cycle stamps
+        // exactly such rounds, so this port saturates instead: a reply from
+        // the same instant as the round is answered, not dropped.
         let (mut host, mut client) = connected_pair();
         host.send_cmd(0, &[0], 4);
         let mut buf = [0u8; 64];
@@ -769,7 +792,8 @@ mod tests {
 
         let mut replies = vec![0u8; 15 * REPLY_SLOT_SIZE];
         host.set_recv_timeout(Duration::from_millis(5));
-        assert_eq!(host.recv_replies(0, &mut replies, 4, 1 << 1), 0);
+        assert_eq!(host.recv_replies(0, &mut replies, 4, 1 << 1), 1 << 1);
+        assert_eq!(replies[0], 7);
     }
 
     #[test]

@@ -15,7 +15,7 @@
 // authoritative address map future work (WEP, beacons, WFC) will draw on.
 #![allow(non_upper_case_globals, dead_code)]
 
-use super::Wifi;
+use super::{Wifi, assoc_trace};
 use crate::hw::{Scheduler, interrupt_controller::InterruptRequest};
 
 pub mod names {
@@ -206,9 +206,25 @@ impl Wifi {
 
         if (0x4000..0x6000).contains(&addr) {
             let off = (addr & 0x1FFE) as usize;
+            // Wi-Fi RAM is mapped straight into the ARM7's address space, and
+            // that -- not `W_RXBufDataRead` -- is how a driver normally reads a
+            // received frame back. Counting only the register port made "the
+            // game never touched the frame" indistinguishable from "the game
+            // read it the ordinary way", so count reads that land inside the
+            // RX ring here as well. See [`diag::MpDiag::rx_ram_reads`].
+            let begin = (self.ioport(W_RXBufBegin) & 0x1FFE) as usize;
+            let end = (self.ioport(W_RXBufEnd) & 0x1FFE) as usize;
+            if begin != end && (begin..end).contains(&off) {
+                self.diag.rx_ram_reads = self.diag.rx_ram_reads.saturating_add(1);
+            }
             return self.ram[off] as u16 | (self.ram[off + 1] as u16) << 8;
         }
-        if (0x2000..0x4000).contains(&addr) || addr >= 0x6000 {
+        // melonDS returns `0xFFFF` for `2000h`-`3FFFh` only
+        // (`Wifi.cpp:2017-2018`). Everything at `6000h` and above falls
+        // through to the register file mirrored by `addr & 0xFFF`, exactly as
+        // `1000h`-`1FFFh` does -- this port used to answer `0xFFFF` there
+        // instead.
+        if (0x2000..0x4000).contains(&addr) {
             return 0xFFFF;
         }
 
@@ -282,6 +298,7 @@ impl Wifi {
 
         let mut rdaddr = self.ioport(W_RXBufReadAddr) as u32 & 0x1FFE;
         let ret = self.ram[rdaddr as usize] as u16 | (self.ram[rdaddr as usize + 1] as u16) << 8;
+        self.diag.rx_ring_reads += 1;
 
         // Armed by `Wifi::step_rx` when an association response is committed:
         // this is the driver reading it back, and the addresses say whether it
@@ -289,7 +306,7 @@ impl Wifi {
         // [`super::assoc_trace_enabled`].
         if self.assoc_trace_reads > 0 {
             self.assoc_trace_reads -= 1;
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}]   driver read @0x{rdaddr:04X} -> 0x{ret:04X} \
                  (count={}, gap@0x{:04X} size={})",
                 self.ioport(W_MACAddr2),
@@ -321,6 +338,12 @@ impl Wifi {
             }
         }
         self.set_ioport(W_RXBufReadAddr, (rdaddr & 0x1FFE) as u16);
+        // melonDS writes the value back into the register itself before
+        // returning it (`IOPORT(W_RXBufDataRead) = ret`, `Wifi.cpp:2077`), so
+        // the passive mirror at `1000h`-`1FFFh` -- which must not re-trigger
+        // the auto-increment -- reads back the halfword last fetched. Without
+        // it that mirror reads zero forever.
+        self.set_ioport(W_RXBufDataRead, ret);
 
         // Only decrement a non-zero count: melonDS never underflows this to
         // `0xFFFF`, and IRQ 9 fires exactly on the zero transition.
@@ -361,7 +384,10 @@ impl Wifi {
             self.ram[off + 1] = (value >> 8) as u8;
             return;
         }
-        if (0x2000..0x4000).contains(&addr) || addr >= 0x6000 {
+        // As in [`Wifi::read16`]: only `2000h`-`3FFFh` is discarded
+        // (`Wifi.cpp:2121-2122`); `6000h` and above reaches the register file
+        // through the `addr & 0xFFF` mirror.
+        if (0x2000..0x4000).contains(&addr) {
             return;
         }
 
@@ -378,7 +404,7 @@ impl Wifi {
         // a teardown names how far it got. See
         // `docs/design/review_mp_local2.md` §7.1g.
         if super::assoc_trace_enabled() && MP_SETUP_REGS.contains(&reg) {
-            eprintln!(
+            assoc_trace!(
                 "[assoc-trace][{:04X}] W[{}] = 0x{value:04X} (us_timestamp={})",
                 self.ioport(W_MACAddr2),
                 mp_setup_reg_name(reg),
@@ -415,7 +441,7 @@ impl Wifi {
                 // accepted, then torn down, is a completely different fault
                 // from association never accepted.
                 if super::assoc_trace_enabled() && value & 0x4000 != 0 {
-                    eprintln!(
+                    assoc_trace!(
                         "[assoc-trace][{:04X}] driver re-initialised (W_ModeReset=0x{value:04X}), \
                          clearing W_AIDLow (was {}) (us_timestamp={})",
                         self.ioport(W_MACAddr2),
@@ -429,15 +455,11 @@ impl Wifi {
                 // (`Wifi.cpp:2131-2143`). `27Ch` is not one of the named `W_*`
                 // registers; melonDS writes it as a bare port and so does this.
                 //
-                // **Deviation:** the rising edge requests power *on* where
-                // melonDS passes `0` (re-evaluate only). This is the second
-                // half of the pair described in
-                // [`Wifi::update_power_status`]: that function declines to
-                // force the radio off while the master enable is clear, and
-                // this one lets re-asserting the enable actively bring it
-                // back. Neither is faithful on its own, and removing either
-                // alone strands the radio off -- the driver then spins on
-                // `W_PowerState`/`W_RFStatus` and the link dies.
+                // Both edges pass `0` (re-evaluate only), as melonDS does.
+                // This port used to request power *on* here, as one half of a
+                // compensating pair with [`Wifi::update_power_status`]'s
+                // master-enable branch; both halves are now gone and the
+                // behaviour is melonDS's.
                 //
                 // Note the two `TODO`s in melonDS this does *not* fill in,
                 // because melonDS does not either: partial power states
@@ -446,10 +468,10 @@ impl Wifi {
                 // zero). There is no more complete reference to port from.
                 if old & 0x0001 == 0 && value & 0x0001 != 0 {
                     self.set_ioport(0x27C, 0x0005);
-                    self.update_power_status(1);
+                    self.update_power_status(0, request);
                 } else if old & 0x0001 != 0 && value & 0x0001 == 0 {
                     self.set_ioport(0x27C, 0x000A);
-                    self.update_power_status(0);
+                    self.update_power_status(0, request);
                 }
 
                 if value & 0x2000 != 0 {
@@ -510,7 +532,7 @@ impl Wifi {
             // Only the write itself does. See [`super::assoc_trace_enabled`].
             W_AIDLow => {
                 if super::assoc_trace_enabled() {
-                    eprintln!(
+                    assoc_trace!(
                         "[assoc-trace][{:04X}] driver wrote W_AIDLow = {} (us_timestamp={})",
                         self.ioport(W_MACAddr2),
                         value & 0x000F,
@@ -543,7 +565,7 @@ impl Wifi {
             // `docs/design/local-mp-melonds-parity.md` Gap 1.2.
             W_TXReqSet => {
                 self.set_ioport(W_TXReqRead, self.ioport(W_TXReqRead) | value);
-                self.fire_tx();
+                self.fire_tx(request);
             }
             W_TXReqReset => {
                 self.set_ioport(W_TXReqRead, self.ioport(W_TXReqRead) & !value);
@@ -581,7 +603,7 @@ impl Wifi {
                 // succeeds but this never fires, the link is dying between the
                 // two, not at either end.
                 if super::assoc_trace_enabled() {
-                    eprintln!(
+                    assoc_trace!(
                         "[assoc-trace][{:04X}] driver wrote W_TXSlotCmd = 0x{value:04X} \
                          (cmd_counter={}, us_timestamp={})",
                         self.ioport(W_MACAddr2),
@@ -598,11 +620,11 @@ impl Wifi {
                     value
                 };
                 self.set_ioport(W_TXSlotCmd, value);
-                self.fire_tx();
+                self.fire_tx(request);
             }
             W_TXSlotLoc1 | W_TXSlotLoc2 | W_TXSlotLoc3 => {
                 self.set_ioport(reg, value);
-                self.fire_tx();
+                self.fire_tx(request);
             }
             // `Wifi.cpp:2421-2423`: this is the only place `is_mp` is set on
             // the host side. Without it the host never believes it is
@@ -622,10 +644,21 @@ impl Wifi {
                     self.set_ioport(W_TXSlotReply2, self.ioport(W_TXSlotReply1));
                     self.set_ioport(W_TXSlotReply1, 0);
                 }
-                self.set_ioport(W_RXCnt, value & 0xFF0E);
+                // `fire_tx` runs *before* the new value is stored, because
+                // that is the order melonDS's `Write` has: its `case W_RXCnt`
+                // calls `FireTX()` and only then `break`s to the store at the
+                // end of the switch (`Wifi.cpp:2329-2345`).
+                //
+                // The order is observable. `fire_tx`'s first gate is
+                // `W_RXCnt & 0x8000`, so melonDS tests the *previous* value
+                // and this port used to test the one being written -- a driver
+                // arming reception for the first time, with a transmit slot
+                // already staged, therefore started that transmission here in
+                // lunaris and did not in melonDS.
                 if value & 0x8000 != 0 {
-                    self.fire_tx();
+                    self.fire_tx(request);
                 }
+                self.set_ioport(W_RXCnt, value & 0xFF0E);
             }
             W_RXBufDataRead => {
                 let count = self.ioport(W_RXBufCount);
@@ -671,7 +704,7 @@ impl Wifi {
             // starting at all.
             W_CmdCount => {
                 if super::assoc_trace_enabled() {
-                    eprintln!(
+                    assoc_trace!(
                         "[assoc-trace][{:04X}] driver wrote W_CmdCount = {value} \
                          (us_timestamp={})",
                         self.ioport(W_MACAddr2),
@@ -689,7 +722,7 @@ impl Wifi {
             W_PowerForce => {
                 self.set_ioport(W_PowerForce, value & 0x8001);
                 self.update_power_on(scheduler);
-                self.update_power_status(0);
+                self.update_power_status(0, request);
             }
             // `Wifi.cpp:2186-2202`: selecting a power-management mode can
             // arm `W_PowerDownCtrl` and clear the transceiver state.
@@ -706,7 +739,7 @@ impl Wifi {
                     if value & 0x7 != 3 {
                         self.set_ioport(W_PowerState, self.ioport(W_PowerState) & 0x0300);
                     }
-                    self.update_power_status(0);
+                    self.update_power_status(0, request);
                 }
             }
             // `Wifi.cpp:2236-2246`.
@@ -719,7 +752,7 @@ impl Wifi {
                         2 => self.set_ioport(W_PowerDownCtrl, 3),
                         _ => {}
                     }
-                    self.update_power_status(0);
+                    self.update_power_status(0, request);
                 }
             }
             // The driver's main "power the radio up/down" port; only
@@ -738,7 +771,7 @@ impl Wifi {
                     v &= !(1 << 8);
                 }
                 self.set_ioport(W_PowerState, v);
-                self.update_power_status(0);
+                self.update_power_status(0, request);
             }
             // `Wifi.cpp:2271-2286`.
             W_PowerDownCtrl => {
@@ -751,7 +784,7 @@ impl Wifi {
                         _ => {}
                     }
                 }
-                self.update_power_status(0);
+                self.update_power_status(0, request);
             }
             // `W_USCount0..3` back the `us_counter` field directly, mirroring
             // melonDS's `Wifi.cpp:2294-2297`; without this the CPU cannot

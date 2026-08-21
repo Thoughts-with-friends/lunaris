@@ -517,14 +517,22 @@ impl LunarisApp {
         self.frame_accum += dt * Self::NDS_FPS * speed;
 
         // A batch is a burst: eight frames of emulated time pass in the couple
-        // of milliseconds it takes to run them. That is invisible on its own,
-        // but with a second instance linked it is fatal — the other console
-        // runs on its own thread at its own 60 Hz, so during the burst it
-        // produces nothing, and by the time it answers a wireless round the
-        // host has closed it. One frame at a time keeps the pair overlapping,
-        // which is the whole reason the guest has a thread at all. See
-        // `crate::thread_mode`.
-        let cap = if self.thread_mode.is_running() { 1 } else { Self::MAX_BATCH };
+        // of milliseconds it takes to run them. With a second instance linked
+        // that starves the pair — the guest produces nothing during the burst,
+        // and by the time it answers a wireless round the host has closed it.
+        //
+        // Capping at one frame fixed that but tied the host's *emulated* speed
+        // to its repaint rate, and opening the guest's viewport halves that
+        // rate (two windows, one thread, one vsync each). The host then ran at
+        // half speed, so the two consoles' wireless clocks diverged at 2:1 —
+        // the very desynchronisation the cap existed to prevent, arriving by
+        // the other road.
+        //
+        // Two frames covers a halved repaint rate without becoming a burst.
+        // Nothing else bounds the drift between the two consoles: melonDS has
+        // no such mechanism either, because a client adopts the host's
+        // wireless clock when it associates.
+        let cap = if self.thread_mode.is_running() { 2 } else { Self::MAX_BATCH };
         let emulated = (self.frame_accum.max(0.0) as u32).min(cap);
         for frame in 0..emulated {
             self.frame_accum -= 1.0;
