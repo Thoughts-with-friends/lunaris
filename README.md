@@ -52,7 +52,9 @@
 
 A Nintendo DS emulator - Rust-based
 
-## Quick Start
+## Quick Start on Lunaris Backend
+
+You can run the Lunaris backend directly from the source code. This is useful for development and testing purposes.
 
 - Imgui
 
@@ -74,12 +76,17 @@ cargo +stable-x86_64-pc-windows-gnu run --release
 
 You can also select the Egui wrapper from Melonds. While some features are not supported, about 70 % of the features are available.
 
-- Egui (MelonDS Backend)
+- Egui on MelonDS Backend
 
 ```shell
 cargo run --release --features release --package melon_egui
 ```
 
+## How to Design NDS Emulator?
+
+Further details regarding the design of the NDS emulator are summarized in the following document.
+
+[NDS Emulator Development Docs](docs/ref-gbatek/)
 
 ## Todo List
 
