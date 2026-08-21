@@ -7,6 +7,7 @@
 
 use std::{
     path::{Path, PathBuf},
+    sync::mpsc::{Receiver, TryRecvError},
     time::{Duration, Instant},
 };
 
@@ -25,6 +26,41 @@ use crate::{
     video::VideoOptions,
     view::{self, Rotation, ScreenSizing, ViewOptions},
 };
+
+struct LanConnection {
+    host: Box<dyn melonds::Host>,
+    local_addr: String,
+    remote_addr: String,
+}
+
+fn parse_lan_address(text: &str, default_port: u16) -> Result<std::net::SocketAddr, String> {
+    text.parse::<std::net::SocketAddr>()
+        .or_else(|_| {
+            text.parse::<std::net::IpAddr>().map(|ip| std::net::SocketAddr::new(ip, default_port))
+        })
+        .map_err(|error| format!("invalid LAN address {text}: {error}"))
+}
+
+#[cfg(test)]
+mod lan_address_tests {
+    use super::parse_lan_address;
+
+    #[test]
+    fn plain_ip_uses_the_default_lan_port() {
+        assert_eq!(
+            parse_lan_address("192.168.1.20", 7064).unwrap().to_string(),
+            "192.168.1.20:7064"
+        );
+    }
+
+    #[test]
+    fn explicit_port_is_preserved() {
+        assert_eq!(
+            parse_lan_address("192.168.1.20:8000", 7064).unwrap().to_string(),
+            "192.168.1.20:8000"
+        );
+    }
+}
 
 /// The DS video frame rate: `33_513_982 / 560_190` Hz. Slightly under the 60 Hz
 /// a display usually runs at, so pacing has to come from a clock rather than
@@ -96,6 +132,9 @@ pub const BINDINGS: &[(egui::Key, u32, &str)] = &[
 
 pub struct MelonEgui {
     emu: Option<Emu>,
+
+    pub i18n: crate::i18n::I18nMap,
+
     /// Uploaded once per emulated frame; `[top, bottom]`.
     textures: Option<[TextureHandle; 2]>,
     paused: bool,
@@ -171,6 +210,18 @@ pub struct MelonEgui {
     /// The second console, which runs on a thread of its own — see
     /// [`crate::guest`] for why local wireless play requires that.
     guest: Option<crate::guest::Guest>,
+    /// A LAN host or guest connection being established off the UI thread.
+    lan_pending: Option<Receiver<Result<LanConnection, String>>>,
+    lan_rom: Option<PathBuf>,
+    /// Guest's editable LAN host address.
+    pub lan_guest_address: String,
+    /// Host's editable local bind address.
+    pub lan_bind_address: String,
+    /// Human-readable LAN room and connection status.
+    pub lan_status: String,
+    pub lan_room: String,
+    /// Settings persisted independently for the second console.
+    instance2_settings: Settings,
     guest_textures: Option<[TextureHandle; 2]>,
     /// Where the guest's bottom screen was drawn, for its own touch input.
     guest_bottom: Option<Rect>,
@@ -217,9 +268,11 @@ impl MelonEgui {
         launch_second: bool,
     ) -> Self {
         let settings = Settings::load();
+        let instance2_settings = Settings::load_for(2);
         let now = Instant::now();
         let mut app = Self {
             emu: None,
+            i18n: crate::i18n::I18nMap::load_with_fallback().unwrap_or_default(),
             textures: None,
             paused: false,
             step_pending: false,
@@ -249,8 +302,12 @@ impl MelonEgui {
             confirm_on_quit: false,
             dark_theme: settings.dark_theme,
             ui_scale: if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 },
-            save_dir: settings.save_dir,
-            state_dir: settings.state_dir,
+            save_dir: settings
+                .save_dir
+                .or_else(|| Some(crate::config::instance_data_dir(1, "saves"))),
+            state_dir: settings
+                .state_dir
+                .or_else(|| Some(crate::config::instance_data_dir(1, "states"))),
             clock: crate::emu::utc_clock(),
             clock_note: String::new(),
             ram_search: RamSearch::default(),
@@ -259,6 +316,14 @@ impl MelonEgui {
             second_window: false,
             airwaves: Airwaves::new(),
             guest: None,
+            lan_pending: None,
+            lan_rom: None,
+            lan_guest_address: std::env::var("MELON_EGUI_LAN_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:7064".to_owned()),
+            lan_bind_address: "0.0.0.0:7064".to_owned(),
+            lan_status: "LAN room is offline".to_owned(),
+            lan_room: "No LAN room".to_owned(),
+            instance2_settings,
             guest_textures: None,
             guest_bottom: None,
             screens_live: [true, true],
@@ -340,6 +405,10 @@ impl MelonEgui {
     /// Collect everything worth remembering and write it out.
     fn persist(&self) {
         self.settings().save();
+
+        if !crate::i18n::I18nMap::i18n_path().exists() {
+            let _ = crate::i18n::I18nMap::save();
+        }
     }
 
     /// Everything worth remembering, gathered up.
@@ -357,6 +426,30 @@ impl MelonEgui {
             save_dir: self.save_dir.clone(),
             ui_scale: self.ui_scale,
             dark_theme: self.dark_theme,
+        }
+    }
+
+    /// Apply persisted settings to the currently active UI runtime.
+    fn apply_runtime_settings(&mut self, settings: &Settings, instance: u32) {
+        self.view = settings.view;
+        self.video = VideoOptions { render: true, ..settings.video };
+        self.limit_framerate = settings.limit_framerate;
+        self.audio_sync = settings.audio_sync;
+        self.cheats_enabled = settings.cheats_enabled;
+        self.dark_theme = settings.dark_theme;
+        self.ui_scale = if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 };
+        self.save_dir = settings
+            .save_dir
+            .clone()
+            .or_else(|| Some(crate::config::instance_data_dir(instance, "saves")));
+        self.state_dir = settings
+            .state_dir
+            .clone()
+            .or_else(|| Some(crate::config::instance_data_dir(instance, "states")));
+        self.recents = settings.recents.clone();
+        self.panes = settings.open_panes.clone();
+        if let Ok(audio) = &mut self.audio {
+            audio.volume = settings.volume;
         }
     }
 
@@ -409,10 +502,13 @@ impl MelonEgui {
     }
 
     /// The ROM info pane's rows, or `None` with no cart loaded.
-    /// Where a cart's codes live: `<rom>.mch`, which is melonDS's own name and
-    /// format, so one file serves both front ends.
+    /// Where a cart's codes live in instance1's dedicated cheat directory.
+    /// The file keeps melonDS's `.mch` format so both front ends can use it.
     pub fn cheat_path(rom: &Path) -> PathBuf {
-        rom.with_extension("mch")
+        crate::config::instance_data_dir(1, "cheats").join(rom.file_stem().map_or_else(
+            || PathBuf::from("cheats.mch"),
+            |name| PathBuf::from(format!("{}.mch", name.to_string_lossy())),
+        ))
     }
 
     /// The path the running cart's codes are read from and written to.
@@ -725,6 +821,7 @@ impl MelonEgui {
 
     /// Boot `rom`, replacing whatever was running.
     fn load(&mut self, rom: &Path) {
+        crate::config::ensure_instance_layout();
         // Dropped first so the outgoing cart's save is flushed before the
         // incoming one can be handed the same file.
         self.emu = None;
@@ -769,6 +866,124 @@ impl MelonEgui {
                 self.post(format!("loaded {}", rom.display()));
             }
             Err(e) => self.post(format!("failed to load {}: {e}", rom.display())),
+        }
+    }
+
+    /// Start a LAN host or guest connection without blocking the UI thread.
+    fn start_lan(&mut self, host: bool) {
+        if self.lan_pending.is_some() {
+            self.post("a LAN connection is already being established");
+            return;
+        }
+        let Some(rom) = self.emu.as_ref().map(|emu| emu.rom_path.clone()) else {
+            self.post("load a cart first");
+            return;
+        };
+        self.emu = None;
+        self.textures = None;
+        self.undo_state = None;
+        self.lan_rom = Some(rom);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let bind = self.lan_bind_address.clone();
+        let address = self.lan_guest_address.clone();
+        let bind_for_thread = bind.clone();
+        let address_for_thread = address.clone();
+        let spawned = std::thread::Builder::new()
+            .name(if host { "melon-egui-lan-host" } else { "melon-egui-lan-guest" }.to_owned())
+            .spawn(move || {
+                let result = if host {
+                    parse_lan_address(&bind_for_thread, 7064).and_then(|addr| {
+                        melonds::lan::LanHost::accept(addr)
+                            .and_then(|transport| {
+                                let local_addr = transport.local_addr()?;
+                                Ok(LanConnection {
+                                    local_addr: local_addr.to_string(),
+                                    remote_addr: "waiting guest".to_owned(),
+                                    host: Box::new(transport),
+                                })
+                            })
+                            .map_err(|e| format!("LAN host failed: {e}"))
+                    })
+                } else {
+                    let local = "0.0.0.0:0";
+                    local.parse().map_err(|e| format!("invalid LAN client address: {e}")).and_then(
+                        |local| {
+                            parse_lan_address(&address_for_thread, 7064).and_then(|remote| {
+                                melonds::lan::LanGuest::connect(local, remote)
+                                    .and_then(|transport| {
+                                        let local_addr = transport.local_addr()?;
+                                        Ok(LanConnection {
+                                            local_addr: local_addr.to_string(),
+                                            remote_addr: remote.to_string(),
+                                            host: Box::new(transport),
+                                        })
+                                    })
+                                    .map_err(|e| format!("LAN guest failed: {e}"))
+                            })
+                        },
+                    )
+                };
+                let _ = sender.send(result);
+            })
+            .map_err(|e| format!("cannot start LAN connection: {e}"));
+        if let Err(error) = spawned {
+            self.lan_rom = None;
+            self.post(error);
+            return;
+        }
+        self.lan_pending = Some(receiver);
+        self.lan_room = if host { "Hosting LAN room" } else { "Joining LAN room" }.to_owned();
+        self.lan_status = if host {
+            format!("Checking: waiting for guest on {bind}")
+        } else {
+            format!("Checking: connecting to {address}")
+        };
+        self.post(if host {
+            format!("waiting for a LAN guest on {bind}")
+        } else {
+            format!("connecting to LAN host {address}")
+        });
+    }
+
+    /// Finish a background LAN connection and boot the current cart on it.
+    fn poll_lan(&mut self) {
+        let Some(receiver) = &self.lan_pending else { return };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                self.lan_pending = None;
+                self.post("LAN connection worker stopped unexpectedly");
+                return;
+            }
+        };
+        self.lan_pending = None;
+        let Some(rom) = self.lan_rom.take() else {
+            self.post("LAN connected, but no cart is loaded");
+            return;
+        };
+        match result.and_then(|connection| {
+            let local_addr = connection.local_addr.clone();
+            let remote_addr = connection.remote_addr.clone();
+            Emu::boot_lan(&rom, self.save_dir.as_ref(), self.state_dir.as_ref(), connection.host)
+                .map(|emu| (emu, local_addr, remote_addr))
+        }) {
+            Ok((emu, local_addr, remote_addr)) => {
+                self.emu = Some(emu);
+                self.cheats = cheats::load(&Self::cheat_path(&rom)).unwrap_or_default();
+                self.applied_cheats = None;
+                self.paused = false;
+                self.frame_debt = 0.0;
+                self.last_tick = Instant::now();
+                self.lan_status = format!("Connected: local {local_addr}, remote {remote_addr}");
+                self.lan_room = "LAN room connected".to_owned();
+                self.post(format!("LAN game connected: {}", rom.display()));
+            }
+            Err(error) => {
+                self.lan_status = format!("Connection check failed: {error}");
+                self.lan_room = "LAN room offline".to_owned();
+                self.post(format!("LAN game failed: {error}"));
+            }
         }
     }
 
@@ -834,6 +1049,8 @@ impl MelonEgui {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
             }
             Action::LaunchInstance => self.launch_instance(),
+            Action::HostLanGame => self.start_lan(true),
+            Action::GuestLanGame => self.start_lan(false),
             Action::TogglePane(pane) => {
                 if let Some(at) = self.panes.iter().position(|open| *open == pane) {
                     self.panes.remove(at);
@@ -852,7 +1069,7 @@ impl MelonEgui {
     /// worse, but better than refusing to launch.
     fn guest_save_dir(&mut self, rom: &Path) -> Option<PathBuf> {
         let host_save = Settings::redirect(self.save_dir.as_ref(), rom, "sav");
-        let dir = host_save.parent()?.join("instance2");
+        let dir = crate::config::instance_data_dir(2, "saves");
         if let Err(e) = std::fs::create_dir_all(&dir) {
             self.post(format!("cannot make {}: {e}; sharing the save", dir.display()));
             return None;
@@ -900,7 +1117,8 @@ impl MelonEgui {
         self.guest = Some(crate::guest::Guest::spawn(
             &rom,
             save_dir,
-            self.state_dir.clone(),
+            Some(crate::config::instance_data_dir(2, "states")),
+            Some(crate::config::instance_data_dir(2, "cheats")),
             1,
             self.airwaves.client(1),
             start_frame,
@@ -1030,6 +1248,7 @@ impl MelonEgui {
     fn advance(&mut self, ctx: &egui::Context) {
         let elapsed = self.last_tick.elapsed();
         self.last_tick = Instant::now();
+        self.poll_lan();
 
         // Pumped before the early return: gilrs only notices a pad being
         // plugged in while its queue is drained, and the Input pane lists
@@ -1465,7 +1684,7 @@ impl MelonEgui {
         let touch = self
             .guest_bottom
             .zip(pointer)
-            .and_then(|(rect, pos)| touch_coords(rect, pos, self.view.rotation));
+            .and_then(|(rect, pos)| touch_coords(rect, pos, self.instance2_settings.view.rotation));
         (keys, touch)
     }
 
@@ -1474,14 +1693,16 @@ impl MelonEgui {
         if self.guest.is_none() {
             return;
         }
+        let host_settings = self.settings();
+        self.apply_runtime_settings(&self.instance2_settings.clone(), 2);
         // Upload the guest's picture with the same conversion the host uses.
         let filter =
             if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
         if let Some(screens) = self.guest.as_ref().and_then(crate::guest::Guest::take_screens) {
             let [top, bottom] = screens;
             let images = [
-                to_image(&top, upscale::Method::None, 1),
-                to_image(&bottom, upscale::Method::None, 1),
+                to_image(&top, self.video.upscale, self.video.upscale_factor()),
+                to_image(&bottom, self.video.upscale, self.video.upscale_factor()),
             ];
             match &mut self.guest_textures {
                 Some(textures) => {
@@ -1500,6 +1721,10 @@ impl MelonEgui {
         }
 
         let Some(textures) = self.guest_textures.clone() else {
+            let updated = self.settings();
+            updated.save_for(2);
+            self.instance2_settings = updated;
+            self.apply_runtime_settings(&host_settings, 1);
             return;
         };
         let view = self.resolved_view();
@@ -1511,7 +1736,13 @@ impl MelonEgui {
 
         let mut closed = false;
         let mut bottom_rect = None;
+        let mut action = None;
         ctx.show_viewport_immediate(guest_viewport_id(), builder, |ctx, _class| {
+            ctx.set_zoom_factor(self.ui_scale);
+            self.set_theme(ctx, self.dark_theme);
+            egui::TopBottomPanel::top("guest-menu").show(ctx, |ui| {
+                action = menu::bar(self, ui);
+            });
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
                 ctx,
                 |ui| {
@@ -1528,11 +1759,28 @@ impl MelonEgui {
                     }
                 },
             );
+            panes::show(self, ctx);
             if ctx.input(|i| i.viewport().close_requested()) {
                 closed = true;
             }
         });
         self.guest_bottom = bottom_rect;
+        if let Some(Action::TogglePane(pane)) = action.take() {
+            if let Some(at) = self.panes.iter().position(|open| *open == pane) {
+                self.panes.remove(at);
+            } else {
+                self.panes.push(pane);
+            }
+        }
+        let updated = self.settings();
+        updated.save_for(2);
+        self.instance2_settings = updated;
+        self.apply_runtime_settings(&host_settings, 1);
+        ctx.set_zoom_factor(self.ui_scale);
+        self.set_theme(ctx, self.dark_theme);
+        if let Some(action) = action {
+            self.apply(action, ctx);
+        }
         if closed {
             self.guest = None;
             self.guest_textures = None;
@@ -1689,7 +1937,7 @@ impl eframe::App for MelonEgui {
         // The core is paced off wall-clock time, so the window has to keep
         // repainting rather than wait for input. Paused, there is nothing to
         // redraw until something happens.
-        if self.emu.is_some() && (!self.paused || self.step_pending) {
+        if self.emu.is_some() && (!self.paused || self.step_pending) || self.lan_pending.is_some() {
             ctx.request_repaint();
         }
     }
@@ -1787,7 +2035,8 @@ fn to_image(fb: &[u32], method: upscale::Method, factor: u8) -> ColorImage {
     let rgba: Vec<u8> =
         fb.iter().flat_map(|&px| [(px >> 16) as u8, (px >> 8) as u8, px as u8, 0xFF]).collect();
     let (buf, width, height) = upscale::upscale(rgba, SCREEN_WIDTH, SCREEN_HEIGHT, method, factor);
-    let pixels = buf.chunks_exact(4).map(|px| Color32::from_rgb(px[0], px[1], px[2])).collect();
+    let pixels =
+        buf.as_chunks::<4>().0.iter().map(|px| Color32::from_rgb(px[0], px[1], px[2])).collect();
     ColorImage {
         size: [width, height],
         pixels,

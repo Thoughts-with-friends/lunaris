@@ -84,7 +84,7 @@ pub fn cheat_map_to_string(cheat_map: &CheatMap) -> String {
             let _ = writeln!(out, "// disabled");
         }
 
-        for pair in arcode.code.chunks_exact(2) {
+        for pair in arcode.code.as_chunks::<2>().0 {
             let (addr, value) = (pair[0], pair[1]);
             let _ = writeln!(
                 out,

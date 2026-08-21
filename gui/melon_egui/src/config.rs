@@ -11,8 +11,11 @@ use crate::{panes::Pane, video::VideoOptions, view::ViewOptions};
 /// How many recent ROMs are remembered, matching melonDS's list length.
 pub const RECENT_LIMIT: usize = 10;
 
+/// The instance directories used by melon_egui.
+pub const INSTANCE_COUNT: u32 = 2;
+
 /// The persisted settings.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Most recently opened first.
@@ -61,7 +64,13 @@ impl Settings {
     /// Read the settings file, falling back to defaults on anything unreadable
     /// or unparseable — a corrupt file should not stop the emulator starting.
     pub fn load() -> Self {
-        let path = settings_path();
+        Self::load_for(1)
+    }
+
+    /// Read the settings belonging to one emulator instance.
+    pub fn load_for(instance: u32) -> Self {
+        ensure_instance_layout();
+        let path = settings_path(instance);
         let Ok(text) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
@@ -77,12 +86,18 @@ impl Settings {
     /// Write the settings out, reporting but not propagating failure: losing the
     /// recent list matters less than interrupting whatever the user was doing.
     pub fn save(&self) {
-        let dir = config_dir();
+        self.save_for(1);
+    }
+
+    /// Write the settings belonging to one emulator instance.
+    pub fn save_for(&self, instance: u32) {
+        ensure_instance_layout();
+        let dir = instance_dir(instance);
         if let Err(e) = std::fs::create_dir_all(&dir) {
             eprintln!("melon_egui: cannot create {}: {e}", dir.display());
             return;
         }
-        let path = settings_path();
+        let path = settings_path(instance);
         let json = match serde_json::to_string_pretty(self) {
             Ok(json) => json,
             Err(e) => {
@@ -117,21 +132,54 @@ impl Settings {
     }
 }
 
-/// The directory this front end keeps its files in.
+/// The primary instance directory this front end keeps its files in.
 ///
-/// Beside the executable, so that a copied-out build stays self-contained —
-/// which is the point of it being a single file. Falls back to the working
-/// directory if the executable's path is not knowable.
+/// Beside the executable, so that a copied-out build stays self-contained.
+/// Falls back to the working directory if the executable's path is not knowable.
 pub fn config_dir() -> PathBuf {
+    instance_dir(1)
+}
+
+/// The directory containing all per-instance data, beside the executable.
+pub fn instances_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("melon_egui")
+        .join("instances")
 }
 
-fn settings_path() -> PathBuf {
-    config_dir().join("settings.json")
+/// Return the root directory for one emulator instance.
+pub fn instance_dir(instance: u32) -> PathBuf {
+    instances_dir().join(format!("instance{instance}"))
+}
+
+/// Return an instance's dedicated data directory.
+pub fn instance_data_dir(instance: u32, kind: &str) -> PathBuf {
+    instance_dir(instance).join(kind)
+}
+
+/// Create the complete on-disk layout before the first ROM is loaded.
+pub fn ensure_instance_layout() {
+    for instance in 1..=INSTANCE_COUNT {
+        let root = instance_dir(instance);
+        for kind in ["saves", "states", "cheats", "logs"] {
+            if let Err(error) = std::fs::create_dir_all(root.join(kind)) {
+                eprintln!("melon_egui: cannot create {}: {error}", root.join(kind).display());
+            }
+        }
+        let settings = root.join("settings.json");
+        if !settings.exists()
+            && let Ok(json) = serde_json::to_string_pretty(&Settings::default())
+            && let Err(error) = std::fs::write(&settings, json)
+        {
+            eprintln!("melon_egui: cannot write {}: {error}", settings.display());
+        }
+    }
+}
+
+fn settings_path(instance: u32) -> PathBuf {
+    instance_dir(instance).join("settings.json")
 }
 
 #[cfg(test)]

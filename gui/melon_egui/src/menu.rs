@@ -22,8 +22,6 @@ enum Unavailable {
     /// The melonDS core can do it, but `melonds-rs`'s FFI (`shim.h`) exposes no
     /// entry point for it, so no front end built on these bindings can reach it.
     Bindings,
-    /// Reachable through the bindings, but not built yet.
-    Planned,
 }
 
 impl Unavailable {
@@ -32,7 +30,6 @@ impl Unavailable {
             Self::Bindings => {
                 "Not reachable: the melonds-rs bindings expose no FFI entry point for this."
             }
-            Self::Planned => "Not implemented yet (the bindings do support it).",
         }
     }
 }
@@ -64,6 +61,10 @@ pub enum Action {
     NewWindow,
     /// Open (or close) a second console on the shared airwaves.
     LaunchInstance,
+    /// Accept one remote LAN console on the configured UDP port.
+    HostLanGame,
+    /// Connect this console to the configured LAN host.
+    GuestLanGame,
     /// Show or hide one of the auxiliary windows.
     TogglePane(Pane),
 }
@@ -98,7 +99,10 @@ fn entry(ui: &mut Ui, enabled: bool, label: &str, action: Action) -> Option<Acti
 
 fn file_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
     let mut action = None;
-    ui.menu_button("File", |ui| {
+
+    let file_menu_label = app.i18n.t(crate::i18n::I18nKey::FileLabel);
+
+    ui.menu_button(file_menu_label, |ui| {
         let loaded = app.is_loaded();
 
         action = action.take().or_else(|| entry(ui, true, "Open ROM...", Action::OpenRom));
@@ -239,11 +243,16 @@ fn system_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
                 .take()
                 .or_else(|| entry(ui, true, "Wireless status", Action::TogglePane(Pane::Wireless)));
             ui.separator();
-            // LAN carries the same frames over a real network. The airwaves are
-            // in-process only, so this is a transport that does not exist yet
-            // rather than anything the bindings withhold.
-            unavailable(ui, "Host LAN game", Unavailable::Planned);
-            unavailable(ui, "Join LAN game", Unavailable::Planned);
+            ui.label("LAN room");
+            ui.monospace(&app.lan_room);
+            ui.label(format!("Host bind: {}", app.lan_bind_address));
+            ui.label(format!("Guest IP: {}", app.lan_guest_address));
+            ui.small(&app.lan_status);
+            ui.separator();
+            action =
+                action.take().or_else(|| entry(ui, loaded, "Host LAN game", Action::HostLanGame));
+            action =
+                action.take().or_else(|| entry(ui, loaded, "Guest LAN game", Action::GuestLanGame));
         });
     });
     action

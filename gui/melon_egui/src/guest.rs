@@ -37,7 +37,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use melonds::{Cheat, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use crate::{emu::Emu, mp::Client};
 
@@ -101,6 +101,7 @@ impl Guest {
         rom: &Path,
         save_dir: Option<PathBuf>,
         state_dir: Option<PathBuf>,
+        cheat_dir: Option<PathBuf>,
         instance_id: u32,
         mp: Client,
         start_frame: u32,
@@ -123,15 +124,16 @@ impl Guest {
             std::thread::Builder::new()
                 .name("melon_egui-instance2".to_owned())
                 .spawn(move || {
-                    run(
-                        &rom,
+                    run(RunConfig {
+                        rom: &rom,
                         save_dir,
                         state_dir,
+                        cheat_dir,
                         instance_id,
                         mp,
                         start_frame,
-                        &Shared { input, output, quit, paused, frames },
-                    );
+                        shared: &Shared { input, output, quit, paused, frames },
+                    });
                 })
                 .ok()
         };
@@ -207,16 +209,22 @@ impl Shared {
     }
 }
 
-/// The thread body: boot, then run frames on the wall clock until asked to stop.
-fn run(
-    rom: &Path,
+struct RunConfig<'a> {
+    rom: &'a Path,
     save_dir: Option<PathBuf>,
     state_dir: Option<PathBuf>,
+    cheat_dir: Option<PathBuf>,
     instance_id: u32,
     mp: Client,
     start_frame: u32,
-    shared: &Shared,
-) {
+    shared: &'a Shared,
+}
+
+/// The thread body: boot, then run frames on the wall clock until asked to stop.
+fn run(config: RunConfig) {
+    let RunConfig { rom, save_dir, state_dir, cheat_dir, instance_id, mp, start_frame, shared } =
+        config;
+
     let mut emu = match Emu::boot_mp(rom, save_dir.as_ref(), state_dir.as_ref(), instance_id, mp) {
         Ok(emu) => emu,
         Err(e) => {
@@ -227,6 +235,20 @@ fn run(
             return;
         }
     };
+    let cheat_path = crate::config::Settings::redirect(cheat_dir.as_ref(), rom, "mch");
+    let cheats: Vec<Cheat> = crate::cheats::load(&cheat_path)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|cheat| cheat.to_core())
+        .collect();
+    if !cheats.is_empty() {
+        emu.nds.set_cheats(cheats.as_slice());
+        eprintln!(
+            "melon_egui: instance2 loaded {} cheat codes from {}",
+            cheats.len(),
+            cheat_path.display()
+        );
+    }
     // The wireless clock's epoch is the frame count, so a console joining a
     // session already in progress has to start from its peer's.
     emu.nds.set_frame_count(start_frame);

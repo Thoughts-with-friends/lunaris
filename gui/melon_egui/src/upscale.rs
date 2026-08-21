@@ -116,7 +116,7 @@ pub fn upscale(
     // window is concerned, so forcing that first keeps the filter from
     // inventing translucent fringes.
     let mut buf = rgba;
-    for pixel in buf.chunks_exact_mut(4) {
+    for pixel in buf.as_chunks_mut::<4>().0 {
         pixel[3] = 0xFF;
     }
 
@@ -137,7 +137,7 @@ pub fn upscale(
 
     // The filter's border interpolation is not alpha-aware and can leave a
     // non-opaque edge pixel behind even though every input pixel was opaque.
-    for pixel in buf.chunks_exact_mut(4) {
+    for pixel in buf.as_chunks_mut::<4>().0 {
         pixel[3] = 0xFF;
     }
     (buf, w, h)
@@ -219,6 +219,6 @@ mod tests {
         let (out, w, h) = upscale(src, 8, 8, Method::Xbrz, 3);
         assert_eq!((w, h), (24, 24));
         assert_eq!(out.len(), 24 * 24 * 4);
-        assert!(out.chunks_exact(4).all(|px| px[3] == 0xFF));
+        assert!(out.as_chunks::<4>().0.iter().all(|px| px[3] == 0xFF));
     }
 }

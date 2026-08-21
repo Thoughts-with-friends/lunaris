@@ -705,6 +705,19 @@ fn audio_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
 /// currently stops (`docs/design/review_mp_local2.md` §4). So the one number
 /// that says whether this is working is how many CMD frames went out.
 fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    ui.heading("LAN room");
+    ui.monospace(&app.lan_room);
+    ui.label(&app.lan_status);
+    ui.horizontal(|ui| {
+        ui.label("Host bind");
+        ui.text_edit_singleline(&mut app.lan_bind_address);
+    });
+    ui.horizontal(|ui| {
+        ui.label("Guest IP");
+        ui.text_edit_singleline(&mut app.lan_guest_address);
+    });
+    ui.separator();
+
     let counters = app.airwaves.counters();
     let connected = app.airwaves.connected();
     let live: Vec<usize> =

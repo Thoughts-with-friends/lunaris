@@ -619,7 +619,7 @@ impl Engine3D {
             tex_params: self.tex_params,
             palette_base: self.palette_base,
             is_front,
-            original_verts: self.original_verts.drain(..).collect(),
+            original_verts: std::mem::take(&mut self.original_verts),
         };
         // GBATEK "DS 3D View Volumes and Viewports" (`#ds3dviewsvolumesandviewports`):
         // the view volume requires W > 0 for any vertex surviving clipping.

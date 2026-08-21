@@ -105,6 +105,8 @@ mod video;
 #[cfg(feature = "melonds")]
 mod view;
 
+mod i18n;
+
 /// Without the `melonds` feature there is no core to drive, so the binary can
 /// only explain itself. Failing loudly beats a window that renders nothing.
 ///

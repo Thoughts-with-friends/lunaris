@@ -116,7 +116,7 @@ pub fn upscale(
     // not a blend weight, so force full opacity before scaling to avoid
     // fringed transparent edges. See design doc §5.4.
     let mut opaque = rgba;
-    for pixel in opaque.chunks_exact_mut(4) {
+    for pixel in opaque.as_chunks_mut::<4>().0 {
         pixel[3] = 0xFF;
     }
 
@@ -140,7 +140,7 @@ pub fn upscale(
     // blend weights are not alpha-aware). Force opacity again on the final
     // buffer so a fully-opaque source can never come out with translucent
     // edge pixels.
-    for pixel in buf.chunks_exact_mut(4) {
+    for pixel in buf.as_chunks_mut::<4>().0 {
         pixel[3] = 0xFF;
     }
 
@@ -273,6 +273,6 @@ mod tests {
         let (w, h) = (8, 6);
         let src = synthetic_rgba(w, h);
         let (out, _, _) = upscale(src, w, h, UpscaleMethod::Xbrz, 2);
-        assert!(out.chunks_exact(4).all(|p| p[3] == 0xFF));
+        assert!(out.as_chunks::<4>().0.iter().all(|p| p[3] == 0xFF));
     }
 }

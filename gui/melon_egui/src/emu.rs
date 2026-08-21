@@ -146,7 +146,17 @@ impl Emu {
         instance_id: u32,
         mp: crate::mp::Client,
     ) -> Result<Self, String> {
-        Self::boot_inner(rom_path, save_dir, state_dir, instance_id, Some(mp))
+        Self::boot_inner(rom_path, save_dir, state_dir, instance_id, Some(mp), None)
+    }
+
+    /// Boot a cart using a LAN-backed melonDS multiplayer host.
+    pub fn boot_lan(
+        rom_path: &Path,
+        save_dir: Option<&PathBuf>,
+        state_dir: Option<&PathBuf>,
+        transport: Box<dyn melonds::Host>,
+    ) -> Result<Self, String> {
+        Self::boot_inner(rom_path, save_dir, state_dir, 0, None, Some(transport))
     }
 
     /// As [`Emu::boot`], but with the save and savestate directories overridden;
@@ -156,7 +166,7 @@ impl Emu {
         save_dir: Option<&PathBuf>,
         state_dir: Option<&PathBuf>,
     ) -> Result<Self, String> {
-        Self::boot_inner(rom_path, save_dir, state_dir, 0, None)
+        Self::boot_inner(rom_path, save_dir, state_dir, 0, None, None)
     }
 
     fn boot_inner(
@@ -165,6 +175,7 @@ impl Emu {
         state_dir: Option<&PathBuf>,
         instance_id: u32,
         mp: Option<crate::mp::Client>,
+        network: Option<Box<dyn melonds::Host>>,
     ) -> Result<Self, String> {
         let rom = std::fs::read(rom_path).map_err(|e| format!("cannot read ROM: {e}"))?;
         let save_path = crate::config::Settings::redirect(save_dir, rom_path, "sav");
@@ -177,7 +188,12 @@ impl Emu {
         // handle to the airwaves, and the front end keeps another so a reboot
         // (importing a save) can take the same seat again.
         let seat = mp.clone().map(|mp| (instance_id, mp));
-        let host = Box::new(HostBridge { saves: Arc::clone(&saves), stop: Arc::clone(&stop), mp });
+        let host = Box::new(HostBridge {
+            saves: Arc::clone(&saves),
+            stop: Arc::clone(&stop),
+            mp,
+            network,
+        });
 
         let mut nds = Nds::new(&rom, save.as_deref(), instance_id, host)
             .map_err(|e| format!("cart rejected: {e}"))?;
@@ -348,6 +364,7 @@ impl Emu {
             self.state_dir.as_ref(),
             instance_id,
             mp,
+            None,
         )?;
         *self = reloaded;
         Ok(())
@@ -377,6 +394,7 @@ struct HostBridge {
     /// This console's place on the shared airwaves, when it has one. Without it
     /// every MP hook keeps the trait's default — an unlinked console.
     mp: Option<crate::mp::Client>,
+    network: Option<Box<dyn melonds::Host>>,
 }
 
 impl melonds::Host for HostBridge {
@@ -398,46 +416,79 @@ impl melonds::Host for HostBridge {
     // interesting behaviour lives in `crate::mp` rather than here.
 
     fn mp_begin(&self) {
+        if let Some(network) = &self.network {
+            network.mp_begin();
+            return;
+        }
         if let Some(mp) = &self.mp {
             mp.mp_begin();
         }
     }
 
     fn mp_end(&self) {
+        if let Some(network) = &self.network {
+            network.mp_end();
+            return;
+        }
         if let Some(mp) = &self.mp {
             mp.mp_end();
         }
     }
 
     fn mp_send_packet(&self, data: &[u8], timestamp: u64) -> i32 {
+        if let Some(network) = &self.network {
+            return network.mp_send_packet(data, timestamp);
+        }
         self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_packet(data, timestamp))
     }
 
     fn mp_send_cmd(&self, data: &[u8], timestamp: u64) -> i32 {
+        if let Some(network) = &self.network {
+            return network.mp_send_cmd(data, timestamp);
+        }
         self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_cmd(data, timestamp))
     }
 
     fn mp_send_reply(&self, data: &[u8], timestamp: u64, aid: u16) -> i32 {
+        if let Some(network) = &self.network {
+            return network.mp_send_reply(data, timestamp, aid);
+        }
         self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_reply(data, timestamp, aid))
     }
 
     fn mp_send_ack(&self, data: &[u8], timestamp: u64) -> i32 {
+        if let Some(network) = &self.network {
+            return network.mp_send_ack(data, timestamp);
+        }
         self.mp.as_ref().map_or(data.len() as i32, |mp| mp.mp_send_ack(data, timestamp))
     }
 
     fn mp_recv_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        if let Some(network) = &self.network {
+            return network.mp_recv_packet(data, now, timestamp);
+        }
         self.mp.as_ref().map_or(Some(0), |mp| mp.mp_recv_packet(data, now, timestamp))
     }
 
     fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        if let Some(network) = &self.network {
+            return network.mp_recv_host_packet(data, now, timestamp);
+        }
         self.mp.as_ref().and_then(|mp| mp.mp_recv_host_packet(data, now, timestamp))
     }
 
     fn mp_recv_replies(&self, data: &mut [u8], now: u64, timestamp: u64, aidmask: u16) -> u16 {
+        if let Some(network) = &self.network {
+            return network.mp_recv_replies(data, now, timestamp, aidmask);
+        }
         self.mp.as_ref().map_or(0, |mp| mp.mp_recv_replies(data, now, timestamp, aidmask))
     }
 
     fn mp_clock(&self, now: u64) {
+        if let Some(network) = &self.network {
+            network.mp_clock(now);
+            return;
+        }
         if let Some(mp) = &self.mp {
             mp.mp_clock(now);
         }
@@ -547,6 +598,7 @@ mod tests {
             }),
             stop: Arc::new(Mutex::new(None)),
             mp: (instance < usize::MAX).then(|| air.client(instance)),
+            network: None,
         }
     }
 
@@ -583,6 +635,7 @@ mod tests {
             }),
             stop: Arc::new(Mutex::new(None)),
             mp: None,
+            network: None,
         };
 
         // The trait's defaults claim the send succeeded, which is exactly why

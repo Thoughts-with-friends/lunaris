@@ -1726,6 +1726,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1742,6 +1748,14 @@ name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
+
+[[package]]
+name = "i18n_derive"
+version = "0.3.4"
+dependencies = [
+ "quote",
+ "syn 3.0.3",
+]
 
 [[package]]
 name = "iana-time-zone"
@@ -1976,6 +1990,8 @@ checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -2357,13 +2373,16 @@ dependencies = [
  "egui",
  "egui_glow",
  "gilrs",
+ "i18n_derive",
  "image",
+ "indexmap 2.14.0",
  "log",
  "melonds",
  "rfd",
  "ringbuf",
  "serde",
  "serde_json",
+ "snafu",
  "winres",
  "xbrz-rs",
 ]
@@ -2371,7 +2390,7 @@ dependencies = [
 [[package]]
 name = "melonds"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=d2e90f5#d2e90f5d7a29a2afa047eb0dec182c28650244be"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=9d44665#9d44665f4ed9f72ca059bf9cb7da8070b66b2f6a"
 dependencies = [
  "log",
  "melonds-sys",
@@ -2381,7 +2400,7 @@ dependencies = [
 [[package]]
 name = "melonds-sys"
 version = "0.1.0"
-source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=d2e90f5#d2e90f5d7a29a2afa047eb0dec182c28650244be"
+source = "git+https://github.com/Thoughts-with-friends/melonds-rs.git?rev=9d44665#9d44665f4ed9f72ca059bf9cb7da8070b66b2f6a"
 dependencies = [
  "bindgen",
  "cc",
@@ -4066,6 +4085,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "snafu"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e45cb604038abb7b926b679887b3226d8d0f23874b66623625a0454be425a4b7"
+dependencies = [
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "287f59010008f0d7cf5e3b03196d666c1acc46c8d3e9cf34c28a1a7157601e72"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

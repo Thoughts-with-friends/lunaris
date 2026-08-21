@@ -191,7 +191,7 @@ impl Cartridge {
             bytemuck::cast_slice_mut(&mut self.rom[secure_area_range()]);
         // Level 3 for entire secure area
         self.key1_encryption.init_key_code(self.header.game_code, 3, 2);
-        for chunk in secure_area_32.chunks_exact_mut(2) {
+        for chunk in secure_area_32.as_chunks_mut::<2>().0 {
             self.key1_encryption.encrypt(chunk);
         }
         // Level 2 for first 8 bytes (first 8 bytes encrypted twice)
