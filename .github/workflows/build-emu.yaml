@@ -15,8 +15,7 @@ permissions:
   contents: read
 
 env:
-  APP_NAME: lunaris
-  BUILD_PROFILE: release
+  PROFILE: release
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -24,33 +23,47 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # platform: [ macos-latest, ubuntu-latest, windows-latest ]
-        platform: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.platform }}
+        app:
+          - package: lunaris
+            app_name: lunaris
+            features: release
+
+          - package: melon_egui
+            app_name: melon_egui
+            features: release
+
+        target:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+
+    runs-on: ${{ matrix.target.os }}
+
     steps:
-      - uses: actions/checkout@v4.2.2
-        with:
-          submodules: true
+      - name: Checkout
+        uses: actions/checkout@v6
       - name: Setup environment
         uses: ./.github/actions/setup-deps
         with:
-          platform: ${{ matrix.platform }}
-          build_profile: ${{ env.BUILD_PROFILE }}
+          platform: ${{ matrix.target.os }}
+          build_profile: ${{ env.PROFILE }}
 
       - name: build egui
-        run: cargo build -p lunaris --release
+        run: cargo build -p ${{ matrix.app.package }} --release
 
       - name: Move exe -> ./build
         uses: ./.github/actions/setup-release
         with:
-          app_name: lunaris
-          build_profile: ${{ env.BUILD_PROFILE }}
+          app_name: ${{ matrix.app.app_name }}
+          build_profile: ${{ env.PROFILE }}
 
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: ${{ env.APP_NAME }}-${{ runner.os }}
-          # to include .keep file
-          include-hidden-files: true
-          path: |
-            ./build/
+          name: ${{ matrix.app.app_name }}-${{ runner.os }}
+          path: ./build/
