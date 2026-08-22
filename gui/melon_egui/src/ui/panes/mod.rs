@@ -24,6 +24,7 @@ mod remote;
 mod settings;
 mod wireless;
 
+pub use cheat_codes::CheatEditor;
 use cheat_codes::*;
 use console::*;
 use interface::*;
@@ -90,9 +91,14 @@ pub fn show(app: &mut MelonEgui, ctx: &Context) {
                 pane,
                 Pane::RamSearch | Pane::Wireless | Pane::Cheats | Pane::Crash | Pane::Input
             ))
-            // The two that are wider by nature: the wireless dialog is a table
-            // of counters, and Input is three columns of bindings.
-            .default_width(if matches!(pane, Pane::Wireless | Pane::Input) { 460.0 } else { 260.0 })
+            // The three that are wider by nature: the wireless dialog is a
+            // table of counters, Input is three columns of bindings, and the
+            // cheat editor is a list beside a detail panel.
+            .default_width(match pane {
+                Pane::Cheats => 700.0,
+                Pane::Wireless | Pane::Input => 460.0,
+                _ => 260.0,
+            })
             .show(ctx, |ui| body(app, pane, ui));
         if !open {
             app.close_pane(pane);

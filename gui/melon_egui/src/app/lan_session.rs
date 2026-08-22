@@ -162,6 +162,7 @@ impl MelonEgui {
                 self.lan_stats = Some(stats);
                 self.lan_pace = Some(pace);
                 self.cheats = mch::load(&Self::cheat_path(&rom)).unwrap_or_default();
+                self.select_cheat(None);
                 self.applied_cheats = None;
                 self.paused = false;
                 self.frame_debt = 0.0;

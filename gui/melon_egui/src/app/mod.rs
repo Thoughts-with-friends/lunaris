@@ -164,7 +164,7 @@ pub const STATE_SLOTS: u8 = 8;
 
 pub use crate::{
     file::settings::RECENT_LIMIT,
-    ui::panes::{Pane, RamSearch},
+    ui::panes::{CheatEditor, Pane, RamSearch},
 };
 
 /// The size the window opens at: both screens at 2x, which is legible without
@@ -203,6 +203,10 @@ pub struct MelonEgui {
     pub limit_framerate: bool,
     /// White noise on the microphone, the only mic input this build has.
     pub mic_static: bool,
+    /// How fast the console runs relative to real time, 0.5x to 4x. Stepped by
+    /// the pad's left-stick click and by the Emu settings pane; see
+    /// [`crate::speed`] and [`Self::effective_speed`].
+    pub speed: f32,
     /// The cart's Action Replay codes, read from its `.mch` when it booted.
     /// Held whether or not cheats are on, so the master switch loses nothing.
     pub cheats: Vec<Cheat>,
@@ -212,9 +216,16 @@ pub struct MelonEgui {
     /// What was last handed to the core, so the list is only pushed on a
     /// change: it is copied into the console each time.
     pub(crate) applied_cheats: Option<(bool, Vec<Cheat>)>,
-    /// The Cheat codes dialog's name/text boxes, kept here so the pane itself
+    /// The Cheat codes dialog's right-hand editor, kept here so the pane itself
     /// stays a function of the app rather than owning state of its own.
-    pub cheat_draft: (String, String),
+    pub cheat_editor: CheatEditor,
+    /// Which row of the cheat list the editor is showing, if any.
+    ///
+    /// An index rather than a copy of the code, so that the checkbox column and
+    /// the editor cannot end up describing two different entries. Every path
+    /// that replaces [`Self::cheats`] wholesale has to clear it — see
+    /// [`Self::select_cheat`].
+    pub cheat_selected: Option<usize>,
     /// Which system font is filling in for the characters egui's own fonts
     /// cannot draw, for the Interface pane.
     pub font_note: Notice,

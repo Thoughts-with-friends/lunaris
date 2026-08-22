@@ -86,6 +86,7 @@ mod logger;
 mod mp;
 mod pad;
 mod selftest;
+mod speed;
 /// Everything drawn. Stops at the button press; see [`ui`].
 mod ui;
 mod upscale;

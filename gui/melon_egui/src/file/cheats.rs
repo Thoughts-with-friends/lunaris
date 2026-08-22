@@ -19,27 +19,98 @@ impl MelonEgui {
         self.emu.as_ref().map(|emu| Self::cheat_path(&emu.rom_path))
     }
 
-    /// Turn the dialog's two boxes into a code, reporting a bad paste rather
-    /// than adding something the engine would read as garbage.
-    pub fn add_cheat_from_draft(&mut self) {
-        let (name, text) = self.cheat_draft.clone();
-        match mch::parse_code(&text) {
-            Ok(code) if code.is_empty() => self.post_error("no code words in that text"),
-            Ok(code) => {
-                let odd = !code.len().is_multiple_of(2);
-                self.cheats.push(Cheat {
-                    name: if name.trim().is_empty() { "Unnamed".to_owned() } else { name },
-                    code,
-                    enabled: true,
-                    ..Cheat::default()
-                });
-                self.cheat_draft = (String::new(), String::new());
-                if odd {
-                    self.post_warn("added, but that code has an odd number of words");
-                }
+    /// Show `index` in the editor, loading its three boxes from the code it
+    /// names. `None` clears the editor.
+    ///
+    /// The one way the selection is ever set, so that "which row is selected"
+    /// and "what the editor holds" cannot drift apart. An index past the end —
+    /// which is what a delete or a freshly read file leaves behind — clears
+    /// rather than panics.
+    pub fn select_cheat(&mut self, index: Option<usize>) {
+        match index.and_then(|i| self.cheats.get(i).map(|cheat| (i, cheat))) {
+            Some((i, cheat)) => {
+                self.cheat_editor = CheatEditor {
+                    name: cheat.name.clone(),
+                    notes: cheat.description.clone(),
+                    code: cheat.text(),
+                };
+                self.cheat_selected = Some(i);
             }
-            Err(token) => self.post_error(format!("not a 32-bit hex word: {token}")),
+            None => {
+                self.cheat_editor = CheatEditor::default();
+                self.cheat_selected = None;
+            }
         }
+    }
+
+    /// Add an empty code and select it, which is what the editor then fills in.
+    ///
+    /// Off by default: a code with no words in it would do nothing, and one
+    /// that is enabled before it has been written is a code the user did not
+    /// ask for.
+    pub fn add_cheat(&mut self) {
+        self.cheats.push(Cheat {
+            name: "New cheat".to_owned(),
+            enabled: false,
+            ..Cheat::default()
+        });
+        self.select_cheat(Some(self.cheats.len() - 1));
+    }
+
+    /// Write the editor back into the selected code, and the whole list to
+    /// disk.
+    ///
+    /// Committing on a button rather than on every keystroke is deliberate:
+    /// `apply_cheats` compares the whole list against what the core was last
+    /// given, so live editing would push every code into the console once per
+    /// character typed.
+    pub fn commit_cheat_editor(&mut self) {
+        let Some(index) = self.cheat_selected else {
+            self.post_error("no code selected");
+            return;
+        };
+        let editor = self.cheat_editor.clone();
+        let code = match mch::parse_code(&editor.code) {
+            Ok(code) => code,
+            Err(token) => {
+                self.post_error(format!("not a 32-bit hex word: {token}"));
+                return;
+            }
+        };
+        let odd = !code.len().is_multiple_of(2);
+        let empty = code.is_empty();
+        let Some(cheat) = self.cheats.get_mut(index) else {
+            self.post_error("that code is no longer in the list");
+            return;
+        };
+        cheat.name = if editor.name.trim().is_empty() { "Unnamed".to_owned() } else { editor.name };
+        cheat.description = editor.notes;
+        cheat.code = code;
+        self.save_cheats();
+        if empty {
+            self.post_warn("saved, but that code has no words in it");
+        } else if odd {
+            self.post_warn("saved, but that code has an odd number of words");
+        }
+    }
+
+    /// Remove the selected code, selecting whatever takes its place.
+    pub fn delete_selected_cheat(&mut self) {
+        let Some(index) = self.cheat_selected else { return };
+        if index >= self.cheats.len() {
+            self.select_cheat(None);
+            return;
+        }
+        let removed = self.cheats.remove(index);
+        // The row that slid up into the gap, or the new last row when the one
+        // removed was the last -- either way the selection stays on screen.
+        let next = index.min(self.cheats.len().saturating_sub(1));
+        self.select_cheat((!self.cheats.is_empty()).then_some(next));
+        // Written straight away rather than left for Save: Save needs a
+        // selected code, and deleting the last one leaves nothing to select --
+        // so a deletion that waited for it could never be persisted at all.
+        self.save_cheats();
+        self.post_ok(format!("removed {}", removed.name));
     }
 
     /// Write the current list back to the cart's `.mch`.
@@ -57,6 +128,8 @@ impl MelonEgui {
             Ok(list) => {
                 let count = list.len();
                 self.cheats = list;
+                // The list the selection indexed into is gone.
+                self.select_cheat(None);
                 self.post_ok(format!("{count} codes read from {}", path.display()));
             }
             Err(e) => self.post_error(e),

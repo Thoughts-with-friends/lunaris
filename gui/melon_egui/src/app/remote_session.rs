@@ -183,7 +183,10 @@ impl MelonEgui {
         // panel is laid out. That is only ever wrong while the window is being
         // resized, and it self-corrects on the next repaint — a far better
         // trade than paying the decode on every sample.
-        let pad_keys = self.pads.poll(&self.bindings);
+        // A client has no console of its own, so the speed clicks in this
+        // sample are dropped: the speed belongs to the host, which is where the
+        // emulation is.
+        let pad_keys = self.pads.poll(&self.bindings).keys;
         let keys = if self.listening.is_some() {
             0
         } else {

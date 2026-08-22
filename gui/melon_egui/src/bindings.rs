@@ -264,6 +264,25 @@ impl Bindings {
             .fold(0, |mask, (it, _)| mask | it.bit())
     }
 
+    /// The bit `button` contributes to the key mask, or 0 if nothing is bound
+    /// to it.
+    ///
+    /// The event-driven counterpart of [`Self::pad_mask`]: that one asks the
+    /// pad what is *held*, this one turns a press that has already been and
+    /// gone into the same mask. See [`crate::pad`]'s Latency note.
+    #[must_use]
+    pub fn button_bit(&self, button: gilrs::Button) -> u32 {
+        self.entries()
+            .find(|(_, binding)| binding.button() == Some(button))
+            .map_or(0, |(input, _)| input.bit())
+    }
+
+    /// Whether any DS button answers to `button`.
+    #[must_use]
+    pub fn is_bound(&self, button: gilrs::Button) -> bool {
+        self.button_bit(button) != 0
+    }
+
     /// The DS key mask one pad is holding.
     #[must_use]
     pub fn pad_mask(&self, pad: &gilrs::Gamepad<'_>) -> u32 {
@@ -320,6 +339,29 @@ pub fn button_from_name(name: &str) -> Option<gilrs::Button> {
 #[cfg(test)]
 mod tests {
     use super::{Binding, Bindings, Device, DsInput, PAD_BUTTONS, button_from_name, button_name};
+
+    /// The event-latched half of pad input: a press that has already ended has
+    /// to reach the same bit `pad_mask` would have produced for it while held.
+    /// See [`crate::pad`]'s Latency note.
+    #[test]
+    fn a_pad_button_maps_to_the_bit_its_binding_names() {
+        let bindings = Bindings::default();
+        assert_eq!(bindings.button_bit(gilrs::Button::East), DsInput::A.bit());
+        assert_eq!(bindings.button_bit(gilrs::Button::South), DsInput::B.bit());
+        assert_eq!(bindings.button_bit(gilrs::Button::Start), DsInput::Start.bit());
+        assert_eq!(bindings.button_bit(gilrs::Button::LeftThumb), 0, "nothing is bound to it");
+    }
+
+    /// The speed button steps the emulation only while it is free -- a user who
+    /// binds it to a DS button gets the DS button.
+    #[test]
+    fn the_speed_button_is_free_until_it_is_bound() {
+        let mut bindings = Bindings::default();
+        assert!(!bindings.is_bound(crate::pad::SPEED_BUTTON));
+        bindings.bind_button(DsInput::Select, crate::pad::SPEED_BUTTON);
+        assert!(bindings.is_bound(crate::pad::SPEED_BUTTON));
+        assert_eq!(bindings.button_bit(crate::pad::SPEED_BUTTON), DsInput::Select.bit());
+    }
 
     /// Every default has to survive being written out and read back, or the
     /// first save would silently unbind the controls.

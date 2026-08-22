@@ -27,11 +27,27 @@ impl MelonEgui {
         // Pumped before the early return: gilrs only notices a pad being
         // plugged in while its queue is drained, and the Input pane lists
         // controllers whether or not a cart is running.
-        let pad_keys = self.pads.poll(&self.bindings);
+        let pad = self.pads.poll(&self.bindings);
+        // Each click of the left stick steps to the next speed, which is why
+        // this is a count and not a flag -- see `crate::pad::PadSample`.
+        for _ in 0..pad.speed_clicks {
+            self.cycle_speed();
+        }
+        let pad_keys = pad.keys;
 
         if self.emu.is_none() {
             return;
         }
+
+        // Real time unless the speed control says otherwise, and always real
+        // time when a second console is listening -- see
+        // [`Self::effective_speed`].
+        let speed = self.effective_speed();
+        // The catch-up ceiling has to rise with the speed or it becomes the
+        // speed: at 4x a repaint legitimately owes four times as many frames,
+        // and a cap below that both truncates the burst and trips the
+        // debt-dropping guard below on ordinary jitter.
+        let catch_up = catch_up_limit(speed);
 
         // melonDS's "pause when unfocused": the console keeps its state, it just
         // stops advancing while the window is in the background.
@@ -57,23 +73,23 @@ impl MelonEgui {
             // native rate anyway only builds a debt that is discharged as a
             // burst of rounds, which floods the peer — the very thing that
             // turns a slow link into a broken one.
-            let rate = self.lan_pace.as_ref().map_or(FRAME_RATE, crate::lan::LinkPace::frame_rate);
-            self.frame_debt += elapsed.as_secs_f64() * rate;
-            let due = (self.frame_debt as u32).min(MAX_CATCH_UP);
-            self.frame_debt -= f64::from(due);
-            // Whatever is still owed after the cap is dropped rather than
-            // carried, so a stall cannot turn into a burst later.
-            if self.frame_debt > f64::from(MAX_CATCH_UP) {
-                self.frame_debt = 0.0;
-            }
-            due
+            let rate = self.lan_pace.as_ref().map_or(FRAME_RATE, crate::lan::LinkPace::frame_rate)
+                * f64::from(speed);
+            earn_frames(&mut self.frame_debt, elapsed.as_secs_f64(), rate, catch_up)
         };
 
         // "Audio sync": when the ring is already comfortably full the sound
         // card has not caught up, so this repaint runs nothing and lets it. Only
-        // meaningful while the framerate limiter is on -- fast-forward
-        // deliberately outruns the device.
-        let due = if self.audio_sync && self.limit_framerate && !self.paused {
+        // meaningful while the framerate limiter is on and the console is
+        // running at real time -- both fast-forward and the speed control
+        // deliberately outrun the device, and at 2x the ring is *always* past
+        // the mark, so leaving this in would clamp every repaint to zero frames
+        // and the speed setting would do nothing at all.
+        let due = if self.audio_sync
+            && self.limit_framerate
+            && !self.paused
+            && crate::speed::is_real_time(speed)
+        {
             match &self.audio {
                 Ok(audio) if audio.fill() > 0.75 => 0,
                 _ => due,
@@ -288,5 +304,133 @@ impl MelonEgui {
         let mut buf = vec![0i16; queued * 2];
         let read = emu.nds.read_audio(&mut buf);
         audio.push(&buf[..read * 2]);
+    }
+}
+
+/// How many emulated frames `elapsed` seconds at `rate` frames a second have
+/// earned, up to `cap`, carrying the fraction in `debt`.
+///
+/// Split out of [`MelonEgui::advance`] so the pacing can be driven from a test
+/// without a console: this is the whole of what the speed setting changes, and
+/// "does 2x actually run twice as many frames" is a question about this
+/// function alone.
+///
+/// Whatever is still owed past `cap` is dropped rather than carried, so a stall
+/// -- a dragged window, a paused debugger -- cannot turn into a burst later.
+pub(crate) fn earn_frames(debt: &mut f64, elapsed: f64, rate: f64, cap: u32) -> u32 {
+    *debt += elapsed * rate;
+    let due = (*debt as u32).min(cap);
+    *debt -= f64::from(due);
+    if *debt > f64::from(cap) {
+        *debt = 0.0;
+    }
+    due
+}
+
+/// How many emulated frames one repaint may run to catch up, at `speed`.
+///
+/// [`MAX_CATCH_UP`] is the real-time budget; running at *n* times real time
+/// needs *n* times as much of it, and the ceiling is rounded up so a fractional
+/// speed is not quietly capped below itself.
+pub(crate) fn catch_up_limit(speed: f32) -> u32 {
+    let scale = speed.ceil().max(1.0) as u32;
+    MAX_CATCH_UP.saturating_mul(scale)
+}
+
+impl MelonEgui {
+    /// The speed the console is actually run at, which is the speed that was
+    /// asked for except where two consoles have to agree about time.
+    ///
+    /// A second console runs on its own thread at its own rate and a LAN peer
+    /// runs on another machine entirely; neither is told about this setting, so
+    /// running the local console faster would desynchronise a linked game
+    /// outright. The LAN case is worse than a desync -- `lan_pace` exists
+    /// precisely because issuing rounds faster than the link sustains floods
+    /// the peer.
+    #[must_use]
+    pub fn effective_speed(&self) -> f32 {
+        if self.lan_pace.is_some() || self.guest.is_some() {
+            crate::speed::DEFAULT
+        } else {
+            crate::speed::clamp(self.speed)
+        }
+    }
+
+    /// Whether [`Self::effective_speed`] is being held at real time rather than
+    /// following the setting, so the UI can say why the control is inert.
+    #[must_use]
+    pub fn speed_locked(&self) -> bool {
+        self.lan_pace.is_some() || self.guest.is_some()
+    }
+
+    /// Step to the next speed, announcing it: this is bound to a pad button
+    /// with no label on it, so the only feedback is what is said here.
+    pub fn cycle_speed(&mut self) {
+        self.speed = crate::speed::next(self.speed);
+        // The debt was accrued at the old rate; carrying it over would spend it
+        // at the new one, which is a lurch in whichever direction the speed
+        // changed.
+        self.frame_debt = 0.0;
+        if self.speed_locked() {
+            self.post_warn(format!(
+                "speed {} (not applied: a second console is running)",
+                crate::speed::label(self.speed)
+            ));
+        } else {
+            self.post(format!("speed {}", crate::speed::label(self.speed)));
+        }
+    }
+
+    /// Set the speed from the UI, clamped to the offered range.
+    pub fn set_speed(&mut self, speed: f32) {
+        self.speed = crate::speed::clamp(speed);
+        self.frame_debt = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FRAME_RATE, MAX_CATCH_UP, catch_up_limit, earn_frames};
+
+    /// One second of 60 Hz repaints at `speed`, as the pacing loop would run
+    /// them: how many emulated frames come out.
+    fn frames_in_one_second(speed: f32) -> u32 {
+        let mut debt = 0.0;
+        let cap = catch_up_limit(speed);
+        let rate = FRAME_RATE * f64::from(speed);
+        (0..60).map(|_| earn_frames(&mut debt, 1.0 / 60.0, rate, cap)).sum()
+    }
+
+    #[test]
+    fn one_second_of_repaints_earns_the_speed_it_was_asked_for() {
+        // The DS's own rate, to within the frame the debt is still carrying.
+        assert!((59..=60).contains(&frames_in_one_second(1.0)), "{}", frames_in_one_second(1.0));
+        assert!((29..=30).contains(&frames_in_one_second(0.5)), "{}", frames_in_one_second(0.5));
+        assert!((119..=120).contains(&frames_in_one_second(2.0)), "{}", frames_in_one_second(2.0));
+        assert!((239..=240).contains(&frames_in_one_second(4.0)), "{}", frames_in_one_second(4.0));
+    }
+
+    #[test]
+    fn a_stall_is_dropped_rather_than_paid_back_as_a_burst() {
+        let mut debt = 0.0;
+        // Ten seconds of nothing: nearly 600 frames owed, capped at four.
+        let due = earn_frames(&mut debt, 10.0, FRAME_RATE, MAX_CATCH_UP);
+        assert_eq!(due, MAX_CATCH_UP);
+        assert_eq!(debt, 0.0, "the surplus is dropped, not carried");
+    }
+
+    #[test]
+    fn the_catch_up_budget_grows_with_the_speed() {
+        assert_eq!(catch_up_limit(1.0), MAX_CATCH_UP);
+        assert_eq!(
+            catch_up_limit(0.5),
+            MAX_CATCH_UP,
+            "a slow speed still gets the real-time budget"
+        );
+        assert_eq!(catch_up_limit(2.0), MAX_CATCH_UP * 2);
+        assert_eq!(catch_up_limit(4.0), MAX_CATCH_UP * 4);
+        // 1.5x owes more than one frame per repaint, so it needs more than the
+        // 1x budget or the cap would hold it below its own speed.
+        assert!(catch_up_limit(1.5) > MAX_CATCH_UP);
     }
 }

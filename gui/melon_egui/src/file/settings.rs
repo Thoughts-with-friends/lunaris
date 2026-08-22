@@ -29,6 +29,8 @@ pub struct Settings {
     pub open_panes: Vec<Pane>,
     pub limit_framerate: bool,
     pub audio_sync: bool,
+    /// How fast the console runs relative to real time. See [`crate::speed`].
+    pub speed: f32,
     /// melonDS's "Enable cheats", which is a preference rather than a per-cart
     /// thing: the codes themselves live in the cart's `.mch`.
     pub cheats_enabled: bool,
@@ -78,6 +80,7 @@ impl Default for Settings {
             open_panes: Vec::new(),
             limit_framerate: true,
             audio_sync: false,
+            speed: crate::speed::DEFAULT,
             cheats_enabled: false,
             volume: 1.0,
             state_dir: None,
@@ -163,6 +166,7 @@ impl Settings {
             self.lan_bind_address = DEFAULT_LAN_BIND.to_owned();
         }
         self.recents.truncate(RECENT_LIMIT);
+        self.speed = crate::speed::clamp(self.speed);
     }
 
     /// Record `rom` as the newest entry, moving it up if it was already there and

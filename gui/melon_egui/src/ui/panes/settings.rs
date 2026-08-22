@@ -5,13 +5,59 @@ use super::*;
 pub(super) fn emu_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.limit_framerate, "Limit framerate")
         .on_hover_text("Off runs the core as fast as it will go.");
-    ui.checkbox(&mut app.audio_sync, "Audio sync");
+    ui.checkbox(&mut app.audio_sync, "Audio sync").on_hover_text(
+        "Only takes effect at 1.00x: any other speed deliberately outruns the          sound card, so pacing against it would cancel the speed setting out.",
+    );
+    ui.separator();
+
+    emulation_speed(app, ui);
     ui.separator();
     ui.label("Console: DS, direct boot, FreeBIOS + generated firmware.");
     ui.label("The shim offers no other boot mode, so there is nothing else to pick.");
     ui.separator();
     ui.checkbox(&mut app.mic_static, "Microphone: white noise")
         .on_hover_text("The only mic input this build has; carts wanting a breath hear static.");
+}
+
+/// The Emu settings pane's speed control.
+///
+/// The same setting the pad's left-stick click steps through, so the slider
+/// moves when the pad is clicked and vice versa -- there is one value, and both
+/// are views of it. See [`crate::speed`].
+fn emulation_speed(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    ui.heading("Emulation speed");
+
+    let mut speed = app.speed;
+    let slider = egui::Slider::new(&mut speed, crate::speed::MIN..=crate::speed::MAX)
+        .step_by(0.05)
+        .text("Speed")
+        .custom_formatter(|v, _| crate::speed::label(v as f32));
+    if ui.add(slider).changed() {
+        app.set_speed(speed);
+    }
+
+    // The steps the pad cycles through, offered as buttons so the two controls
+    // cannot disagree about what a "step" is.
+    ui.horizontal_wrapped(|ui| {
+        for step in crate::speed::STEPS {
+            let selected = (app.speed - step).abs() < 0.001;
+            if ui.selectable_label(selected, crate::speed::label(step)).clicked() {
+                app.set_speed(step);
+            }
+        }
+    });
+
+    if app.speed_locked() {
+        ui.colored_label(
+            Severity::Warn.color(ui.visuals().dark_mode),
+            "Held at 1.00x: a second console or a LAN link is running, and both              consoles have to agree about time.",
+        );
+    }
+    ui.label(concat!(
+        "Clicking the pad's left stick steps through the same list. The console is not ",
+        "reclocked -- what changes is how many emulated frames one repaint may run, so ",
+        "a frame at 2x is the same frame it would have been at 1x.",
+    ));
 }
 
 pub(super) fn preferences(app: &mut MelonEgui, ui: &mut egui::Ui) {

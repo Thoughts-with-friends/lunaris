@@ -35,10 +35,12 @@ impl MelonEgui {
             applied_renderer: None,
             limit_framerate: settings.limit_framerate,
             mic_static: false,
+            speed: crate::speed::clamp(settings.speed),
             cheats: Vec::new(),
             cheats_enabled: settings.cheats_enabled,
             applied_cheats: None,
-            cheat_draft: (String::new(), String::new()),
+            cheat_editor: CheatEditor::default(),
+            cheat_selected: None,
             crash_report: None,
             font_note: Notice::default(),
             pads: crate::pad::Pads::new(),
@@ -189,6 +191,7 @@ impl MelonEgui {
             open_panes: self.panes.clone(),
             limit_framerate: self.limit_framerate,
             audio_sync: self.audio_sync,
+            speed: self.speed,
             cheats_enabled: self.cheats_enabled,
             volume: self.volume(),
             state_dir: self.state_dir.clone(),
@@ -213,6 +216,7 @@ impl MelonEgui {
         self.video = VideoOptions { render: true, ..settings.video };
         self.limit_framerate = settings.limit_framerate;
         self.audio_sync = settings.audio_sync;
+        self.speed = crate::speed::clamp(settings.speed);
         self.cheats_enabled = settings.cheats_enabled;
         self.dark_theme = settings.dark_theme;
         self.ui_scale = if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 };

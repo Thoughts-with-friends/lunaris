@@ -35,6 +35,8 @@ impl MelonEgui {
             Ok(emu) => {
                 self.emu = Some(emu);
                 self.cheats = mch::load(&Self::cheat_path(rom)).unwrap_or_default();
+                // A new cart is a new list; the old selection indexed the old one.
+                self.select_cheat(None);
                 self.applied_cheats = None;
                 if !self.cheats.is_empty() {
                     // Worth saying out loud: a code file found beside the ROM
