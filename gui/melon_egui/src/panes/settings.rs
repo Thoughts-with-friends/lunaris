@@ -120,29 +120,48 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     // The one setting here that can improve a 2D layer: those come from tiles
     // at 256x192 whatever the renderer does, so the internal resolution above
     // cannot touch them.
-    let on_software = app.video.renderer == Renderer::Software;
-    ui.add_enabled_ui(on_software, |ui| {
-        ui.horizontal(|ui| {
-            for method in upscale::Method::ALL {
-                ui.selectable_value(&mut app.video.upscale, method, method.label());
-            }
-        });
-        let mut factor = app.video.upscale_factor();
-        let slider = egui::Slider::new(&mut factor, upscale::MIN_FACTOR..=upscale::MAX_FACTOR)
-            .text("Factor")
-            .custom_formatter(|v, _| format!("{v}x"));
-        if ui.add_enabled(app.video.upscale != upscale::Method::None, slider).changed() {
-            app.video.upscale_factor = factor;
+    ui.horizontal(|ui| {
+        for method in upscale::Method::ALL {
+            ui.selectable_value(&mut app.video.upscale, method, method.label());
         }
     });
-    if on_software {
-        ui.label(
-            "xBRZ redraws the finished picture edge by edge, which is what smooths              sprites and text rather than blurring them. It runs on the CPU, once              per screen per frame.",
-        );
-    } else {
-        ui.label(
-            "Software renderer only: an OpenGL renderer leaves its picture in a              texture, and filtering it would mean reading the whole thing back              every frame.",
-        );
+    let mut factor = app.video.upscale_factor();
+    let slider = egui::Slider::new(&mut factor, upscale::MIN_FACTOR..=upscale::MAX_FACTOR)
+        .text("Factor")
+        .custom_formatter(|v, _| format!("{v}x"));
+    let on = app.video.upscale != upscale::Method::None;
+    if ui.add_enabled(on, slider).changed() {
+        app.video.upscale_factor = factor;
+    }
+    ui.label(concat!(
+        "xBRZ redraws the picture edge by edge, which is what smooths sprites and ",
+        "text rather than blurring them. It is the only setting here that improves ",
+        "a 2D layer — those are built from tiles at 256x192 whatever the renderer ",
+        "does, so the internal resolution above cannot touch them.",
+    ));
+
+    if on {
+        // Which of the two routes is in use is worth saying: the setting is
+        // shared, but what it does — and what it costs — is not.
+        if app.video.renderer == Renderer::Software {
+            ui.label(format!(
+                "Software renderer: filtered on the CPU at {}x, once per screen per frame.",
+                factor
+            ));
+        } else {
+            ui.label(concat!(
+                "OpenGL renderer: the same filter, at the same 256x192, on the same CPU — ",
+                "the 2D content is read back off the GPU at the DS's own size, filtered, ",
+                "and shown wherever the picture came from the 2D engine. The 3D never ",
+                "makes the trip and keeps every pixel the internal resolution above drew. ",
+                "So both settings apply at once and neither is capped by the other.",
+            ));
+            ui.label(format!(
+                "Costs one {w}x{h} readback per screen per frame, and {w}x{h} pixels through                  xBRZ — the same work the software renderer already does.",
+                w = crate::gl_screen::DS_WIDTH,
+                h = crate::gl_screen::DS_HEIGHT,
+            ));
+        }
     }
     ui.separator();
 
@@ -239,8 +258,82 @@ pub(super) fn audio_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.mic_static, "Microphone: white noise");
 }
 
-pub(super) fn input(app: &MelonEgui, ui: &mut egui::Ui) {
-    ui.label("Bindings are fixed in this front end.");
+/// melonDS's Input dialog: one row per DS button, a keyboard column and a
+/// controller column, and a click to rebind.
+///
+/// # How rebinding works
+///
+/// Clicking a cell arms it; the next key — or the next pad button — becomes the
+/// binding. While a cell is armed the app stops handing key presses to the
+/// console (see `MelonEgui::listening`), so binding `Start` does not also press
+/// Start. `Escape` cancels and right-clicking a cell clears it, which is the
+/// only way to leave a button deliberately unbound.
+pub(super) fn input(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    use crate::bindings::{Device, DsInput};
+
+    // Collected first and applied after the grid: the closures below borrow
+    // `app` for the whole of it.
+    let mut arm: Option<(DsInput, Device)> = None;
+    let mut clear: Option<(DsInput, Device)> = None;
+    let listening = app.listening;
+
+    egui::Grid::new("bindings").striped(true).num_columns(3).show(ui, |ui| {
+        ui.label("");
+        ui.strong("Keyboard");
+        ui.strong("Controller");
+        ui.end_row();
+
+        for input in DsInput::ALL {
+            let binding = app.bindings.get(input);
+            ui.label(input.label());
+            for (device, bound) in
+                [(Device::Keyboard, binding.key.clone()), (Device::Pad, binding.button.clone())]
+            {
+                let armed = listening == Some((input, device));
+                let text = if armed {
+                    "press...".to_owned()
+                } else {
+                    bound.unwrap_or_else(|| "—".to_owned())
+                };
+                let cell = ui
+                    .add_sized(
+                        [130.0, 20.0],
+                        egui::Button::new(text).selected(armed).min_size(egui::vec2(130.0, 20.0)),
+                    )
+                    .on_hover_text("Click to rebind, right-click to clear.");
+                if cell.clicked() {
+                    arm = Some((input, device));
+                }
+                if cell.secondary_clicked() {
+                    clear = Some((input, device));
+                }
+            }
+            ui.end_row();
+        }
+
+        ui.label("Touch");
+        ui.monospace("click the bottom screen");
+        ui.monospace("—");
+        ui.end_row();
+    });
+
+    if let Some(armed) = arm {
+        app.listening = Some(armed);
+    }
+    if let Some((input, device)) = clear {
+        app.bindings.clear(input, device);
+        app.listening = None;
+        app.save_settings();
+    }
+
+    if app.listening.is_some() {
+        ui.label("Waiting for a press. Escape cancels.");
+    }
+    if ui.button("Reset to melonDS's defaults").clicked() {
+        app.bindings = crate::bindings::Bindings::default();
+        app.listening = None;
+        app.save_settings();
+    }
     ui.separator();
 
     ui.heading("Controllers");
@@ -254,18 +347,9 @@ pub(super) fn input(app: &MelonEgui, ui: &mut egui::Ui) {
             }
         }
     }
-    ui.label(
-        "Face buttons map by position, as the DS lays them out: A is the right-hand          button and B the bottom one. Shoulders are L and R; the D-pad and the left          stick both steer. Pad and keyboard are merged, so either works at any time.",
-    );
-    ui.separator();
-    egui::Grid::new("bindings").striped(true).show(ui, |ui| {
-        for (key, _, name) in BINDINGS {
-            ui.label(*name);
-            ui.monospace(key.name());
-            ui.end_row();
-        }
-        ui.label("Touch");
-        ui.monospace("click the bottom screen");
-        ui.end_row();
-    });
+    ui.label(concat!(
+        "The left stick always steers, whatever the D-pad is bound to: a stick is an ",
+        "axis and the D-pad is four switches, and many pads report their D-pad as that ",
+        "axis anyway. Pad and keyboard are merged, so either works at any time.",
+    ));
 }

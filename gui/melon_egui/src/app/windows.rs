@@ -15,10 +15,7 @@ impl MelonEgui {
         }
         let id = guest_viewport_id();
         let read = |i: &egui::InputState| {
-            let keys = BINDINGS
-                .iter()
-                .filter(|(key, ..)| i.key_down(*key))
-                .fold(0, |mask, (_, bit, _)| mask | bit);
+            let keys = self.bindings.key_mask(i);
             let pointer = i.pointer.primary_down().then(|| i.pointer.interact_pos()).flatten();
             (keys, pointer)
         };

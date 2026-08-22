@@ -12,7 +12,7 @@ use std::{
 };
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2};
-use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH, keys};
+use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use crate::{
     audio::Audio,
@@ -49,7 +49,8 @@ mod savefiles;
 mod update;
 mod windows;
 
-pub(crate) use geometry::{FULL_CLIP, guest_viewport_id, paint_screen, to_image, touch_coords};
+pub(crate) use geometry::{guest_viewport_id, paint_screen, to_image, touch_coords};
+pub(crate) use gl_screen::FULL_CLIP;
 pub(crate) use host_bridge::{ArcHost, LanConnection};
 pub(crate) use net_address::{parse_lan_address, parse_remote_address};
 
@@ -172,22 +173,6 @@ pub fn default_window_size() -> [f32; 2] {
 pub fn min_window_size() -> [f32; 2] {
     view::window_size_for_scale(1.0, &ViewOptions::default(), CHROME_HEIGHT).into()
 }
-
-/// Keyboard bindings, matching melonDS's defaults.
-pub const BINDINGS: &[(egui::Key, u32, &str)] = &[
-    (egui::Key::X, keys::A, "A"),
-    (egui::Key::Z, keys::B, "B"),
-    (egui::Key::S, keys::X, "X"),
-    (egui::Key::A, keys::Y, "Y"),
-    (egui::Key::Q, keys::L, "L"),
-    (egui::Key::W, keys::R, "R"),
-    (egui::Key::Enter, keys::START, "Start"),
-    (egui::Key::Backspace, keys::SELECT, "Select"),
-    (egui::Key::ArrowUp, keys::UP, "Up"),
-    (egui::Key::ArrowDown, keys::DOWN, "Down"),
-    (egui::Key::ArrowLeft, keys::LEFT, "Left"),
-    (egui::Key::ArrowRight, keys::RIGHT, "Right"),
-];
 
 pub struct MelonEgui {
     emu: Option<Emu>,
@@ -335,6 +320,16 @@ pub struct MelonEgui {
     undo_state: Option<Vec<u8>>,
     /// Emulated frames run since the cart booted, for [`Self::service_shot`].
     frames_run: u64,
+    /// Which key and which pad button each DS button answers to.
+    pub bindings: crate::bindings::Bindings,
+    /// The binding the Input dialog is waiting for a press to fill in.
+    ///
+    /// While this is set the next key — or the next pad button — is taken as
+    /// the new binding rather than as a button press for the console, which is
+    /// why it lives here rather than in the pane: [`Self::advance`] has to know
+    /// not to hand that press to the cart.
+    pub listening: Option<(crate::bindings::DsInput, crate::bindings::Device)>,
+
     /// The file dialog that is open, if any, and what it is asking about.
     ///
     /// One at a time: the dialogs are not parented to the window, so two open

@@ -6,6 +6,49 @@
 use super::*;
 
 impl MelonEgui {
+    /// Turn the next press into a binding, while the Input dialog is waiting
+    /// for one.
+    ///
+    /// Runs once a repaint from [`Self::advance`], ahead of the key sampling
+    /// that would otherwise hand the same press to the cart.
+    ///
+    /// Keys come from the event list rather than from the held state so that
+    /// the binding lands on the press and not on every frame it is held down;
+    /// a pad has no such list, so its buttons are read from state and the
+    /// dialog closes on the first one seen.
+    pub(crate) fn poll_rebind(&mut self, ctx: &egui::Context) {
+        let Some((input, device)) = self.listening else { return };
+
+        let pressed = ctx.input(|i| {
+            i.events.iter().find_map(|event| match event {
+                egui::Event::Key { key, pressed: true, .. } => Some(*key),
+                _ => None,
+            })
+        });
+        if pressed == Some(egui::Key::Escape) {
+            self.listening = None;
+            return;
+        }
+
+        let bound = match device {
+            crate::bindings::Device::Keyboard => pressed.inspect(|key| {
+                self.bindings.bind_key(input, *key);
+            }),
+            crate::bindings::Device::Pad => {
+                // Escape cancels a pad binding too, which is the only way out
+                // when the pad that was going to be bound is unplugged.
+                self.pads.first_pressed().map(|button| {
+                    self.bindings.bind_button(input, button);
+                    egui::Key::Space
+                })
+            }
+        };
+        if bound.is_some() {
+            self.listening = None;
+            self.persist();
+        }
+    }
+
     pub fn is_loaded(&self) -> bool {
         self.emu.is_some()
     }

@@ -6,14 +6,7 @@
 
 use egui::Context;
 
-use crate::{
-    app::{BINDINGS, MelonEgui},
-    config,
-    mp::Kind,
-    upscale,
-    video::Renderer,
-    view::AspectRatio,
-};
+use crate::{app::MelonEgui, config, mp::Kind, upscale, video::Renderer, view::AspectRatio};
 
 mod cheat_codes;
 mod console;
@@ -88,9 +81,11 @@ pub fn show(app: &mut MelonEgui, ctx: &Context) {
             .open(&mut open)
             .resizable(matches!(
                 pane,
-                Pane::RamSearch | Pane::Wireless | Pane::Cheats | Pane::Crash
+                Pane::RamSearch | Pane::Wireless | Pane::Cheats | Pane::Crash | Pane::Input
             ))
-            .default_width(if matches!(pane, Pane::Wireless) { 460.0 } else { 260.0 })
+            // The two that are wider by nature: the wireless dialog is a table
+            // of counters, and Input is three columns of bindings.
+            .default_width(if matches!(pane, Pane::Wireless | Pane::Input) { 460.0 } else { 260.0 })
             .show(ctx, |ui| body(app, pane, ui));
         if !open {
             app.close_pane(pane);

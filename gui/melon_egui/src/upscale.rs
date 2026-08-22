@@ -10,11 +10,26 @@
 //!
 //! # Where it applies
 //!
-//! Only under the software renderer, whose picture arrives as host pixels this
-//! can work on. An OpenGL renderer leaves its output in a texture — filtering
-//! it would mean reading the whole thing back every frame, which costs more
-//! than it buys — so the setting is offered but inert there, and the dialog
-//! says so.
+//! Both renderers — but by two different routes, because the picture is in two
+//! different places.
+//!
+//! Under the **software** renderer the frame arrives as host pixels at
+//! 256x192, and this module filters them: cheap, because that is a fifth of a
+//! megapixel, and it is the only chance the picture gets.
+//!
+//! Under an **OpenGL** renderer the frame never leaves the GPU, and the same
+//! rule lives in the blit shader instead ([`crate::gl_screen`]). That is not a
+//! shortcut but the better place for it: the filter then runs at the size the
+//! picture is *drawn*, once per fragment the GPU was going to shade anyway, so
+//! it costs no frame rate and puts no ceiling on the internal resolution. The
+//! two settings stop competing — the internal resolution sharpens the 3D, the
+//! shader sharpens the 2D, and neither takes anything from the other.
+//!
+//! Reading the frame back to run *this* code on it would do the opposite: at 4x
+//! internal it is 1.5 million pixels a frame through a CPU filter, and the two
+//! scales would multiply into an intermediate image that has to be capped. The
+//! [`Method`] setting is shared, so a user turns xBRZ on once and gets whichever
+//! of the two the current renderer can do.
 //!
 //! # Why the pass chain
 //!

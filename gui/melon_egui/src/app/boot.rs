@@ -76,6 +76,8 @@ impl MelonEgui {
             remote_pending: None,
             remote_tuning: settings.remote,
             remote_stats: None,
+            bindings: settings.bindings.clone(),
+            listening: None,
             dialog: None,
             // The environment variable still wins, because it is what a
             // scripted two-machine test sets; otherwise the address is the last
@@ -196,6 +198,7 @@ impl MelonEgui {
             lan_bind_address: self.lan_bind_address.clone(),
             lan: self.lan_tuning,
             remote: self.remote_tuning,
+            bindings: self.bindings.clone(),
         }
     }
 
@@ -220,6 +223,7 @@ impl MelonEgui {
         self.panes = settings.open_panes.clone();
         self.lan_tuning = settings.lan;
         self.remote_tuning = settings.remote;
+        self.bindings = settings.bindings.clone();
         self.set_language(settings.language);
         if let Ok(audio) = &mut self.audio {
             audio.volume = settings.volume;

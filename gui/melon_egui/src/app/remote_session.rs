@@ -185,12 +185,12 @@ impl MelonEgui {
         // panel is laid out. That is only ever wrong while the window is being
         // resized, and it self-corrects on the next repaint — a far better
         // trade than paying the decode on every sample.
-        let keys = ctx.input(|i| {
-            BINDINGS
-                .iter()
-                .filter(|(key, ..)| i.key_down(*key))
-                .fold(0, |mask, (_, bit, _)| mask | bit)
-        }) | self.pads.poll();
+        let pad_keys = self.pads.poll(&self.bindings);
+        let keys = if self.listening.is_some() {
+            0
+        } else {
+            ctx.input(|i| self.bindings.key_mask(i)) | pad_keys
+        };
         client.send_input(keys, self.sample_touch(ctx));
 
         if let Some([top, bottom]) = client.take_screens() {

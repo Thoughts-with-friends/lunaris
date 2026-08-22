@@ -7,8 +7,11 @@
 use super::*;
 
 impl eframe::App for MelonEgui {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.advance(ctx);
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // `frame` carries eframe's GL context, which is what lets the 2D
+        // round trip in `crate::gl_screen::capture` happen at all: it needs
+        // the context current, and a paint callback is too late.
+        self.advance(ctx, frame);
 
         let mut action = None;
         egui::TopBottomPanel::top("menu").show(ctx, |ui| action = menu::bar(self, ui));

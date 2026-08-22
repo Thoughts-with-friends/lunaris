@@ -83,7 +83,7 @@ impl MelonEgui {
 
     /// Run however many emulated frames wall-clock time has earned, then upload
     /// the resulting picture.
-    pub(crate) fn advance(&mut self, ctx: &egui::Context) {
+    pub(crate) fn advance(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         let elapsed = self.last_tick.elapsed();
         self.last_tick = Instant::now();
         self.poll_lan();
@@ -105,7 +105,7 @@ impl MelonEgui {
         // Pumped before the early return: gilrs only notices a pad being
         // plugged in while its queue is drained, and the Input pane lists
         // controllers whether or not a cart is running.
-        let pad_keys = self.pads.poll();
+        let pad_keys = self.pads.poll(&self.bindings);
 
         if self.emu.is_none() {
             return;
@@ -162,14 +162,15 @@ impl MelonEgui {
 
         // Sampled before the core is borrowed, since both readings come out of
         // `self` and the emulator borrow would conflict with them.
-        let keys = ctx.input(|i| {
-            BINDINGS
-                .iter()
-                .filter(|(key, ..)| i.key_down(*key))
-                .fold(0, |mask, (_, bit, _)| mask | bit)
-            // Pads are merged with the keyboard rather than replacing it, so
-            // neither has to be chosen up front and holding both is one press.
-        }) | pad_keys;
+        self.poll_rebind(ctx);
+        // A key pressed while the Input dialog is waiting for one is a
+        // rebinding, not a button press: handing it to the cart as well would
+        // make the console jump every time somebody changed a binding.
+        let keys = if self.listening.is_some() {
+            0
+        } else {
+            ctx.input(|i| self.bindings.key_mask(i)) | pad_keys
+        };
         let touch = self.sample_touch(ctx);
         // The guest window has its own input; see `guest_view`.
         let (guest_keys, guest_touch) = self.sample_guest_input(ctx);
@@ -250,7 +251,7 @@ impl MelonEgui {
         }
 
         if ran > 0 {
-            self.upload(ctx);
+            self.upload(ctx, frame);
         }
 
         let window = self.fps_since.elapsed();

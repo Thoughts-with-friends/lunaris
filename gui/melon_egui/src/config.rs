@@ -51,6 +51,9 @@ pub struct Settings {
     pub lan: crate::lan::Tuning,
     /// How Remote Desktop mode behaves. See [`crate::remote::Tuning`].
     pub remote: crate::remote::Tuning,
+    /// Which key and which pad button each DS button answers to. Defaults to
+    /// melonDS's own map; see [`crate::bindings`].
+    pub bindings: crate::bindings::Bindings,
 }
 
 /// What the guest join box holds before anyone has typed in it: this machine,
@@ -82,6 +85,7 @@ impl Default for Settings {
             lan_bind_address: DEFAULT_LAN_BIND.to_owned(),
             lan: crate::lan::Tuning::default(),
             remote: crate::remote::Tuning::default(),
+            bindings: crate::bindings::Bindings::default(),
         }
     }
 }

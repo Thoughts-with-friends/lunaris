@@ -74,6 +74,10 @@
 mod app;
 #[cfg(feature = "melonds")]
 mod audio;
+/// Which key and which pad button each DS button answers to. Needs the core's
+/// key bits, so it goes with it.
+#[cfg(feature = "melonds")]
+mod bindings;
 #[cfg(feature = "melonds")]
 mod cheats;
 // Depends on the view and video option types, which only exist with the core.

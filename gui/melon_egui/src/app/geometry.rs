@@ -5,10 +5,6 @@
 
 use super::*;
 
-/// A quad covering the whole GL viewport, which egui_glow has already set to
-/// the paint callback's rectangle.
-pub(crate) const FULL_CLIP: [f32; 4] = [-1.0, -1.0, 2.0, 2.0];
-
 /// The second console's window. A stable id, so the viewport survives repaints.
 pub(crate) fn guest_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("melon_egui-instance-2")

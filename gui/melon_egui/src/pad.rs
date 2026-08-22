@@ -7,17 +7,18 @@
 //!
 //! # What it maps to
 //!
-//! The face buttons follow the DS's own layout rather than the pad's labels:
-//! the DS's A is on the right and its B at the bottom, which is the same
-//! arrangement a modern pad has, so A/B/X/Y map to East/South/North/West by
-//! position. Everything else is the obvious one — shoulders to L and R, Start
-//! and Select to Start and Select, and both the D-pad and the left stick to the
-//! D-pad, since a cart cannot tell them apart.
+//! Whatever [`crate::bindings`] says, which starts as melonDS's own map and is
+//! editable in `Config ▸ Input and hotkeys`. The one thing not in that map is
+//! the left stick: it stands in for the D-pad unconditionally, because a cart
+//! cannot tell the two apart and nobody wants to bind a stick to four
+//! directions by hand.
 //!
 //! Input is *merged* with the keyboard rather than replacing it: a key and a
 //! button held together are one press, and neither has to be chosen up front.
 
 use melonds::keys;
+
+use crate::bindings::Bindings;
 
 /// Past this, the left stick counts as a direction held. Generous, because the
 /// D-pad it stands in for is a switch and not an axis — an eighth of a push
@@ -54,7 +55,7 @@ impl Pads {
     /// The events are drained rather than acted on: gilrs only updates the
     /// state this reads while its queue is being pumped, and reading state is
     /// what makes a held button hold rather than repeat.
-    pub fn poll(&mut self) -> u32 {
+    pub fn poll(&mut self, bindings: &Bindings) -> u32 {
         let Some(gilrs) = &mut self.gilrs else {
             return 0;
         };
@@ -64,9 +65,27 @@ impl Pads {
         let mut mask = 0;
         for (_id, pad) in gilrs.gamepads() {
             self.connected.push(pad.name().to_owned());
-            mask |= Self::mask_of(&pad);
+            mask |= bindings.pad_mask(&pad) | Self::stick_mask(&pad);
         }
         mask
+    }
+
+    /// The first button any connected pad is holding, for the Input dialog to
+    /// bind.
+    ///
+    /// Read from state rather than from an event, so that the dialog cannot
+    /// miss a press that landed between two repaints — the same reason
+    /// [`Self::poll`] does.
+    #[must_use]
+    pub fn first_pressed(&mut self) -> Option<gilrs::Button> {
+        let gilrs = self.gilrs.as_mut()?;
+        while gilrs.next_event().is_some() {}
+        gilrs.gamepads().find_map(|(_id, pad)| {
+            crate::bindings::PAD_BUTTONS
+                .iter()
+                .find(|(button, _)| pad.is_pressed(*button))
+                .map(|(button, _)| *button)
+        })
     }
 
     /// The names of the pads the last [`Self::poll`] saw.
@@ -74,39 +93,16 @@ impl Pads {
         &self.connected
     }
 
-    /// One pad's buttons and stick as a DS key mask.
-    fn mask_of(pad: &gilrs::Gamepad<'_>) -> u32 {
-        use gilrs::{Axis, Button};
-
-        const BUTTONS: [(Button, u32); 10] = [
-            // By position, not by label: the DS's A is the right-hand face
-            // button and its B the bottom one.
-            (Button::East, keys::A),
-            (Button::South, keys::B),
-            (Button::North, keys::X),
-            (Button::West, keys::Y),
-            (Button::LeftTrigger, keys::L),
-            (Button::RightTrigger, keys::R),
-            (Button::Start, keys::START),
-            (Button::Select, keys::SELECT),
-            (Button::DPadUp, keys::UP),
-            (Button::DPadDown, keys::DOWN),
-        ];
+    /// The left stick as a DS D-pad mask.
+    ///
+    /// Not part of [`crate::bindings`] on purpose: a stick is an axis and the
+    /// D-pad is four switches, so there is nothing sensible to *bind* it to
+    /// one of. Many pads also report their D-pad as this axis, which is the
+    /// other reason it is always read.
+    fn stick_mask(pad: &gilrs::Gamepad<'_>) -> u32 {
+        use gilrs::Axis;
 
         let mut mask = 0;
-        for (button, bit) in BUTTONS {
-            if pad.is_pressed(button) {
-                mask |= bit;
-            }
-        }
-        // Split out only because the array above is already at the length that
-        // reads well; there is nothing different about these two.
-        for (button, bit) in [(Button::DPadLeft, keys::LEFT), (Button::DPadRight, keys::RIGHT)] {
-            if pad.is_pressed(button) {
-                mask |= bit;
-            }
-        }
-
         // A pad whose D-pad is reported as an axis (many are) shows up here
         // instead, and so does the left stick. Up is positive on both.
         let x = pad.value(Axis::LeftStickX);
