@@ -86,7 +86,7 @@ impl Screen {
             // it just cannot have xBRZ on its 2D.
             let capture = capture::Capture::new(gl)
                 .inspect_err(|error| {
-                    eprintln!("melon_egui: no 2D capture ({error}); xBRZ is off under OpenGL");
+                    log::warn!("no 2D capture ({error}); xBRZ is off under OpenGL");
                 })
                 .ok();
             Ok(Self { program, vao, capture })

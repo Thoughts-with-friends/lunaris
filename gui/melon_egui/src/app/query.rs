@@ -142,10 +142,12 @@ impl MelonEgui {
     }
 
     /// What the Audio settings pane says about the device.
-    pub fn audio_status(&self) -> String {
+    pub fn audio_status(&self) -> Notice {
         match &self.audio {
-            Ok(audio) => format!("Playing on {}", audio.description()),
-            Err(e) => format!("No audio output: {e}"),
+            Ok(audio) => {
+                Notice::quiet(Severity::Success, format!("Playing on {}", audio.description()))
+            }
+            Err(e) => Notice::quiet(Severity::Error, format!("No audio output: {e}")),
         }
     }
 
@@ -177,12 +179,15 @@ impl MelonEgui {
         match &mut self.emu {
             Some(emu) => {
                 emu.set_clock(clock);
-                self.clock_note = format!(
-                    "set to {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                    clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second
+                self.clock_note = Notice::new(
+                    Severity::Success,
+                    format!(
+                        "set to {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                        clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second
+                    ),
                 );
             }
-            None => self.clock_note = "no cart loaded".to_owned(),
+            None => self.clock_note = Notice::new(Severity::Warn, "no cart loaded"),
         }
         // Both consoles, always: two carts that disagree about the date behave
         // differently in any game that checks it, and on a link that is a
@@ -194,15 +199,15 @@ impl MelonEgui {
 
     // -- the RAM search -----------------------------------------------------
 
-    /// Post an OSD message from a pane.
-    pub fn post_message(&mut self, message: impl Into<String>) {
-        self.post(message);
+    /// Post an OSD message from a pane, at whatever severity it earned.
+    pub fn post_message(&mut self, severity: Severity, message: impl Into<String>) {
+        self.notify(severity, message);
     }
 
     /// Show `dir` in the system file manager, creating it first.
     pub fn reveal(&mut self, dir: &Path) {
         if let Err(error) = std::fs::create_dir_all(dir) {
-            self.post(format!("cannot create {}: {error}", dir.display()));
+            self.post_error(format!("cannot create {}: {error}", dir.display()));
             return;
         }
         let command = if cfg!(windows) {
@@ -215,8 +220,8 @@ impl MelonEgui {
         match std::process::Command::new(command).arg(dir).spawn() {
             // `explorer` exits non-zero even on success, so a spawned child is
             // as much confirmation as there is to be had.
-            Ok(_) => self.post(format!("opened {}", dir.display())),
-            Err(error) => self.post(format!("cannot open {}: {error}", dir.display())),
+            Ok(_) => self.post_ok(format!("opened {}", dir.display())),
+            Err(error) => self.post_error(format!("cannot open {}: {error}", dir.display())),
         }
     }
 
@@ -236,12 +241,30 @@ impl MelonEgui {
         }
     }
 
-    /// Post an OSD message. Also where every command reports its outcome, so
-    /// that failures are visible without a console.
+    /// Post a neutral OSD message: a state change worth mentioning.
     pub(crate) fn post(&mut self, message: impl Into<String>) {
-        let message = message.into();
-        eprintln!("melon_egui: {message}");
-        self.osd = Some((message, Instant::now()));
+        self.notify(Severity::Info, message);
+    }
+
+    /// Post a failure. Red on screen, `error!` in the log.
+    pub(crate) fn post_error(&mut self, message: impl Into<String>) {
+        self.notify(Severity::Error, message);
+    }
+
+    /// Post a caveat: it happened, but not as asked. Yellow, `warn!`.
+    pub(crate) fn post_warn(&mut self, message: impl Into<String>) {
+        self.notify(Severity::Warn, message);
+    }
+
+    /// Post a success. Green on screen.
+    pub(crate) fn post_ok(&mut self, message: impl Into<String>) {
+        self.notify(Severity::Success, message);
+    }
+
+    /// Where every command reports its outcome, so a failure is visible
+    /// without a console and recorded even when nobody was watching one.
+    fn notify(&mut self, severity: Severity, message: impl Into<String>) {
+        self.osd = Some((Notice::new(severity, message), Instant::now()));
     }
 
     /// Open or close one of the auxiliary windows.

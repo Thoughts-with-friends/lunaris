@@ -22,11 +22,11 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     let mut emu = match Emu::boot(rom) {
         Ok(emu) => emu,
         Err(e) => {
-            eprintln!("selftest: {e}");
+            log::error!("selftest: {e}");
             return 1;
         }
     };
-    println!("selftest: booted {}", rom.display());
+    log::info!("selftest: booted {}", rom.display());
 
     let start = std::time::Instant::now();
     let mut stopped_at = None;
@@ -42,12 +42,12 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     let elapsed = start.elapsed();
 
     if let Some(frame) = stopped_at {
-        eprintln!("selftest: core stopped at frame {frame}");
+        log::error!("selftest: core stopped at frame {frame}");
         return 1;
     }
 
     let ran = frames;
-    println!(
+    log::info!(
         "selftest: {ran} frames in {elapsed:.2?} = {:.1} fps",
         f64::from(ran) / elapsed.as_secs_f64(),
     );
@@ -58,20 +58,20 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     let mut samples = vec![0i16; queued * 2];
     let read = emu.nds.read_audio(&mut samples);
     let loudest = samples[..read * 2].iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
-    println!("selftest: audio {read} sample frames buffered, peak amplitude {loudest}");
+    log::info!("selftest: audio {read} sample frames buffered, peak amplitude {loudest}");
 
     let Some((top, bottom)) = emu.nds.framebuffers() else {
-        eprintln!("selftest: no framebuffer produced after {ran} frames");
+        log::error!("selftest: no framebuffer produced after {ran} frames");
         return 1;
     };
     let total = SCREEN_WIDTH * SCREEN_HEIGHT;
     let lit = |fb: &[u32]| fb.iter().filter(|&&px| px & 0x00FF_FFFF != 0).count();
     let (lit_top, lit_bottom) = (lit(top), lit(bottom));
-    println!("selftest: non-black pixels  top {lit_top}/{total}  bottom {lit_bottom}/{total}",);
+    log::info!("selftest: non-black pixels  top {lit_top}/{total}  bottom {lit_bottom}/{total}",);
     // A distinct pixel count is the cheap check that the two screens are not
     // the same buffer read twice, which is what a mixed-up pointer pair looks
     // like once it reaches the window.
-    println!("selftest: distinct colours top {}", distinct(top));
+    log::info!("selftest: distinct colours top {}", distinct(top));
 
     if let Some(prefix) = dump {
         for (name, fb) in [("top", top), ("bottom", bottom)] {
@@ -85,8 +85,8 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
                 SCREEN_HEIGHT as u32,
                 image::ExtendedColorType::Rgb8,
             ) {
-                Ok(()) => println!("selftest: wrote {path}"),
-                Err(e) => eprintln!("selftest: failed to write {path}: {e}"),
+                Ok(()) => log::info!("selftest: wrote {path}"),
+                Err(e) => log::error!("selftest: failed to write {path}: {e}"),
             }
         }
     }
@@ -105,10 +105,10 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     }
 
     if lit_top == 0 && lit_bottom == 0 {
-        eprintln!("selftest: both screens are entirely black");
+        log::error!("selftest: both screens are entirely black");
         return 1;
     }
-    println!("selftest: OK");
+    log::info!("selftest: OK");
     0
 }
 
@@ -135,13 +135,13 @@ fn check_cheats(emu: &mut Emu) -> bool {
     advance(emu, 8);
     let stopped = emu.nds.arm7_read32(ADDR) == 0;
 
-    println!(
+    log::info!(
         "selftest: cheat wrote {VALUE:08X} to {ADDR:08X}: {}; stopped when uninstalled: {}",
         yes_no(applied),
         yes_no(stopped),
     );
     if !applied || !stopped {
-        eprintln!("selftest: the cheat engine did not behave as documented");
+        log::error!("selftest: the cheat engine did not behave as documented");
         return false;
     }
     true
@@ -166,7 +166,7 @@ fn check_render_settings(emu: &mut Emu) -> bool {
         let lit = |fb: &[u32]| fb.iter().any(|&px| px & 0x00FF_FFFF != 0);
         lit(top) || lit(bottom)
     });
-    println!(
+    log::info!(
         "selftest: threaded software renderer installed: {}; still drawing: {}",
         yes_no(installed == Renderer::Software),
         yes_no(lit_threaded),
@@ -176,7 +176,7 @@ fn check_render_settings(emu: &mut Emu) -> bool {
     let gl = RenderSettings { renderer: Renderer::OpenGl, scale: 4, ..RenderSettings::default() };
     let fell_back = emu.set_render_settings(gl) == Renderer::Software;
     let no_texture = emu.gl_output().is_none();
-    println!(
+    log::info!(
         "selftest: OpenGL without a context falls back to software: {}; \
          and reports no GL output: {}",
         yes_no(fell_back),
@@ -188,7 +188,7 @@ fn check_render_settings(emu: &mut Emu) -> bool {
     advance(emu, 4);
 
     if !lit_threaded || !fell_back || !no_texture {
-        eprintln!("selftest: the renderer settings did not behave as documented");
+        log::error!("selftest: the renderer settings did not behave as documented");
         return false;
     }
     true
@@ -207,14 +207,14 @@ fn check_two_instances(rom: &Path) -> bool {
     let mut host = match Emu::boot_mp(rom, None, None, 0, air.client(0)) {
         Ok(emu) => emu,
         Err(e) => {
-            eprintln!("selftest: cannot boot console 0: {e}");
+            log::error!("selftest: cannot boot console 0: {e}");
             return false;
         }
     };
     let mut guest = match Emu::boot_mp(rom, None, None, 1, air.client(1)) {
         Ok(emu) => emu,
         Err(e) => {
-            eprintln!("selftest: cannot boot console 1: {e}");
+            log::error!("selftest: cannot boot console 1: {e}");
             return false;
         }
     };
@@ -224,7 +224,7 @@ fn check_two_instances(rom: &Path) -> bool {
         host.nds.run_frame();
         guest.nds.run_frame();
         if !host.nds.is_running() || !guest.nds.is_running() {
-            eprintln!("selftest: a console stopped while paired");
+            log::error!("selftest: a console stopped while paired");
             return false;
         }
     }
@@ -240,7 +240,7 @@ fn check_two_instances(rom: &Path) -> bool {
 
     let counters = air.counters();
     let sent: u64 = counters.iter().map(|c| c.sent_generic + c.sent_cmd).sum();
-    println!(
+    log::info!(
         "selftest: two consoles ran 240 frames each; pictures: host {}, guest {}; \
          airwave frames {sent} (0 expected - neither cart was taken to its wireless menu)",
         yes_no(host_lit),
@@ -248,7 +248,7 @@ fn check_two_instances(rom: &Path) -> bool {
     );
 
     if !host_lit || !guest_lit {
-        eprintln!("selftest: a paired console produced no picture");
+        log::error!("selftest: a paired console produced no picture");
         return false;
     }
     true
@@ -268,7 +268,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
     let baseline = digest(emu);
     advance(emu, 30);
     if digest(emu) == baseline {
-        println!("selftest: picture is static here, skipping the render-knob check");
+        log::info!("selftest: picture is static here, skipping the render-knob check");
         return true;
     }
 
@@ -281,7 +281,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
     advance(emu, 30);
     let moving_again = digest(emu) != frozen;
 
-    println!(
+    log::info!(
         "selftest: set_render(false) froze the picture: {}; set_render(true) resumed it: {}",
         yes_no(still_frozen),
         yes_no(moving_again),
@@ -296,7 +296,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
         [(0b01u8, "top", top_animates), (0b10u8, "bottom", bottom_animates)]
     {
         if !animates {
-            println!("selftest: {name}-only mask not checked, that screen is static here");
+            log::info!("selftest: {name}-only mask not checked, that screen is static here");
             continue;
         }
         emu.set_displayed_screens(mask);
@@ -310,7 +310,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
         } else {
             ((before.1, after.1), (before.0, after.0))
         };
-        println!(
+        log::info!(
             "selftest: displayed={name}-only: {name} still moving: {}; other screen held: {}",
             yes_no(kept.0 != kept.1),
             yes_no(dropped.0 == dropped.1),
@@ -319,7 +319,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
     emu.set_displayed_screens(0b11);
 
     if !still_frozen || !moving_again {
-        eprintln!("selftest: mds_set_render did not behave as documented");
+        log::error!("selftest: mds_set_render did not behave as documented");
         return false;
     }
     true

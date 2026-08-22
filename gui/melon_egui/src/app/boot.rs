@@ -40,7 +40,7 @@ impl MelonEgui {
             applied_cheats: None,
             cheat_draft: (String::new(), String::new()),
             crash_report: None,
-            font_note: String::new(),
+            font_note: Notice::default(),
             pads: crate::pad::Pads::new(),
             // Opened here rather than lazily: `CreationContext` already runs
             // after winit has taken the UI thread, and `Audio::spawn` puts the
@@ -53,12 +53,12 @@ impl MelonEgui {
             ui_scale: if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 },
             save_dir: settings
                 .save_dir
-                .or_else(|| Some(crate::config::instance_data_dir(1, "saves"))),
+                .or_else(|| Some(crate::file::settings::instance_data_dir(1, "saves"))),
             state_dir: settings
                 .state_dir
-                .or_else(|| Some(crate::config::instance_data_dir(1, "states"))),
+                .or_else(|| Some(crate::file::settings::instance_data_dir(1, "states"))),
             clock: crate::emu::utc_clock(),
-            clock_note: String::new(),
+            clock_note: Notice::default(),
             ram_search: RamSearch::default(),
             recents: settings.recents,
             panes: settings.open_panes,
@@ -85,7 +85,7 @@ impl MelonEgui {
             lan_guest_address: std::env::var("MELON_EGUI_LAN_ADDR")
                 .unwrap_or_else(|_| settings.lan_host_address.clone()),
             lan_bind_address: settings.lan_bind_address.clone(),
-            lan_status: "LAN room is offline".to_owned(),
+            lan_status: Notice::quiet(Severity::Info, "LAN room is offline"),
             lan_room: "No LAN room".to_owned(),
             instance2_settings,
             guest_textures: None,
@@ -121,29 +121,32 @@ impl MelonEgui {
                 // Which context was bound decides which renderers can work at
                 // all: a driver can bind and still be too old for melonDS's
                 // shaders, and that failure otherwise looks like a bug here.
-                Some(info) => eprintln!("melon_egui: OpenGL bound: {info}"),
-                None => eprintln!(
-                    "melon_egui: could not bind OpenGL for this context, so the OpenGL \
-                     renderers are unavailable and the software rasteriser is used."
+                Some(info) => log::info!("OpenGL bound: {info}"),
+                None => log::warn!(
+                    "could not bind OpenGL for this context, so the OpenGL renderers are \
+                     unavailable and the software rasteriser is used"
                 ),
             }
             match gl_screen::Screen::new(gl) {
                 Ok(screen) => app.gl_screen = Some(std::sync::Arc::new(screen)),
-                Err(e) => eprintln!("melon_egui: no GL blitter ({e}); OpenGL renderer disabled"),
+                Err(e) => log::warn!("no GL blitter ({e}); OpenGL renderer disabled"),
             }
         }
 
         // Logged at startup because a missing sound card is otherwise only
         // visible if the user opens Config > Audio settings.
-        eprintln!("melon_egui: {}", app.audio_status());
+        log::info!("{}", app.audio_status().text);
         // Before the theme, so the first frame drawn already has it: a ROM
         // title in kana is otherwise a row of boxes until something else
         // rebuilds the font atlas.
         app.font_note = match crate::fonts::install(&cc.egui_ctx) {
-            Some(path) => format!("CJK fallback: {}", path.display()),
-            None => "No CJK font found; Japanese text will show as boxes.".to_owned(),
+            Some(path) => {
+                Notice::new(Severity::Success, format!("CJK fallback: {}", path.display()))
+            }
+            None => {
+                Notice::new(Severity::Warn, "No CJK font found; Japanese text will show as boxes.")
+            }
         };
-        eprintln!("melon_egui: {}", app.font_note);
         app.set_theme(&cc.egui_ctx, app.dark_theme);
         if settings.ui_scale > 0.0 {
             cc.egui_ctx.set_zoom_factor(settings.ui_scale);
@@ -172,7 +175,7 @@ impl MelonEgui {
         self.settings().save();
 
         // The translation templates are written at startup instead — see
-        // `crate::config::ensure_instance_layout`. A front end killed by the
+        // `crate::file::settings::ensure_instance_layout`. A front end killed by the
         // task manager never reaches here, and a template nobody can find is
         // no better than none.
     }
@@ -216,11 +219,11 @@ impl MelonEgui {
         self.save_dir = settings
             .save_dir
             .clone()
-            .or_else(|| Some(crate::config::instance_data_dir(instance, "saves")));
+            .or_else(|| Some(crate::file::settings::instance_data_dir(instance, "saves")));
         self.state_dir = settings
             .state_dir
             .clone()
-            .or_else(|| Some(crate::config::instance_data_dir(instance, "states")));
+            .or_else(|| Some(crate::file::settings::instance_data_dir(instance, "states")));
         self.recents = settings.recents.clone();
         self.panes = settings.open_panes.clone();
         self.lan_tuning = settings.lan;
@@ -255,56 +258,5 @@ impl MelonEgui {
     /// Write the settings out, for a pane that changed one.
     pub fn save_settings(&self) {
         self.persist();
-    }
-
-    /// Boot `rom`, replacing whatever was running.
-    pub(crate) fn load(&mut self, rom: &Path) {
-        crate::config::ensure_instance_layout();
-        // Dropped first so the outgoing cart's save is flushed before the
-        // incoming one can be handed the same file.
-        self.emu = None;
-        self.drop_link();
-        self.undo_state = None;
-        self.textures = None;
-        self.frames_run = 0;
-        self.applied_render = None;
-        self.applied_renderer = None;
-        // Console 0 takes its seat on the airwaves here, at boot, rather than
-        // when a second instance is launched: a console's `Host` is fixed when
-        // the core is constructed, so one booted without a seat can never join
-        // afterwards — its frames vanish and its peer hears silence, which is
-        // what local play failing looked like. A seat costs nothing until the
-        // cart calls `MP_Begin`.
-        match Emu::boot_mp(
-            rom,
-            self.save_dir.as_ref(),
-            self.state_dir.as_ref(),
-            0,
-            self.airwaves.client(0),
-        ) {
-            Ok(emu) => {
-                self.emu = Some(emu);
-                self.cheats = cheats::load(&Self::cheat_path(rom)).unwrap_or_default();
-                self.applied_cheats = None;
-                if !self.cheats.is_empty() {
-                    // Worth saying out loud: a code file found beside the ROM
-                    // changes what the console does, and a run that picked one
-                    // up silently is a run nobody can explain afterwards.
-                    let on = self.cheats.iter().filter(|cheat| cheat.enabled).count();
-                    eprintln!(
-                        "melon_egui: {} cheat codes from {}, {on} enabled, engine {}",
-                        self.cheats.len(),
-                        Self::cheat_path(rom).display(),
-                        if self.cheats_enabled { "on" } else { "off" }
-                    );
-                }
-                self.push_recent(rom);
-                self.paused = false;
-                self.frame_debt = 0.0;
-                self.last_tick = Instant::now();
-                self.post(format!("loaded {}", rom.display()));
-            }
-            Err(e) => self.post(format!("failed to load {}: {e}", rom.display())),
-        }
     }
 }

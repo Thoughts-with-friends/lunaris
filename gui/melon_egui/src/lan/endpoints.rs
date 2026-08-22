@@ -161,10 +161,6 @@ impl LanGuest {
 /// console was on does not change how its wireless behaves.
 ///
 /// Every method is a one-line forward to [`Peer`], where the behaviour lives.
-/// That split is deliberate: the trait is only available when the `melonds`
-/// feature links the core, and the transport's own tests — which are the
-/// evidence that any of this helps — must be runnable without it.
-#[cfg(feature = "melonds")]
 macro_rules! impl_host {
     ($type:ty) => {
         impl melonds::Host for $type {
@@ -223,9 +219,7 @@ macro_rules! impl_host {
     };
 }
 
-#[cfg(feature = "melonds")]
 impl_host!(LanHost);
-#[cfg(feature = "melonds")]
 impl_host!(LanGuest);
 
 /// Winding the receive and service threads up is the same on both ends, and has

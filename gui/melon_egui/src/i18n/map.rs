@@ -102,7 +102,8 @@ impl I18nMap {
     pub fn i18n_path(language: Language) -> PathBuf {
         // Shared between instances rather than per-instance: a translation is a
         // property of the person reading the screen, not of one console.
-        PathBuf::from(INSTANCES_DIR).join(format!("translation.{}.json", language.code()))
+        PathBuf::from(crate::file::settings::INSTANCES_DIR)
+            .join(format!("translation.{}.json", language.code()))
     }
 
     /// Write this map out as a starting point for a hand translation.
@@ -151,7 +152,7 @@ impl Translations {
         Self(std::array::from_fn(|index| {
             let language = Language::ALL[index];
             I18nMap::load_with_fallback(language).unwrap_or_else(|error| {
-                eprintln!("melon_egui: {error}; using the built-in text");
+                log::warn!("{error}; using the built-in text");
                 I18nMap::built_in(language)
             })
         }))
@@ -183,8 +184,3 @@ pub enum Error {
     #[snafu(display("Failed to serialize json: {}", path.display()))]
     SerializeJson { path: PathBuf, source: serde_json::Error },
 }
-
-/// Where the instance tree lives, repeated here rather than taken from
-/// `crate::config` because that module needs the emulator core linked and this
-/// one does not.
-pub(crate) const INSTANCES_DIR: &str = "./instances";

@@ -39,19 +39,15 @@ pub(crate) fn run(config: RunConfig) {
             return;
         }
     };
-    let cheat_path = crate::config::Settings::redirect(cheat_dir.as_ref(), rom, "mch");
-    let cheats: Vec<Cheat> = crate::cheats::load(&cheat_path)
+    let cheat_path = crate::file::settings::Settings::redirect(cheat_dir.as_ref(), rom, "mch");
+    let cheats: Vec<Cheat> = crate::file::mch::load(&cheat_path)
         .unwrap_or_default()
         .into_iter()
         .map(|cheat| cheat.to_core())
         .collect();
     if !cheats.is_empty() {
         emu.nds.set_cheats(cheats.as_slice());
-        eprintln!(
-            "melon_egui: instance2 loaded {} cheat codes from {}",
-            cheats.len(),
-            cheat_path.display()
-        );
+        log::info!("instance2 loaded {} cheat codes from {}", cheats.len(), cheat_path.display());
     }
     // The wireless clock's epoch is the frame count, so a console joining a
     // session already in progress has to start from its peer's.

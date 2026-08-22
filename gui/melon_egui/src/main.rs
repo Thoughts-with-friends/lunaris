@@ -15,16 +15,15 @@
 //!
 //! # Building
 //!
-//! The `melonds` feature is off by default: enabling it compiles the melonDS
-//! C++ core, and `melonds-sys` drives that build with **clang targeting the
-//! MSVC ABI** (melonDS is GCC/Clang code that `cl.exe` cannot compile). On
-//! Windows its build script therefore needs an LLVM install, and `bindgen`
-//! needs the matching `libclang.dll`:
+//! Building this crate compiles the melonDS C++ core, and `melonds-sys` drives
+//! that build with **clang targeting the MSVC ABI** (melonDS is GCC/Clang code
+//! that `cl.exe` cannot compile). On Windows its build script therefore needs
+//! an LLVM install, and `bindgen` needs the matching `libclang.dll`:
 //!
 //! ```text
 //! $env:LLVM_ROOT     = "<VS>/VC/Tools/Llvm/x64"      # holds bin/clang.exe
 //! $env:LIBCLANG_PATH = "$env:LLVM_ROOT/bin"
-//! cargo run -p melon_egui --features melonds --release
+//! cargo run -p melon_egui --release
 //! ```
 //!
 //! Visual Studio's bundled LLVM component satisfies both; a standalone
@@ -70,80 +69,45 @@
 //! highlights included, so it is a UI check and not a source of reference
 //! images.
 
-#[cfg(feature = "melonds")]
+/// The front end's state, and the lifecycle that drives it.
 mod app;
-#[cfg(feature = "melonds")]
 mod audio;
-/// Which key and which pad button each DS button answers to. Needs the core's
-/// key bits, so it goes with it.
-#[cfg(feature = "melonds")]
+/// Which key and which pad button each DS button answers to.
 mod bindings;
-#[cfg(feature = "melonds")]
-mod cheats;
-// Depends on the view and video option types, which only exist with the core.
-#[cfg(feature = "melonds")]
-mod config;
-#[cfg(feature = "melonds")]
 mod emu;
-#[cfg(feature = "melonds")]
+/// Everything that reaches the disk: carts, saves, savestates, cheats,
+/// settings. The half of a command that outlives the session.
+mod file;
 mod fonts;
-#[cfg(feature = "melonds")]
 mod gl_screen;
-#[cfg(feature = "melonds")]
 mod guest;
-#[cfg(feature = "melonds")]
+mod i18n;
 mod logger;
-#[cfg(feature = "melonds")]
-mod menu;
-#[cfg(feature = "melonds")]
 mod mp;
-#[cfg(feature = "melonds")]
 mod pad;
-#[cfg(feature = "melonds")]
-mod panes;
-#[cfg(feature = "melonds")]
 mod selftest;
-#[cfg(feature = "melonds")]
+/// Everything drawn. Stops at the button press; see [`ui`].
+mod ui;
 mod upscale;
-#[cfg(feature = "melonds")]
 mod video;
-#[cfg(feature = "melonds")]
-mod view;
 
-pub(crate) mod fs;
-pub(crate) mod i18n;
-/// The VPN-tolerant LAN transport. Built without the core too, so its latency
-/// harness can run on a machine with no LLVM toolchain.
+/// The VPN-tolerant LAN transport.
 pub(crate) mod lan;
 /// Remote Desktop mode: both consoles on the host, picture and sound out,
-/// buttons and stylus back. Core-free for the same reason as [`lan`] — its
-/// codec measurements run anywhere.
+/// buttons and stylus back.
 pub(crate) mod remote;
 
-/// Without the `melonds` feature there is no core to drive, so the binary can
-/// only explain itself. Failing loudly beats a window that renders nothing.
-///
-/// Reachable only via `--no-default-features`, since the feature is on by
-/// default.
-#[cfg(not(feature = "melonds"))]
-fn main() {
-    eprintln!(
-        "melon_egui was built with `--no-default-features`, so the `melonds` feature is off\n\
-         and no emulator core is linked in. There is nothing this binary can do.\n\
-         \n\
-         Rebuild with the core:  cargo xtask run --gui melon --release\n\
-         (this is not about the ROM -- a ROM is never required, use File > Open ROM...)"
-    );
-    std::process::exit(1);
-}
-
-#[cfg(feature = "melonds")]
 fn main() -> eframe::Result<()> {
-    // First thing, so that a core diagnostic from any later step is printed
-    // rather than dropped. See [`logger`].
-    logger::install();
-
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
+
+    // Before anything that could fail, so its diagnostic is recorded rather
+    // than dropped. A headless harness prints at `Info` whatever `RUST_LOG`
+    // says, because its report *is* its output; a windowed run keeps the quiet
+    // default. See [`logger`].
+    let headless = matches!(argv.first().map(String::as_str), Some("--selftest" | "--shot"))
+        .then_some(log::LevelFilter::Info);
+    logger::install(&file::settings::instance_data_dir(1, "logs"), headless);
+
     // Pulled out before the positional arguments are read, so it can be
     // written last on the command line where it reads naturally.
     let renderer = take_renderer(&mut argv);
@@ -155,7 +119,7 @@ fn main() -> eframe::Result<()> {
 
     if first.as_deref() == Some("--selftest") {
         let rom = args.next().unwrap_or_else(|| {
-            eprintln!("usage: melon_egui --selftest <rom.nds> [frames] [--dump <prefix>]");
+            log::error!("usage: melon_egui --selftest <rom.nds> [frames] [--dump <prefix>]");
             std::process::exit(2);
         });
         let frames = args.next().and_then(|n| n.parse().ok()).unwrap_or(600);
@@ -174,7 +138,7 @@ fn main() -> eframe::Result<()> {
         match (frames, out) {
             (Some(frames), Some(out)) => Some((frames, std::path::PathBuf::from(out))),
             _ => {
-                eprintln!("usage: melon_egui --shot <frames> <out.png> <rom.nds>");
+                log::error!("usage: melon_egui --shot <frames> <out.png> <rom.nds>");
                 std::process::exit(2);
             }
         }
@@ -193,7 +157,7 @@ fn main() -> eframe::Result<()> {
 
     // Vsync is fixed when the surface is created, so it is read from the saved
     // settings here rather than applied live from the Video settings dialog.
-    let json_config = config::Settings::load();
+    let json_config = file::settings::Settings::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([json_config.window.width, json_config.window.height])
@@ -204,6 +168,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    // MelonEgui App is created here
     eframe::run_native(
         "melon_egui",
         options,
@@ -220,7 +185,6 @@ fn main() -> eframe::Result<()> {
 ///
 /// A malformed or missing icon leaves the window with the system default rather
 /// than stopping the emulator starting, which is what an icon is worth.
-#[cfg(feature = "melonds")]
 fn lunaris_icon() -> egui::IconData {
     const BYTES: &[u8] = include_bytes!("../../../docs/icons/icon.ico");
 
@@ -234,14 +198,13 @@ fn lunaris_icon() -> egui::IconData {
             rgba: image.rgba_data().to_vec(),
         },
         None => {
-            eprintln!("melon_egui: could not read the window icon; using the system default");
+            log::warn!("could not read the window icon; using the system default");
             egui::IconData::default()
         }
     }
 }
 
 /// Take a bare flag out of `argv`, reporting whether it was there.
-#[cfg(feature = "melonds")]
 fn take_flag(argv: &mut Vec<String>, flag: &str) -> bool {
     let Some(at) = argv.iter().position(|arg| arg == flag) else {
         return false;
@@ -258,7 +221,6 @@ fn take_flag(argv: &mut Vec<String>, flag: &str) -> bool {
 /// cart at the same frame, one per renderer, are the evidence that the OpenGL
 /// path draws the same picture and that its internal resolution reaches the
 /// rasteriser.
-#[cfg(feature = "melonds")]
 fn take_renderer(argv: &mut Vec<String>) -> Option<(video::Renderer, u32)> {
     let at = argv.iter().position(|arg| arg == "--renderer")?;
     let value = argv.get(at + 1).cloned().unwrap_or_default();
@@ -270,7 +232,7 @@ fn take_renderer(argv: &mut Vec<String>) -> Option<(video::Renderer, u32)> {
         "opengl" | "gl" => video::Renderer::OpenGl,
         "compute" => video::Renderer::Compute,
         _ => {
-            eprintln!("usage: --renderer <software|opengl|compute>[@scale]");
+            log::error!("usage: --renderer <software|opengl|compute>[@scale]");
             std::process::exit(2);
         }
     };

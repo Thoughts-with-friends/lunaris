@@ -178,7 +178,7 @@ pub(crate) struct Shared {
 
 impl Shared {
     pub(crate) fn say(&self, note: String) {
-        eprintln!("melon_egui: second instance {note}");
+        log::info!("second instance {note}");
         if let Ok(mut out) = self.output.lock() {
             out.note = Some(note);
         }

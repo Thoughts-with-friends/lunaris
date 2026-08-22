@@ -7,7 +7,7 @@ impl MelonEgui {
     pub fn command_guest(&mut self, command: crate::guest::Command) {
         match &self.guest {
             Some(guest) => guest.send(command),
-            None => self.post("no second console is running"),
+            None => self.post_warn("no second console is running"),
         }
     }
 
@@ -25,9 +25,9 @@ impl MelonEgui {
     /// worse, but better than refusing to launch.
     pub(crate) fn guest_save_dir(&mut self, rom: &Path) -> Option<PathBuf> {
         let host_save = Settings::redirect(self.save_dir.as_ref(), rom, "sav");
-        let dir = crate::config::instance_data_dir(2, "saves");
+        let dir = crate::file::settings::instance_data_dir(2, "saves");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.post(format!("cannot make {}: {e}; sharing the save", dir.display()));
+            self.post_warn(format!("cannot make {}: {e}; sharing the save", dir.display()));
             return None;
         }
         let guest_save = Settings::redirect(Some(&dir), rom, "sav");
@@ -35,7 +35,7 @@ impl MelonEgui {
             && host_save.exists()
             && let Err(e) = std::fs::copy(&host_save, &guest_save)
         {
-            self.post(format!("cannot seed {}: {e}", guest_save.display()));
+            self.post_error(format!("cannot seed {}: {e}", guest_save.display()));
         }
         Some(dir)
     }
@@ -54,7 +54,7 @@ impl MelonEgui {
             return;
         }
         let Some(rom) = self.emu.as_ref().map(|emu| emu.rom_path.clone()) else {
-            self.post("load a cart first");
+            self.post_warn("load a cart first");
             return;
         };
         // Console 0 already holds seat 0 (see `load`), so only the second
@@ -78,8 +78,8 @@ impl MelonEgui {
         self.guest = Some(crate::guest::Guest::spawn(
             &rom,
             save_dir,
-            Some(crate::config::instance_data_dir(2, "states")),
-            Some(crate::config::instance_data_dir(2, "cheats")),
+            Some(crate::file::settings::instance_data_dir(2, "states")),
+            Some(crate::file::settings::instance_data_dir(2, "cheats")),
             1,
             self.airwaves.client(1),
             start_frame,
@@ -100,7 +100,7 @@ impl MelonEgui {
     /// Show one instance's directory, so the second console's window opens its
     /// own `saves`/`states`/`cheats` rather than the first console's.
     pub(crate) fn open_instance_directory(&mut self, instance: u32) {
-        let dir = crate::config::instance_dir(instance);
+        let dir = crate::file::settings::instance_dir(instance);
         self.reveal(&dir);
     }
 }

@@ -5,9 +5,8 @@
 //! egui|imgui|melon] [cargo args...] [-- <args passed to the emulator>]` simply
 //! re-invokes `cargo <build|run> -p <package for that GUI> ...`.
 //!
-//! `--gui melon` additionally turns on `melon_egui`'s `melonds` feature and
-//! locates an LLVM toolchain for the melonDS C++ build; see
-//! [`export_llvm_root`].
+//! `--gui melon` additionally locates an LLVM toolchain for the melonDS C++
+//! build; see [`export_llvm_root`].
 //!
 //! `--gui` defaults to `egui`, matching the workspace's `default-members`
 //! (`gui/egui`) so that plain `cargo build`/`cargo run` also default to the
@@ -37,18 +36,6 @@ impl Gui {
             Gui::Egui => "lunaris",
             Gui::Imgui => "lunaris_imgui",
             Gui::Melon => "melon_egui",
-        }
-    }
-
-    /// Cargo features this GUI needs switched on.
-    ///
-    /// `melon_egui` keeps its core behind a feature so that a workspace-wide
-    /// build does not require an LLVM toolchain; asking for it by name is
-    /// exactly the case that does want it.
-    const fn features(self) -> &'static [&'static str] {
-        match self {
-            Gui::Melon => &["melonds"],
-            _ => &[],
         }
     }
 }
@@ -108,9 +95,6 @@ fn main() -> ExitCode {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cmd = Command::new(cargo);
     cmd.arg(&cargo_subcommand).arg("-p").arg(gui.package()).args(&cargo_args);
-    for feature in gui.features() {
-        cmd.arg("--features").arg(feature);
-    }
     if matches!(gui, Gui::Melon) {
         export_llvm_root(&mut cmd);
         // A release build of `melon_egui` is a build meant to be handed to

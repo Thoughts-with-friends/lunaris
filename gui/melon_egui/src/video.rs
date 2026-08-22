@@ -19,7 +19,7 @@
 //!   including display capture into VRAM, so neither changes what a cart
 //!   computes.
 //! * Everything this front end does itself when it blits — filtering, aspect
-//!   ratio, and vsync — which live in [`crate::view::ViewOptions`] and here.
+//!   ratio, and vsync — which live in [`crate::ui::view::ViewOptions`] and here.
 //!
 //! # Which of them a given machine can actually use
 //!
@@ -86,7 +86,7 @@ pub struct VideoOptions {
     pub renderer: Renderer,
     /// Internal resolution multiplier for the OpenGL renderers, 1 to 16.
     ///
-    /// Unlike [`crate::view::ViewOptions::display_scale`], which magnifies the
+    /// Unlike [`crate::ui::view::ViewOptions::display_scale`], which magnifies the
     /// finished picture, this rasterises the 3D geometry itself at
     /// `256*n x 192*n` — so it adds real detail. Ignored by the software
     /// renderer, which has no such mode.

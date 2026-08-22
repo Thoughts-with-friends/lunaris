@@ -3,84 +3,6 @@
 use super::*;
 
 impl MelonEgui {
-    /// Gather everything that might explain a stopped console, show it, and
-    /// write it beside the executable.
-    ///
-    /// Written to a file because the usual way to run this is by launching the
-    /// executable, which on Windows has no console attached: a diagnostic that
-    /// only reaches stderr reaches nobody. The pane opens by itself for the
-    /// same reason.
-    pub(crate) fn write_crash_report(&mut self, who: &str, note: &str) {
-        let mut report = format!("melon_egui: {who} {note}\n");
-        if let Some(emu) = &mut self.emu {
-            report.push_str(&format!(
-                "cart: {} [{}]\nframes run: console 0 = {}",
-                emu.info.title,
-                emu.info.gamecode,
-                emu.nds.frame_count()
-            ));
-        }
-        if let Some(guest) = &self.guest {
-            report.push_str(&format!(", second instance = {}", guest.frame_count()));
-        }
-        report.push('\n');
-
-        // Who was on the air, and what they had exchanged: local play failing
-        // shows up here as one side sending and nothing coming back.
-        let connected = self.airwaves.connected();
-        for (i, counters) in self.airwaves.counters().iter().enumerate().take(2) {
-            report.push_str(&format!(
-                "console {i}: {} | sent {}/{} cmd/reply, generic {}, ack {} | \
-                 received cmd {}, reply {}, generic {} | stale replies {} | \
-                 wifi clock {} | last reply mask {:04X}\n",
-                if connected.get(i) == Some(&true) { "on the air" } else { "not on the air" },
-                counters.sent_cmd,
-                counters.sent_reply,
-                counters.sent_generic,
-                counters.sent_ack,
-                counters.recv_cmd,
-                counters.recv_reply,
-                counters.recv_generic,
-                counters.stale_replies,
-                counters.clock,
-                counters.last_reply_mask,
-            ));
-        }
-
-        report.push_str("\n-- the last of the wireless traffic ------------------\n");
-        let log = self.airwaves.log();
-        for event in log.iter().rev().take(40).rev() {
-            report.push_str(&format!(
-                "console {} {} len={} ts={}\n",
-                event.sender,
-                event.kind.label(),
-                event.len,
-                event.timestamp
-            ));
-        }
-
-        report.push_str("\n-- the core's own last words -------------------------\n");
-        for line in crate::logger::recent() {
-            report.push_str(&line);
-            report.push('\n');
-        }
-
-        let path = crate::config::config_dir().join("last-stop.txt");
-        match std::fs::create_dir_all(crate::config::config_dir())
-            .and_then(|()| std::fs::write(&path, &report))
-        {
-            Ok(()) => {
-                eprintln!("melon_egui: wrote {}", path.display());
-                self.post(format!("stop report written to {}", path.display()));
-            }
-            Err(e) => eprintln!("melon_egui: could not write {}: {e}", path.display()),
-        }
-        self.crash_report = Some(report);
-        if !self.panes.contains(&panes::Pane::Crash) {
-            self.panes.push(panes::Pane::Crash);
-        }
-    }
-
     /// Run however many emulated frames wall-clock time has earned, then upload
     /// the resulting picture.
     pub(crate) fn advance(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -224,7 +146,7 @@ impl MelonEgui {
         // reported the same way the first console's is, but it is closed rather
         // than paused: a console that has stopped is not going to draw again.
         if let Some(note) = self.guest.as_ref().and_then(crate::guest::Guest::take_note) {
-            self.post(format!("second instance {note}"));
+            self.post_warn(format!("second instance {note}"));
             if self.guest.as_ref().is_some_and(crate::guest::Guest::finished) {
                 self.write_crash_report("second instance", &note);
             }
@@ -235,8 +157,7 @@ impl MelonEgui {
         }
         if stopped {
             let note = stop_note.unwrap_or_else(|| "stopped".to_owned());
-            eprintln!("melon_egui: console {note}");
-            self.post(format!("console {note}"));
+            self.post_error(format!("console {note}"));
             self.write_crash_report("console 0", &note);
         }
 
@@ -247,7 +168,7 @@ impl MelonEgui {
         self.frames_run += u64::from(ran);
         if stopped {
             self.paused = true;
-            self.post("core stopped");
+            self.post_error("core stopped");
         }
 
         if ran > 0 {
@@ -324,7 +245,7 @@ impl MelonEgui {
             // melonDS installs a software renderer of its own when the one it
             // was handed cannot initialise, so this is what actually happened
             // rather than what was asked for.
-            self.post(format!(
+            self.post_warn(format!(
                 "could not create the {} renderer; on {} instead",
                 self.video.renderer.label(),
                 installed.label()

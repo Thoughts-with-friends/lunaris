@@ -7,9 +7,9 @@ impl MelonEgui {
     pub fn ram_read(&mut self, addr: u32) -> u32 {
         let Some(emu) = &mut self.emu else { return 0 };
         match self.ram_search.width {
-            crate::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
-            crate::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
-            crate::panes::SearchWidth::Word => emu.nds.read32(addr),
+            crate::ui::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
+            crate::ui::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
+            crate::ui::panes::SearchWidth::Word => emu.nds.read32(addr),
         }
     }
 
@@ -27,9 +27,9 @@ impl MelonEgui {
         for offset in (0..len.saturating_sub(stride - 1)).step_by(stride) {
             let addr = MAIN_RAM_BASE + offset as u32;
             let value = match width {
-                crate::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
-                crate::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
-                crate::panes::SearchWidth::Word => emu.nds.read32(addr),
+                crate::ui::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
+                crate::ui::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
+                crate::ui::panes::SearchWidth::Word => emu.nds.read32(addr),
             };
             if value == needle {
                 hits.push(addr);
@@ -49,9 +49,9 @@ impl MelonEgui {
         let before = self.ram_search.hits.len();
         self.ram_search.hits.retain(|&addr| {
             let value = match width {
-                crate::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
-                crate::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
-                crate::panes::SearchWidth::Word => emu.nds.read32(addr),
+                crate::ui::panes::SearchWidth::Byte => u32::from(emu.nds.read8(addr)),
+                crate::ui::panes::SearchWidth::Half => u32::from(emu.nds.read16(addr)),
+                crate::ui::panes::SearchWidth::Word => emu.nds.read32(addr),
             };
             value == needle
         });

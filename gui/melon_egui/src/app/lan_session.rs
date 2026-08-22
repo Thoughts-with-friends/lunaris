@@ -16,11 +16,11 @@ impl MelonEgui {
     /// Start a LAN host or guest connection without blocking the UI thread.
     pub(crate) fn start_lan(&mut self, host: bool) {
         if self.lan_pending.is_some() {
-            self.post("a LAN connection is already being established");
+            self.post_warn("a LAN connection is already being established");
             return;
         }
         let Some(rom) = self.emu.as_ref().map(|emu| emu.rom_path.clone()) else {
-            self.post("load a cart first");
+            self.post_warn("load a cart first");
             return;
         };
         self.emu = None;
@@ -89,7 +89,7 @@ impl MelonEgui {
             .map_err(|e| format!("cannot start LAN connection: {e}"));
         if let Err(error) = spawned {
             self.lan_rom = None;
-            self.post(error);
+            self.post_error(error);
             return;
         }
         self.lan_pending = Some(receiver);
@@ -98,11 +98,14 @@ impl MelonEgui {
         // again to retry is the annoyance this exists to remove.
         self.persist();
         self.lan_room = if host { "Hosting LAN room" } else { "Joining LAN room" }.to_owned();
-        self.lan_status = if host {
-            format!("Checking: waiting for guest on {bind}")
-        } else {
-            format!("Checking: connecting to {address}")
-        };
+        self.lan_status = Notice::quiet(
+            Severity::Info,
+            if host {
+                format!("Checking: waiting for guest on {bind}")
+            } else {
+                format!("Checking: connecting to {address}")
+            },
+        );
         self.post(if host {
             format!("waiting for a LAN guest on {bind}")
         } else {
@@ -138,13 +141,13 @@ impl MelonEgui {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.lan_pending = None;
-                self.post("LAN connection worker stopped unexpectedly");
+                self.post_error("LAN connection worker stopped unexpectedly");
                 return;
             }
         };
         self.lan_pending = None;
         let Some(rom) = self.lan_rom.take() else {
-            self.post("LAN connected, but no cart is loaded");
+            self.post_warn("LAN connected, but no cart is loaded");
             return;
         };
         match result.and_then(|connection| {
@@ -158,21 +161,25 @@ impl MelonEgui {
                 self.emu = Some(emu);
                 self.lan_stats = Some(stats);
                 self.lan_pace = Some(pace);
-                self.cheats = cheats::load(&Self::cheat_path(&rom)).unwrap_or_default();
+                self.cheats = mch::load(&Self::cheat_path(&rom)).unwrap_or_default();
                 self.applied_cheats = None;
                 self.paused = false;
                 self.frame_debt = 0.0;
                 self.last_tick = Instant::now();
-                self.lan_status = format!("Connected: local {local_addr}, remote {remote_addr}");
+                self.lan_status = Notice::quiet(
+                    Severity::Success,
+                    format!("Connected: local {local_addr}, remote {remote_addr}"),
+                );
                 self.lan_room = "LAN room connected".to_owned();
-                self.post(format!("LAN game connected: {}", rom.display()));
+                self.post_ok(format!("LAN game connected: {}", rom.display()));
             }
             Err(error) => {
                 self.lan_stats = None;
                 self.lan_pace = None;
-                self.lan_status = format!("Connection check failed: {error}");
+                self.lan_status =
+                    Notice::quiet(Severity::Error, format!("Connection check failed: {error}"));
                 self.lan_room = "LAN room offline".to_owned();
-                self.post(format!("LAN game failed: {error}"));
+                self.post_error(format!("LAN game failed: {error}"));
             }
         }
     }

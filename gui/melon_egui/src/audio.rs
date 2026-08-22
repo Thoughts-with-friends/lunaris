@@ -281,7 +281,7 @@ fn play<T: cpal::Sample>(
                 }
             }
         },
-        |e| eprintln!("melon_egui: audio stream error: {e}"),
+        |e| log::error!("audio stream error: {e}"),
     )
 }
 

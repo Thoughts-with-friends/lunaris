@@ -17,11 +17,11 @@ impl MelonEgui {
     /// emulator and becomes a screen.
     pub(crate) fn start_remote(&mut self, host: bool) {
         if self.remote_pending.is_some() {
-            self.post("a Remote Desktop session is already being established");
+            self.post_warn("a Remote Desktop session is already being established");
             return;
         }
         if host && !self.is_loaded() {
-            self.post("load a cart first — the host runs both consoles");
+            self.post_warn("load a cart first — the host runs both consoles");
             return;
         }
         let tuning = self.remote_tuning;
@@ -53,7 +53,7 @@ impl MelonEgui {
             })
             .map_err(|error| format!("cannot start a Remote Desktop session: {error}"));
         if let Err(error) = spawned {
-            self.post(error);
+            self.post_error(error);
             return;
         }
         self.remote_pending = Some(receiver);
@@ -64,21 +64,15 @@ impl MelonEgui {
             if host { "Remote Desktop: hosting" } else { "Remote Desktop: joining" }.to_owned();
         // The port shown is the one that will actually be used — see
         // `parse_remote_address`.
-        self.lan_status = if host {
-            format!(
-                "waiting for a client on {}",
-                parse_remote_address(&self.lan_bind_address, self.remote_tuning.port)
-                    .map_or_else(|error| error, |addr| addr.to_string())
-            )
+        let (address, what) = if host {
+            (&self.lan_bind_address, "waiting for a client on")
         } else {
-            format!(
-                "connecting to {}",
-                parse_remote_address(&self.lan_guest_address, self.remote_tuning.port)
-                    .map_or_else(|error| error, |addr| addr.to_string())
-            )
+            (&self.lan_guest_address, "connecting to")
         };
-        let message = self.lan_status.clone();
-        self.post(message);
+        let address = parse_remote_address(address, self.remote_tuning.port)
+            .map_or_else(|error| error, |addr| addr.to_string());
+        self.lan_status = Notice::quiet(Severity::Info, format!("{what} {address}"));
+        self.post(format!("{what} {address}"));
     }
 
     /// Finish a Remote Desktop session that the connection thread established.
@@ -97,7 +91,7 @@ impl MelonEgui {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.remote_pending = None;
-                self.post("the Remote Desktop worker stopped unexpectedly");
+                self.post_error("the Remote Desktop worker stopped unexpectedly");
                 return;
             }
         };
@@ -114,8 +108,11 @@ impl MelonEgui {
                 self.close_guest();
                 self.launch_instance();
                 self.lan_room = "Remote Desktop: hosting".to_owned();
-                self.lan_status = format!("Client {remote} connected; listening on {local}");
-                self.post(format!("Remote Desktop: {remote} is playing instance 2"));
+                self.lan_status = Notice::quiet(
+                    Severity::Success,
+                    format!("Client {remote} connected; listening on {local}"),
+                );
+                self.post_ok(format!("Remote Desktop: {remote} is playing instance 2"));
             }
             Ok(RemoteSession::Client(client)) => {
                 let client = *client;
@@ -135,13 +132,14 @@ impl MelonEgui {
                     .and_then(|client| client.local_addr().ok())
                     .map_or_else(|| "?".to_owned(), |addr| addr.to_string());
                 self.lan_room = "Remote Desktop: connected".to_owned();
-                self.lan_status = format!("Watching {remote} from {local}");
-                self.post(format!("Remote Desktop: connected to {remote}"));
+                self.lan_status =
+                    Notice::quiet(Severity::Success, format!("Watching {remote} from {local}"));
+                self.post_ok(format!("Remote Desktop: connected to {remote}"));
             }
             Err(error) => {
                 self.lan_room = "Remote Desktop: offline".to_owned();
-                self.lan_status = error.clone();
-                self.post(error);
+                self.lan_status = Notice::quiet(Severity::Error, error.clone());
+                self.post_error(error);
             }
         }
     }
@@ -149,7 +147,7 @@ impl MelonEgui {
     /// End a Remote Desktop session and go back to being an ordinary window.
     pub(crate) fn stop_remote(&mut self) {
         if self.remote_host.is_none() && self.remote_client.is_none() {
-            self.post("no Remote Desktop session is running");
+            self.post_warn("no Remote Desktop session is running");
             return;
         }
         // The host's second console was the remote player's; it goes with them.
@@ -160,7 +158,7 @@ impl MelonEgui {
         self.textures = None;
         self.mode = Mode::Local;
         self.lan_room = "Remote Desktop: offline".to_owned();
-        self.lan_status = "No Remote Desktop session".to_owned();
+        self.lan_status = Notice::quiet(Severity::Info, "No Remote Desktop session");
         self.post("Remote Desktop session ended");
     }
 

@@ -4,10 +4,8 @@
 # output (and its wifi traces) can be compared against melonDS without needing
 # melonDS's Qt frontend built. See docs/design/review_mp_local2.md §7.
 #
-# The `melonds` feature is opt-in because building it compiles the melonDS C++
-# core, which needs an LLVM toolchain (see src/main.rs for the environment it
-# expects). Leaving it off keeps `cargo build --workspace` working on machines
-# without one.
+# Building this crate compiles the melonDS C++ core, which needs an LLVM
+# toolchain -- see src/main.rs for the environment it expects.
 [package]
 name = "melon_egui"
 version.workspace = true
@@ -54,7 +52,7 @@ serde_json = "1.0.149"
 # without a window. Same version core's own frame dumper uses.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665", optional = true }
+melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665" }
 # Game controllers. Its Windows back end is XInput plus the vendored SDL
 # mapping database, so a pad works without anything installed beside the exe.
 gilrs = "0.11"
@@ -66,11 +64,5 @@ snafu = { version = "0.9.2" }
 i18n_derive = { path = "../i18n_derive" }
 
 [features]
+# Windows only: hides the console window and is what a distributed build sets.
 release = []
-
-# On by default so that `cargo run -p melon_egui` just launches, rather than
-# building a binary with no emulator core in it. The cost is that
-# `cargo build --workspace` then needs the LLVM toolchain too; pass
-# `--no-default-features` to build this crate without the core.
-default = ["melonds"]
-melonds = ["dep:melonds"]

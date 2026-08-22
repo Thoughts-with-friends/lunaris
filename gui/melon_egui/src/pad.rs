@@ -44,7 +44,7 @@ impl Pads {
             Err(e) => (None, Some(e.to_string())),
         };
         if let Some(e) = error {
-            eprintln!("melon_egui: no controller support ({e}); keyboard only");
+            log::warn!("no controller support ({e}); keyboard only");
         }
         Self { gilrs, connected: Vec::new() }
     }

@@ -78,7 +78,7 @@ impl Emu {
         network: Option<Box<dyn melonds::Host>>,
     ) -> Result<Self, String> {
         let rom = std::fs::read(rom_path).map_err(|e| format!("cannot read ROM: {e}"))?;
-        let save_path = crate::config::Settings::redirect(save_dir, rom_path, "sav");
+        let save_path = crate::file::settings::Settings::redirect(save_dir, rom_path, "sav");
         let state_dir = state_dir.cloned();
         let save = std::fs::read(&save_path).ok();
 
@@ -122,7 +122,7 @@ impl Emu {
             return;
         };
         if let Err(e) = std::fs::write(&self.saves.path, &data) {
-            eprintln!("melon_egui: failed to write {}: {e}", self.saves.path.display());
+            log::error!("failed to write {}: {e}", self.saves.path.display());
         }
     }
 
@@ -234,7 +234,7 @@ impl Emu {
     /// Savestate path for one of the numbered slots, following melonDS's
     /// `<rom>.mlN` convention so the two front ends do not collide.
     pub fn state_path(&self, slot: u8) -> PathBuf {
-        crate::config::Settings::redirect(
+        crate::file::settings::Settings::redirect(
             self.state_dir.as_ref(),
             &self.rom_path,
             &format!("ml{slot}"),

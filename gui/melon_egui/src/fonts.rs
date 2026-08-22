@@ -75,7 +75,7 @@ fn load() -> Option<(PathBuf, Vec<u8>)> {
         return match std::fs::read(&path) {
             Ok(bytes) => Some((path, bytes)),
             Err(e) => {
-                eprintln!("melon_egui: {OVERRIDE}={} could not be read: {e}", path.display());
+                log::warn!("{OVERRIDE}={} could not be read: {e}", path.display());
                 None
             }
         };

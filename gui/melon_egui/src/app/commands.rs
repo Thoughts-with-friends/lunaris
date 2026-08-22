@@ -43,22 +43,22 @@ impl MelonEgui {
             }
             Action::SaveState(None) => self.ask(
                 DialogPurpose::GuestSaveState,
-                crate::fs::Request::save("Save instance 2 state")
+                crate::file::picker::Request::save("Save instance 2 state")
                     .filter("savestate", &["ml1"])
-                    .directory(Some(crate::config::instance_data_dir(2, "states"))),
+                    .directory(Some(crate::file::settings::instance_data_dir(2, "states"))),
             ),
             Action::LoadState(None) => self.ask(
                 DialogPurpose::GuestLoadState,
-                crate::fs::Request::open("Load instance 2 state")
+                crate::file::picker::Request::open("Load instance 2 state")
                     .filter("savestate", &["ml1"])
-                    .directory(Some(crate::config::instance_data_dir(2, "states"))),
+                    .directory(Some(crate::file::settings::instance_data_dir(2, "states"))),
             ),
             Action::UndoStateLoad => self.command_guest(Command::UndoStateLoad),
             Action::ImportSavefile => self.ask(
                 DialogPurpose::GuestImportSave,
-                crate::fs::Request::open("Import a save into instance 2")
+                crate::file::picker::Request::open("Import a save into instance 2")
                     .filter("save file", &["sav", "dsv", "bin"])
-                    .directory(Some(crate::config::instance_data_dir(2, "saves"))),
+                    .directory(Some(crate::file::settings::instance_data_dir(2, "saves"))),
             ),
             Action::OpenDirectory => self.open_instance_directory(2),
             // Handled against the guest viewport's own context, in
@@ -80,7 +80,7 @@ impl MelonEgui {
             | Action::HostRemoteDesktop
             | Action::JoinRemoteDesktop
             | Action::StopRemoteDesktop => {
-                self.post("that command belongs to the first console");
+                self.post_warn("that command belongs to the first console");
             }
             // Purely the window's own business, and already handled where the
             // guest window collected it.
@@ -146,7 +146,9 @@ impl MelonEgui {
             | Action::GuestLanGame
             | Action::HostRemoteDesktop
             | Action::JoinRemoteDesktop => {
-                self.post("this window is a Remote Desktop client — the host owns the console");
+                self.post_warn(
+                    "this window is a Remote Desktop client — the host owns the console",
+                );
             }
         }
     }
@@ -159,7 +161,7 @@ impl MelonEgui {
         match action {
             Action::OpenRom | Action::InsertCart => self.ask(
                 DialogPurpose::OpenRom,
-                crate::fs::Request::open("Open a Nintendo DS ROM")
+                crate::file::picker::Request::open("Open a Nintendo DS ROM")
                     .filter("Nintendo DS ROM", &["nds", "dsi", "srl"])
                     .directory(
                         self.recents.first().and_then(|rom| rom.parent().map(Path::to_path_buf)),
