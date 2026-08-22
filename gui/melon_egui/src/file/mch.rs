@@ -169,33 +169,35 @@ fn strip_keyword<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
     Some(rest)
 }
 
-/// Write the list back out in `.mch` form, regrouping it under its categories.
+/// Write the list back out in `.mch` form, in the order it is held.
+///
+/// The order is the file's, not a regrouping of it: the dialog lets codes be
+/// dragged into whatever order the user wants, and a writer that sorted them
+/// back under their categories would undo that the moment it ran. A `CAT` (or
+/// `ROOT`) line is emitted whenever the category changes from one code to the
+/// next, which is exactly how the format expresses a run of codes under a
+/// heading -- so a list that alternates between two categories writes that
+/// heading twice, and reads back as the same order it was written in.
 ///
 /// # Errors
 ///
 /// The file could not be written.
 pub fn save(path: &Path, cheats: &[Cheat]) -> Result<(), String> {
     let mut text = String::new();
-    // Uncategorised codes first, under ROOT, then one block per category, in
-    // the order the categories first appear.
-    let mut categories: Vec<&str> = Vec::new();
-    for cheat in cheats {
-        if !cheat.category.is_empty() && !categories.contains(&cheat.category.as_str()) {
-            categories.push(&cheat.category);
-        }
-    }
+    // `None` until the first code, so the opening heading is always written
+    // even when that code is uncategorised.
+    let mut current: Option<&str> = None;
 
-    if cheats.iter().any(|cheat| cheat.category.is_empty()) {
-        text.push_str("ROOT\n\n");
-        for cheat in cheats.iter().filter(|cheat| cheat.category.is_empty()) {
-            write_cheat(&mut text, cheat);
+    for cheat in cheats {
+        if current != Some(cheat.category.as_str()) {
+            if cheat.category.is_empty() {
+                text.push_str("ROOT\n\n");
+            } else {
+                text.push_str(&format!("CAT 0 {}\n\n", cheat.category));
+            }
+            current = Some(&cheat.category);
         }
-    }
-    for category in categories {
-        text.push_str(&format!("CAT 0 {category}\n\n"));
-        for cheat in cheats.iter().filter(|cheat| cheat.category == category) {
-            write_cheat(&mut text, cheat);
-        }
+        write_cheat(&mut text, cheat);
     }
 
     std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
@@ -249,6 +251,26 @@ mod tests {
         let path = dir.join("codes.mch");
         save(&path, &cheats).unwrap();
         assert_eq!(parse_file(&std::fs::read_to_string(&path).unwrap()), cheats);
+    }
+
+    /// Dragging a code up the list has to survive the save, which means the
+    /// writer cannot regroup by category -- see [`save`].
+    #[test]
+    fn the_order_the_list_is_in_is_the_order_the_file_keeps() {
+        let cheats = vec![
+            Cheat { name: "In a category".into(), category: "Items".into(), ..Cheat::default() },
+            Cheat { name: "At the root".into(), ..Cheat::default() },
+            Cheat { name: "Back in it".into(), category: "Items".into(), ..Cheat::default() },
+        ];
+        let dir = std::env::temp_dir().join("melon_egui-cheat-order-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("codes.mch");
+        save(&path, &cheats).unwrap();
+
+        let read = parse_file(&std::fs::read_to_string(&path).unwrap());
+        let names: Vec<&str> = read.iter().map(|cheat| cheat.name.as_str()).collect();
+        assert_eq!(names, ["In a category", "At the root", "Back in it"]);
+        assert_eq!(read, cheats, "the categories survive the interleaving too");
     }
 
     #[test]

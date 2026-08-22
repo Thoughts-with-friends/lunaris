@@ -136,12 +136,24 @@ fn buttons(app: &mut MelonEgui, ui: &mut egui::Ui) {
 }
 
 /// The left half: every code, its checkbox and its type.
+///
+/// # Reordering
+///
+/// A row is a drag source carrying its own index, and every row is a drop
+/// target: dropping row *from* onto row *to* takes it out and puts it back
+/// there, which is the order the `.mch` is then written in. The order matters
+/// because Action Replay codes are run in list order and two codes writing the
+/// same address do not commute.
+///
+/// The checkbox is deliberately outside the drag source, so that enabling a
+/// code cannot start a drag and a drag cannot toggle one.
 fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.label("Available cheats:");
 
-    // Applied after the loop: `select_cheat` rewrites the editor, which the
-    // rows below are still borrowing.
+    // Applied after the loop: both `select_cheat` and `move_cheat` take `app`,
+    // which the rows below are still borrowing.
     let mut select = None;
+    let mut reorder = None;
     let selected = app.cheat_selected;
     egui::ScrollArea::vertical().id_salt("cheat-list").max_height(CONTENT_HEIGHT - 24.0).show(
         ui,
@@ -162,14 +174,30 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
                     } else {
                         format!("{} / {}", cheat.category, cheat.name)
                     };
-                    let mut row = ui.selectable_label(selected == Some(i), label);
+                    // Two responses, because the drag source's own is the
+                    // enclosing scope's — it carries the rect and the drag, but
+                    // it senses no clicks. Selecting a row is the label's job,
+                    // which is `inner`. While a row is being dragged its
+                    // contents are painted to a tooltip layer and `inner` comes
+                    // back empty, so a drag cannot also read as a click.
+                    let dragged = ui.dnd_drag_source(egui::Id::new("cheat-row").with(i), i, |ui| {
+                        ui.selectable_label(selected == Some(i), label)
+                    });
+                    let clicked = dragged.inner.clicked();
+                    let mut row = dragged.response;
                     if !cheat.description.is_empty() {
                         row = row.on_hover_text(&cheat.description);
                     }
                     if !cheat.is_well_formed() {
                         row = row.on_hover_text("This code has an odd number of words.");
                     }
-                    if row.clicked() {
+                    if let Some(from) = row.dnd_hover_payload::<usize>() {
+                        insertion_marker(ui, row.rect, *from, i);
+                    }
+                    if let Some(from) = row.dnd_release_payload::<usize>() {
+                        reorder = Some((*from, i));
+                    }
+                    if clicked {
                         select = Some(i);
                     }
                     ui.label(CHEAT_TYPE);
@@ -181,9 +209,31 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
     if let Some(i) = select {
         app.select_cheat(Some(i));
     }
+    // After the selection: a drop is also a click on the row it landed on, and
+    // the move is what the user meant by it.
+    if let Some((from, to)) = reorder {
+        app.move_cheat(from, to);
+    }
     if app.cheats.is_empty() {
         ui.label("No codes. Add one, or read a melonDS .mch file.");
+    } else {
+        ui.label("Drag a row to reorder; the new order is saved as it is dropped.");
     }
+}
+
+/// Draw the line the dragged row would land on: above the row when it is coming
+/// down the list, below it when it is coming up.
+///
+/// Which side is not decoration — it is what the move actually does. Dropping
+/// on row *to* puts the code at index *to*, and that is the row's top edge when
+/// it came from above it and its bottom edge when it came from below.
+fn insertion_marker(ui: &egui::Ui, row: egui::Rect, from: usize, to: usize) {
+    if from == to {
+        return;
+    }
+    let y = if from < to { row.bottom() } else { row.top() };
+    let stroke = ui.visuals().widgets.active.fg_stroke;
+    ui.painter().hline(row.x_range(), y, stroke);
 }
 
 /// The right half: the selected code's name, notes and words.

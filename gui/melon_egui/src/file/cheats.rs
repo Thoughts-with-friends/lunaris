@@ -94,6 +94,26 @@ impl MelonEgui {
         }
     }
 
+    /// Move the code at `from` to sit at `to`, and write the new order out.
+    ///
+    /// Saved on the drop rather than on a later Save press: the order is a
+    /// property of the list itself, not of the code the editor happens to be
+    /// showing, and there is nowhere else it could be committed from -- Save is
+    /// disabled unless a code is selected.
+    ///
+    /// The selection follows the *code*, not the row number, and the editor is
+    /// deliberately left alone: nothing about the code changed, so reordering
+    /// must not discard whatever is half-typed in it.
+    pub fn move_cheat(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.cheats.len() || to >= self.cheats.len() {
+            return;
+        }
+        let cheat = self.cheats.remove(from);
+        self.cheats.insert(to, cheat);
+        self.cheat_selected = self.cheat_selected.map(|selected| shift(selected, from, to));
+        self.save_cheats();
+    }
+
     /// Remove the selected code, selecting whatever takes its place.
     pub fn delete_selected_cheat(&mut self) {
         let Some(index) = self.cheat_selected else { return };
@@ -173,5 +193,48 @@ impl MelonEgui {
                 .filter("melonDS cheats", &["mch"])
                 .directory(self.dialog_dir("cheats")),
         );
+    }
+}
+
+/// Where row `index` ends up once the code at `from` is moved to `to`.
+///
+/// Every row between the two shifts by one towards the gap the move left
+/// behind; the moved row itself lands on `to`. Split out as a free function
+/// because it is pure arithmetic that is easy to get subtly wrong in either
+/// direction, and because that makes it testable without a console.
+const fn shift(index: usize, from: usize, to: usize) -> usize {
+    if index == from {
+        to
+    } else if from < index && index <= to {
+        index - 1
+    } else if to <= index && index < from {
+        index + 1
+    } else {
+        index
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shift;
+
+    #[test]
+    fn a_moved_row_takes_its_selection_with_it() {
+        // 0 1 2 3 4, moving 1 down to 3: 0 2 3 1 4.
+        assert_eq!(shift(1, 1, 3), 3, "the moved row lands where it was dropped");
+        assert_eq!(shift(2, 1, 3), 1, "the rows it passed slid up");
+        assert_eq!(shift(3, 1, 3), 2);
+        assert_eq!(shift(0, 1, 3), 0, "rows outside the range do not move");
+        assert_eq!(shift(4, 1, 3), 4);
+    }
+
+    #[test]
+    fn moving_a_row_up_shifts_the_other_way() {
+        // 0 1 2 3 4, moving 3 up to 1: 0 3 1 2 4.
+        assert_eq!(shift(3, 3, 1), 1);
+        assert_eq!(shift(1, 3, 1), 2);
+        assert_eq!(shift(2, 3, 1), 3);
+        assert_eq!(shift(0, 3, 1), 0);
+        assert_eq!(shift(4, 3, 1), 4);
     }
 }
