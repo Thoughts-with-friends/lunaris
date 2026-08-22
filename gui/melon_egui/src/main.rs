@@ -194,7 +194,8 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(app::default_window_size())
             .with_min_inner_size(app::min_window_size())
-            .with_title("melon_egui"),
+            .with_title("melon_egui")
+            .with_icon(lunaris_icon()),
         vsync: saved.video.vsync,
         ..Default::default()
     };
@@ -204,6 +205,35 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(app::MelonEgui::new(cc, rom, shot, renderer, mp)))),
     )
+}
+
+/// The lunaris icon, for the window and the task bar.
+///
+/// The same `docs/icons/icon.ico` `build.rs` stamps into the executable, and
+/// the same one `gui/egui` shows — one icon for every front end in the project.
+/// The resource in the executable is only used by the shell, and only in a
+/// release build; a window has to be told separately, and at run time.
+///
+/// A malformed or missing icon leaves the window with the system default rather
+/// than stopping the emulator starting, which is what an icon is worth.
+#[cfg(feature = "melonds")]
+fn lunaris_icon() -> egui::IconData {
+    const BYTES: &[u8] = include_bytes!("../../../docs/icons/icon.ico");
+
+    let decoded = ico::IconDir::read(std::io::Cursor::new(BYTES))
+        .ok()
+        .and_then(|dir| dir.entries().first().and_then(|entry| entry.decode().ok()));
+    match decoded {
+        Some(image) => egui::IconData {
+            width: image.width(),
+            height: image.height(),
+            rgba: image.rgba_data().to_vec(),
+        },
+        None => {
+            eprintln!("melon_egui: could not read the window icon; using the system default");
+            egui::IconData::default()
+        }
+    }
 }
 
 /// Take a bare flag out of `argv`, reporting whether it was there.

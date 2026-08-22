@@ -2374,6 +2374,7 @@ dependencies = [
  "egui_glow",
  "gilrs",
  "i18n_derive",
+ "ico",
  "image",
  "indexmap 2.14.0",
  "log",

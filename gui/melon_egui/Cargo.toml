@@ -34,6 +34,10 @@ eframe = { version = "0.33", default-features = false, features = [
 egui = "0.33"
 # The paint callback that draws the core's GL texture inside eframe's context.
 egui_glow = "0.33"
+# The window and task bar icon, decoded from `docs/icons/icon.ico` at startup.
+# `build.rs` puts the same file in the executable's resources, but that is for
+# the shell and only in a release build -- a window is told separately.
+ico = "0.5.0"
 rfd = "0.14"
 pollster = { version = "1.0.1" }
 
