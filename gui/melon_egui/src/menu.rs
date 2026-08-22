@@ -315,11 +315,12 @@ fn system_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
             if let Some(stats) = app.remote_stats {
                 ui.separator();
                 ui.small(format!(
-                    "{}: {:.0} ms   {}: {:.2} Mbit/s",
+                    "{}: {:.0} ms   {}: {:.0} fps, {:.2} Mbit/s",
                     app.i18n().t(K::InputLatency),
                     stats.rtt_ms,
                     app.i18n().t(K::Video),
-                    stats.megabits_per_second(),
+                    stats.video_fps,
+                    stats.video_megabits_per_second() + stats.audio_megabits_per_second(),
                 ));
             }
         });

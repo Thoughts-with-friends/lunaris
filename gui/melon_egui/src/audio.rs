@@ -120,9 +120,23 @@ impl Audio {
     /// thread on the sound card, and a dropped tail is less bad than a stalled
     /// window. Returns how many output frames were written.
     pub fn push(&mut self, samples: &[i16]) -> usize {
+        self.push_at(samples, SPU_SAMPLE_RATE)
+    }
+
+    /// As [`Self::push`], but for samples that are **not** at the console's
+    /// rate.
+    ///
+    /// Remote Desktop sends its sound decimated, to keep it from being a third
+    /// of the link's bandwidth, and names the rate in every datagram (see
+    /// [`crate::remote::audio`]). Upsampling it back here — rather than on the
+    /// host, before it is sent — is the whole saving, and costs nothing extra:
+    /// [`Resampler`] was already interpolating to the device rate, so it simply
+    /// takes a different step.
+    pub fn push_at(&mut self, samples: &[i16], source_rate: u32) -> usize {
         // One output frame advances this far through the source. Exactly 1.0
-        // for the common case of a 48 kHz device, which makes this a copy.
-        let nominal = SPU_SAMPLE_RATE as f32 / self.device_rate as f32;
+        // for the common case of a 48 kHz source and device, which makes this a
+        // copy.
+        let nominal = source_rate.max(1) as f32 / self.device_rate as f32;
         let step = nominal * (1.0 + rate_trim(self.fill()));
         let ring = &mut self.ring;
         self.resampler.run(samples, step, self.volume, |frame| ring.push(frame).is_ok())
