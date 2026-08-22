@@ -53,6 +53,7 @@ pub(crate) use geometry::{guest_viewport_id, paint_screen, to_image, touch_coord
 pub(crate) use gl_screen::FULL_CLIP;
 pub(crate) use host_bridge::{ArcHost, LanConnection};
 pub(crate) use net_address::{parse_lan_address, parse_remote_address};
+pub(crate) use windows::WindowConfig;
 
 /// Which of the three things this window is.
 ///
@@ -166,12 +167,6 @@ pub use crate::{
 /// filling a modern display.
 pub fn default_window_size() -> [f32; 2] {
     view::window_size_for_scale(2.0, &ViewOptions::default(), CHROME_HEIGHT).into()
-}
-
-/// The floor, at 1x. Below this the screens would have to be scaled down, which
-/// for pixel art is worse than a small window.
-pub fn min_window_size() -> [f32; 2] {
-    view::window_size_for_scale(1.0, &ViewOptions::default(), CHROME_HEIGHT).into()
 }
 
 pub struct MelonEgui {
@@ -343,4 +338,6 @@ pub struct MelonEgui {
     shot: Option<(u64, PathBuf)>,
     /// Whether the capture has already been asked for, so it is asked for once.
     shot_requested: bool,
+
+    pub window: windows::WindowConfig,
 }

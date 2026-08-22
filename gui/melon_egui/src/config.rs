@@ -54,6 +54,8 @@ pub struct Settings {
     /// Which key and which pad button each DS button answers to. Defaults to
     /// melonDS's own map; see [`crate::bindings`].
     pub bindings: crate::bindings::Bindings,
+
+    pub window: crate::app::WindowConfig,
 }
 
 /// What the guest join box holds before anyone has typed in it: this machine,
@@ -86,6 +88,7 @@ impl Default for Settings {
             lan: crate::lan::Tuning::default(),
             remote: crate::remote::Tuning::default(),
             bindings: crate::bindings::Bindings::default(),
+            window: crate::app::WindowConfig::default(),
         }
     }
 }

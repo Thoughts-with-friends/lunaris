@@ -103,6 +103,7 @@ impl MelonEgui {
             frames_run: 0,
             shot,
             shot_requested: false,
+            window: crate::app::WindowConfig::default(),
         };
         if let Ok(audio) = &mut app.audio {
             audio.volume = settings.volume;
@@ -199,6 +200,7 @@ impl MelonEgui {
             lan: self.lan_tuning,
             remote: self.remote_tuning,
             bindings: self.bindings.clone(),
+            window: self.window.clone(),
         }
     }
 

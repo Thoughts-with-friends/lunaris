@@ -255,4 +255,76 @@ impl MelonEgui {
             }
         }
     }
+    pub(crate) fn update_window_info(&mut self, ctx: &egui::Context) {
+        update_window_geometry(ctx, egui::ViewportId::ROOT, &mut self.window);
+    }
+}
+
+fn update_window_geometry(
+    ctx: &egui::Context,
+    viewport_id: egui::ViewportId,
+    geometry: &mut WindowConfig,
+) {
+    // NOTE: Writing directly to `geometry` inside this closure would
+    // deadlock (egui holds an internal lock during `input()`).
+    let (pos, size, maximized) = ctx.input(|i| {
+        let mut temp_pos = None;
+        let mut temp_size = None;
+        let mut temp_maximized = None;
+
+        if let Some(info) = i.raw.viewports.get(&viewport_id) {
+            temp_maximized = Some(info.maximized.unwrap_or(false));
+
+            if let Some(inner_rect) = info.inner_rect {
+                temp_size = Some(inner_rect.size());
+            }
+
+            if let Some(outer_rect) = info.outer_rect {
+                temp_pos = Some(outer_rect.min);
+            }
+        }
+
+        (temp_pos, temp_size, temp_maximized)
+    });
+
+    if !geometry.maximized {
+        if let Some(pos) = pos {
+            geometry.pos_x = pos.x;
+            geometry.pos_y = pos.y;
+        }
+
+        if let Some(size) = size {
+            geometry.width = size.x;
+            geometry.height = size.y;
+        }
+    }
+
+    if let Some(maximized) = maximized {
+        geometry.maximized = maximized;
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct WindowConfig {
+    /// X coordinate of the window's top-left corner (outer rect).
+    pub pos_x: f32,
+
+    /// Y coordinate of the window's top-left corner (outer rect).
+    pub pos_y: f32,
+
+    /// Inner width of the window (excludes OS decorations).
+    pub width: f32,
+
+    /// Inner height of the window (excludes title bar and OS decorations).
+    pub height: f32,
+
+    /// Whether the window was maximized when the application last closed.
+    pub maximized: bool,
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self { pos_x: 100.0, pos_y: 100.0, width: 512.0, height: 768.0, maximized: false }
+    }
 }

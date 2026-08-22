@@ -193,14 +193,14 @@ fn main() -> eframe::Result<()> {
 
     // Vsync is fixed when the surface is created, so it is read from the saved
     // settings here rather than applied live from the Video settings dialog.
-    let saved = config::Settings::load();
+    let json_config = config::Settings::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size(app::default_window_size())
-            .with_min_inner_size(app::min_window_size())
+            .with_inner_size([json_config.window.width, json_config.window.height])
+            .with_position([json_config.window.pos_x, json_config.window.pos_y])
             .with_title("melon_egui")
             .with_icon(lunaris_icon()),
-        vsync: saved.video.vsync,
+        vsync: json_config.video.vsync,
         ..Default::default()
     };
 

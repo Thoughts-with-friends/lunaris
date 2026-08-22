@@ -12,6 +12,7 @@ impl eframe::App for MelonEgui {
         // round trip in `crate::gl_screen::capture` happen at all: it needs
         // the context current, and a paint callback is too late.
         self.advance(ctx, frame);
+        self.update_window_info(ctx);
 
         let mut action = None;
         egui::TopBottomPanel::top("menu").show(ctx, |ui| action = menu::bar(self, ui));
