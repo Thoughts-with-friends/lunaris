@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "free_bios"
-version = "0.5.2"
+version = "0.5.3"
 
 [[package]]
 name = "futures-channel"
@@ -1751,7 +1751,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "i18n_derive"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "quote",
  "syn 3.0.3",
@@ -2282,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "eframe",
  "egui",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_gui_common"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "free_bios",
  "nds-core",
@@ -2330,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_net"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "nds-core",
  "rusty_enet",
@@ -2366,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "melon_egui"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "cpal",
  "eframe",
@@ -5403,7 +5403,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.5.2"
+version = "0.5.3"
 
 [[package]]
 name = "y4m"
