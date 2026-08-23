@@ -101,12 +101,20 @@ Further details regarding the design of the NDS emulator are summarized in the f
 - [ ] **Phase 3 (10%)**: VPN Network support
 - [ ] **Phase 4 (0%)**: JIT Compile
 
+## UI Images
 
-
+- Lunaris Backend
 
 <p align="center">
   <img src="./docs/img/ui_kh365.png" alt="Lunaris GUI" width="600"/>
   <img src="./docs/img/ui_sora.png" alt="Lunaris GUI" width="600"/>
+</p>
+
+- MelonDS Backend
+
+<p align="center">
+  <!-- <img src="./docs/img/ui_pkhg1.png" alt="Lunaris GUI" width="600"/> -->
+  <img src="./docs/img/ui_pkhg2.png" alt="Lunaris GUI" width="600"/>
 </p>
 
 ## CI Tests
