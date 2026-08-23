@@ -277,3 +277,97 @@ impl Drop for Emu {
         self.flush_save();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::Emu;
+
+    /// A cart to run these against, since none can be shipped: point
+    /// `MELON_TEST_ROM` at a `.nds` and they run, otherwise they pass trivially.
+    fn test_rom() -> Option<PathBuf> {
+        std::env::var_os("MELON_TEST_ROM").map(PathBuf::from).filter(|rom| rom.is_file())
+    }
+
+    /// A scratch save directory of its own per test, so two of them cannot
+    /// write each other's `.sav`.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("melon_egui-save-test").join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A save image the cart cannot have written itself, so finding it in the
+    /// cart's memory proves it came from the file.
+    fn marked_save(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    /// The length the cart says its backup memory is, which is the only length
+    /// an imported file can be compared against.
+    fn save_len(rom: &Path) -> usize {
+        let dir = scratch("probe");
+        let mut emu = Emu::boot_with(rom, Some(&dir), None).unwrap();
+        emu.nds.save_memory().len()
+    }
+
+    /// A `.sav` sitting where the cart's save belongs has to reach the cart's
+    /// backup memory, or every save in the instance directory is invisible to
+    /// the game that wrote it.
+    #[test]
+    fn a_save_file_beside_the_cart_is_in_the_cart() {
+        let Some(rom) = test_rom() else { return };
+        let len = save_len(&rom);
+        assert!(len > 0, "the cart reports no backup memory at all");
+
+        let dir = scratch("boot");
+        let save = marked_save(len);
+        let path = crate::file::settings::Settings::redirect(Some(&dir), &rom, "sav");
+        std::fs::write(&path, &save).unwrap();
+
+        let mut emu = Emu::boot_with(&rom, Some(&dir), None).unwrap();
+        assert_eq!(emu.nds.save_memory(), save, "the file did not reach the cart");
+    }
+
+    /// What `File ▸ Import savefile` does: hand the bytes to a console that is
+    /// already running and have the cart come back up on them.
+    #[test]
+    fn an_imported_save_reaches_the_running_cart() {
+        let Some(rom) = test_rom() else { return };
+        let len = save_len(&rom);
+
+        let dir = scratch("import");
+        let mut emu = Emu::boot_with(&rom, Some(&dir), None).unwrap();
+        let save = marked_save(len);
+        emu.import_save(&save).unwrap();
+
+        assert_eq!(emu.nds.save_memory(), save, "the import did not reach the cart");
+        // And it is on disk under the cart's own name, which is what the next
+        // boot will read.
+        let path = crate::file::settings::Settings::redirect(Some(&dir), &rom, "sav");
+        assert_eq!(std::fs::read(&path).unwrap(), save, "the import was not written out");
+    }
+
+    /// A save of the wrong length is the common case with files from another
+    /// emulator, and it must not be silently dropped: melonDS pads or truncates
+    /// to the cart's own size, and the leading bytes are what carry the game.
+    #[test]
+    fn a_save_of_the_wrong_length_is_still_imported() {
+        let Some(rom) = test_rom() else { return };
+        let len = save_len(&rom);
+        if len < 2 {
+            return;
+        }
+
+        let dir = scratch("short");
+        let mut emu = Emu::boot_with(&rom, Some(&dir), None).unwrap();
+        let short = marked_save(len / 2);
+        emu.import_save(&short).unwrap();
+
+        let in_cart = emu.nds.save_memory();
+        assert_eq!(in_cart.len(), len, "the cart keeps its own size");
+        assert_eq!(&in_cart[..short.len()], &short[..], "the file's bytes are not in the cart");
+    }
+}

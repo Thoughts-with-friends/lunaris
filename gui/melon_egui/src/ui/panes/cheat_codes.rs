@@ -37,6 +37,14 @@ const LIST_WIDTH: f32 = 300.0;
 /// stranded in the middle of an empty field.
 const CONTENT_HEIGHT: f32 = 340.0;
 
+/// How long a press has to be held on a row before it becomes a drag, in
+/// seconds.
+///
+/// Long enough that no ordinary click reaches it -- picking a code to edit must
+/// never move it -- and short enough that a deliberate hold does not feel stuck.
+/// Windows' own press-and-hold is around half a second; this sits just under it.
+const HOLD_TO_DRAG: f64 = 0.4;
+
 /// How narrow the editor half may get before it stops shrinking, in points.
 /// Below this the three boxes are too narrow to read a code in.
 const EDITOR_MIN_WIDTH: f32 = 260.0;
@@ -137,16 +145,27 @@ fn buttons(app: &mut MelonEgui, ui: &mut egui::Ui) {
 
 /// The left half: every code, its checkbox and its type.
 ///
+/// # Touching a row versus dragging it
+///
+/// A press selects the row it lands on, straight away. Only once that press has
+/// been *held* for [`HOLD_TO_DRAG`] does it become a drag, and a drag dropped on
+/// another row moves the code there.
+///
+/// The hold is what separates the two, and it has to: egui's own drag sources
+/// begin dragging as soon as the pointer moves a few points while down, which on
+/// a list like this means every attempt to pick a code up to edit it reorders
+/// the list instead. A short touch can then never mean "select", because there
+/// is no such thing as a perfectly still one.
+///
 /// # Reordering
 ///
-/// A row is a drag source carrying its own index, and every row is a drop
-/// target: dropping row *from* onto row *to* takes it out and puts it back
-/// there, which is the order the `.mch` is then written in. The order matters
-/// because Action Replay codes are run in list order and two codes writing the
-/// same address do not commute.
+/// Every row is also a drop target: dropping row *from* onto row *to* takes it
+/// out and puts it back there, which is the order the `.mch` is then written in.
+/// The order matters because Action Replay codes are run in list order and two
+/// codes writing the same address do not commute.
 ///
-/// The checkbox is deliberately outside the drag source, so that enabling a
-/// code cannot start a drag and a drag cannot toggle one.
+/// The checkbox is outside all of this, so that enabling a code cannot start a
+/// drag and a drag cannot toggle one.
 fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.label("Available cheats:");
 
@@ -174,31 +193,37 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
                     } else {
                         format!("{} / {}", cheat.category, cheat.name)
                     };
-                    // Two responses, because the drag source's own is the
-                    // enclosing scope's — it carries the rect and the drag, but
-                    // it senses no clicks. Selecting a row is the label's job,
-                    // which is `inner`. While a row is being dragged its
-                    // contents are painted to a tooltip layer and `inner` comes
-                    // back empty, so a drag cannot also read as a click.
-                    let dragged = ui.dnd_drag_source(egui::Id::new("cheat-row").with(i), i, |ui| {
-                        ui.selectable_label(selected == Some(i), label)
-                    });
-                    let clicked = dragged.inner.clicked();
-                    let mut row = dragged.response;
+                    // One widget with one response, rather than a label inside
+                    // a drag source: two overlapping hit targets on the same
+                    // rect disagree about which of them a press belongs to, and
+                    // the row has to answer that itself.
+                    let mut row = row_label(ui, label, selected == Some(i));
                     if !cheat.description.is_empty() {
                         row = row.on_hover_text(&cheat.description);
                     }
                     if !cheat.is_well_formed() {
                         row = row.on_hover_text("This code has an odd number of words.");
                     }
+                    // Selected on the press rather than on the release, so a
+                    // touch shows the code in the editor at once -- and so a
+                    // press that goes on to become a drag has already put the
+                    // code being dragged on screen.
+                    if row.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed()) {
+                        select = Some(i);
+                    }
+                    if held_long_enough(ui, &row) {
+                        // Setting the payload is what starts the drag. egui
+                        // clears it on release and paints the grabbing cursor
+                        // meanwhile, so there is nothing to undo here.
+                        egui::DragAndDrop::set_payload(ui.ctx(), i);
+                        let stroke = ui.visuals().selection.stroke;
+                        ui.painter().rect_stroke(row.rect, 2.0, stroke, egui::StrokeKind::Inside);
+                    }
                     if let Some(from) = row.dnd_hover_payload::<usize>() {
                         insertion_marker(ui, row.rect, *from, i);
                     }
                     if let Some(from) = row.dnd_release_payload::<usize>() {
                         reorder = Some((*from, i));
-                    }
-                    if clicked {
-                        select = Some(i);
                     }
                     ui.label(CHEAT_TYPE);
                     ui.end_row();
@@ -217,8 +242,63 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
     if app.cheats.is_empty() {
         ui.label("No codes. Add one, or read a melonDS .mch file.");
     } else {
-        ui.label("Drag a row to reorder; the new order is saved as it is dropped.");
+        ui.label(
+            "Click a row to edit it. Hold it for a moment to pick it up, then drop it on \
+             another row to reorder — the new order is saved as it lands.",
+        );
     }
+}
+
+/// Whether the press on `row` has been held long enough to become a drag.
+///
+/// Measured from when the button went down anywhere, which is sound because
+/// [`egui::Response::is_pointer_button_down_on`] is only true when *this* row is
+/// what it went down on.
+///
+/// A repaint is asked for while the press is still short: a pointer held
+/// perfectly still produces no events, and without this the hold would not be
+/// noticed until something else woke the window up.
+fn held_long_enough(ui: &egui::Ui, row: &egui::Response) -> bool {
+    if !row.is_pointer_button_down_on() {
+        return false;
+    }
+    let held = ui.input(|i| i.pointer.press_start_time().map(|start| i.time - start));
+    match held {
+        Some(held) if held >= HOLD_TO_DRAG => true,
+        _ => {
+            ui.ctx().request_repaint();
+            false
+        }
+    }
+}
+
+/// One row of the list: a selectable label that senses dragging as well as
+/// clicking.
+///
+/// Built by hand rather than with [`egui::Ui::selectable_label`] because that
+/// one senses clicks only, and a row that is both has to be a single widget —
+/// see this module's note on touching versus dragging.
+fn row_label(ui: &mut egui::Ui, text: String, selected: bool) -> egui::Response {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = ui.painter().layout_no_wrap(text, font, egui::Color32::PLACEHOLDER);
+    let padding = ui.spacing().button_padding;
+    let (rect, response) =
+        ui.allocate_at_least(galley.size() + 2.0 * padding, egui::Sense::click_and_drag());
+
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact_selectable(&response, selected);
+        if selected || response.hovered() {
+            ui.painter().rect(
+                rect,
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        ui.painter().galley(rect.min + padding, galley, visuals.text_color());
+    }
+    response
 }
 
 /// Draw the line the dragged row would land on: above the row when it is coming

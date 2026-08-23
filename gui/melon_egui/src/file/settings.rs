@@ -4,7 +4,10 @@
 //! menu can open; this is the equivalent. Deliberately small: only the things a
 //! user would be annoyed to set twice.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use crate::{
     ui::{panes::Pane, view::ViewOptions},
@@ -167,6 +170,15 @@ impl Settings {
         }
         self.recents.truncate(RECENT_LIMIT);
         self.speed = crate::speed::clamp(self.speed);
+        // A relative save or state directory is one an older version wrote
+        // before `instances_dir` was anchored to the executable: it means
+        // "wherever this happened to be started from", which is the very thing
+        // that used to scatter saves across two trees. Dropped rather than
+        // resolved, so it falls back to this instance's own directory -- a
+        // directory the user actually chose is always absolute, because it came
+        // from a folder dialog.
+        self.save_dir = self.save_dir.take().filter(|dir| dir.is_absolute());
+        self.state_dir = self.state_dir.take().filter(|dir| dir.is_absolute());
     }
 
     /// Record `rom` as the newest entry, moving it up if it was already there and
@@ -199,23 +211,77 @@ pub fn config_dir() -> PathBuf {
     instance_dir(1)
 }
 
-/// The directory containing all per-instance data.
+/// The directory containing all per-instance data: saves, savestates, cheats,
+/// logs and `settings.json`.
 ///
-/// `./instances`, relative to the working directory — deliberately the same
-/// expression `lunaris` itself uses (`lunaris_gui_common::config::Config::
-/// INSTANCES_DIR`), so that running the two front ends from one directory puts
-/// their instance trees in the same place and a save made under one is where
-/// the other looks for it. That is the point of the request: these are two
-/// front ends onto the same games, not two unrelated programs.
+/// # Why this is not simply `./instances`
 ///
-/// Working-directory-relative rather than executable-relative for the same
-/// reason: matching `lunaris` matters more than being relocatable, and the two
-/// cannot both be had.
+/// It was, to match the expression `lunaris` itself uses
+/// (`lunaris_gui_common::config::Config::INSTANCES_DIR`) so that both front ends
+/// put their instance trees in the same place. But that path is relative to the
+/// *working directory*, and the working directory is not a property of the
+/// program — it is whatever launched it. `cargo run` sets it to the workspace
+/// root; double-clicking the executable sets it to the folder the executable is
+/// in.
+///
+/// So one build could hold two complete instance trees at once and silently
+/// pick between them by how it was started: a save written under one launch was
+/// invisible under the other, and a savestate written from the menu landed in a
+/// directory the next run never looked at. That is a data-loss bug wearing the
+/// clothes of a path constant.
+///
+/// # What it is instead
+///
+/// Resolved once, to an absolute path, from the *executable*, which does not
+/// move between launches:
+///
+/// 1. `MELON_EGUI_INSTANCES`, when it is set — the way to put the tree
+///    anywhere, including on the same directory `lunaris` uses.
+/// 2. For a build inside `target/<profile>/`, the workspace root above it. A
+///    development build then keeps one tree however it was started, and it is
+///    the same `./instances` a `cargo run` from the workspace root has always
+///    used.
+/// 3. Otherwise beside the executable, so that a copied-out build is
+///    self-contained.
+/// 4. `./instances`, if the executable's own path cannot be read at all.
 pub fn instances_dir() -> PathBuf {
-    PathBuf::from(INSTANCES_DIR)
+    static RESOLVED: OnceLock<PathBuf> = OnceLock::new();
+    RESOLVED.get_or_init(resolve_instances_dir).clone()
 }
 
-/// Where per-instance data lives, as `lunaris` spells it.
+/// [`instances_dir`]'s rules, in order. Separate so the reasoning is readable
+/// and so it can be tested against a path without running from one.
+fn resolve_instances_dir() -> PathBuf {
+    if let Some(from_env) = std::env::var_os(INSTANCES_ENV).filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(from_env);
+    }
+    match std::env::current_exe().ok().and_then(|exe| app_root_for(&exe)) {
+        Some(root) => root.join("instances"),
+        None => PathBuf::from(INSTANCES_DIR),
+    }
+}
+
+/// Where the tree belongs for an executable at `exe`: the workspace root when
+/// it is a `target/<profile>/` build, and the executable's own directory
+/// otherwise.
+fn app_root_for(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    // `target/debug/melon_egui.exe` and `target/release/…` are the two shapes
+    // cargo produces; `target/<triple>/<profile>/…` is the cross-compiled one.
+    let mut ancestors = dir.ancestors().skip(1).take(2);
+    if let Some(root) = ancestors.find_map(|above| {
+        (above.file_name()? == "target").then(|| above.parent().map(Path::to_path_buf))?
+    }) {
+        return Some(root);
+    }
+    Some(dir.to_path_buf())
+}
+
+/// The environment variable that overrides where the instance tree lives.
+pub const INSTANCES_ENV: &str = "MELON_EGUI_INSTANCES";
+
+/// Where per-instance data lives when the executable's path is unknowable, as
+/// `lunaris` spells it.
 pub const INSTANCES_DIR: &str = "./instances";
 
 /// Return the root directory for one emulator instance.
@@ -274,7 +340,59 @@ fn settings_path(instance: u32) -> PathBuf {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{RECENT_LIMIT, Settings};
+    use super::{RECENT_LIMIT, Settings, app_root_for};
+
+    /// A development build must find the workspace's own tree however it was
+    /// started -- this is the bug that split saves across two directories.
+    #[test]
+    fn a_target_build_anchors_on_the_workspace_root() {
+        let root = Path::new("D:/work/lunaris");
+        assert_eq!(
+            app_root_for(&root.join("target/release/melon_egui.exe")),
+            Some(root.to_path_buf()),
+        );
+        assert_eq!(
+            app_root_for(&root.join("target/debug/melon_egui.exe")),
+            Some(root.to_path_buf()),
+        );
+        // The cross-compiled shape, `target/<triple>/<profile>/`.
+        assert_eq!(
+            app_root_for(&root.join("target/x86_64-pc-windows-msvc/release/melon_egui.exe")),
+            Some(root.to_path_buf()),
+        );
+    }
+
+    /// A build copied out somewhere keeps its data beside itself.
+    #[test]
+    fn a_distributed_build_anchors_beside_the_executable() {
+        let dir = Path::new("D:/Games/melon_egui");
+        assert_eq!(app_root_for(&dir.join("melon_egui.exe")), Some(dir.to_path_buf()));
+    }
+
+    /// A directory that merely *contains* the word is not a cargo target dir.
+    #[test]
+    fn only_a_real_target_directory_counts() {
+        let dir = Path::new("D:/Games/targeting/release");
+        assert_eq!(app_root_for(&dir.join("melon_egui.exe")), Some(dir.to_path_buf()));
+    }
+
+    /// The stale relative directories older versions wrote mean "wherever this
+    /// was started from", which is what has to stop being trusted.
+    #[test]
+    fn a_relative_save_directory_is_dropped_on_load() {
+        let mut settings = Settings {
+            save_dir: Some(PathBuf::from("./instances/instance1/saves")),
+            state_dir: Some(PathBuf::from("D:/absolute/states")),
+            ..Settings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.save_dir, None, "a relative directory falls back to the default");
+        assert_eq!(
+            settings.state_dir,
+            Some(PathBuf::from("D:/absolute/states")),
+            "a directory the user chose is absolute and is kept",
+        );
+    }
 
     #[test]
     fn recents_put_the_newest_first_without_duplicating() {

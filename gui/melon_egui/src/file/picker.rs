@@ -53,9 +53,14 @@ pub(crate) enum Kind {
 pub(crate) struct Request {
     kind: Kind,
     title: String,
-    /// A single named extension filter, as every call site here needs at most
-    /// one: `("Nintendo DS ROM", ["nds", "dsi", "srl"])`.
-    filter: Option<(String, Vec<String>)>,
+    /// The named extension filters, in the order they are offered:
+    /// `[("Nintendo DS ROM", ["nds", "dsi", "srl"])]`.
+    ///
+    /// A list rather than one, because a dialog that offers only the extensions
+    /// a file *usually* has cannot open the one a user actually has -- a save
+    /// exported under some other name is invisible in it, with no way to say
+    /// "show me everything". See [`Request::any_file`].
+    filters: Vec<(String, Vec<String>)>,
     /// Where the dialog opens. `None` leaves it wherever the system last was,
     /// which is the behaviour a user expects from an unconfigured dialog.
     directory: Option<PathBuf>,
@@ -80,14 +85,25 @@ impl Request {
     }
 
     fn new(kind: Kind, title: impl Into<String>) -> Self {
-        Self { kind, title: title.into(), filter: None, directory: None, file_name: None }
+        Self { kind, title: title.into(), filters: Vec::new(), directory: None, file_name: None }
     }
 
-    /// Restrict the dialog to `extensions`, shown under `name`.
+    /// Offer `extensions` under `name`. Called more than once, each is another
+    /// entry in the dialog's file-type box, the first of them selected.
     pub(crate) fn filter(mut self, name: &str, extensions: &[&str]) -> Self {
-        self.filter =
-            Some((name.to_owned(), extensions.iter().map(|ext| (*ext).to_owned()).collect()));
+        self.filters
+            .push((name.to_owned(), extensions.iter().map(|ext| (*ext).to_owned()).collect()));
         self
+    }
+
+    /// Also let anything at all be picked.
+    ///
+    /// For the dialogs that open a file somebody brought from elsewhere: a save
+    /// exported by another emulator, or one renamed by whatever copied it, is
+    /// still the file they meant, and a filter that hides it leaves them with a
+    /// dialog that appears to contain nothing.
+    pub(crate) fn any_file(self) -> Self {
+        self.filter("all files", &["*"])
     }
 
     /// Open the dialog in `directory`, when there is a sensible one to offer.
@@ -110,7 +126,7 @@ impl Request {
     /// thread [`Pending::spawn`] starts, never on the UI thread.
     fn show(self) -> Option<PathBuf> {
         let mut dialog = rfd::AsyncFileDialog::new().set_title(&self.title);
-        if let Some((name, extensions)) = &self.filter {
+        for (name, extensions) in &self.filters {
             let extensions: Vec<&str> = extensions.iter().map(String::as_str).collect();
             dialog = dialog.add_filter(name, &extensions);
         }

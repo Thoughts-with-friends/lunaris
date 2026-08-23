@@ -108,6 +108,10 @@ fn main() -> eframe::Result<()> {
     let headless = matches!(argv.first().map(String::as_str), Some("--selftest" | "--shot"))
         .then_some(log::LevelFilter::Info);
     logger::install(&file::settings::instance_data_dir(1, "logs"), headless);
+    // The first thing in every log, because everything else this program reads
+    // or writes hangs off it: a save that "vanished" is nearly always a run
+    // that resolved this somewhere else. See `file::settings::instances_dir`.
+    log::info!("instance tree: {}", file::settings::instances_dir().display());
 
     // Pulled out before the positional arguments are read, so it can be
     // written last on the command line where it reads naturally.
