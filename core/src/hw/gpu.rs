@@ -431,3 +431,8 @@ impl EngineType for EngineB {
         false
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/gpu.rs"]
+mod spec;

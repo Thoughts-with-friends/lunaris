@@ -1044,3 +1044,8 @@ impl ChannelType for NoiseChannel {
         true
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/spu.rs"]
+mod spec;

@@ -571,3 +571,8 @@ impl IORegister for Address {
         HW::write_byte_to_value(&mut self.addr, byte, value);
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/dma.rs"]
+mod spec;

@@ -240,3 +240,8 @@ impl Device {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/spi.rs"]
+mod spec;

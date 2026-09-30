@@ -208,6 +208,60 @@ impl NDS {
         self.hw.offset_cycles_for_test(offset);
     }
 
+    /// Test-only: the hardware state, for the specification tests in
+    /// `core/tests/` that stop a real boot at a point of interest.
+    #[cfg(test)]
+    pub(crate) const fn hw(&self) -> &HW {
+        &self.hw
+    }
+
+    /// Test-only: mutable hardware state. See [`NDS::hw`].
+    #[cfg(test)]
+    pub(crate) const fn hw_mut(&mut self) -> &mut HW {
+        &mut self.hw
+    }
+
+    /// Test-only: both CPU cores `(arm7, arm9)`. See [`NDS::hw`].
+    #[cfg(test)]
+    pub(crate) const fn cpus(&self) -> (&ARM<false>, &ARM<true>) {
+        (&self.arm7, &self.arm9)
+    }
+
+    /// Test-only: the same CPU/scheduler interleaving as
+    /// [`NDS::emulate_frame`], but checks `stop` after every slice and returns
+    /// `true` as soon as it holds (or `false` after `max_frames` frames).
+    /// Lets the specification tests stop a real boot at an exact point of
+    /// interest, e.g. right after SWAP_BUFFERS and before the 3D engine
+    /// renders and drains its polygon list.
+    #[cfg(test)]
+    pub(crate) fn run_until_hw(
+        &mut self,
+        max_frames: usize,
+        mut stop: impl FnMut(&HW) -> bool,
+    ) -> bool {
+        let mut frames = 0;
+        while frames < max_frames {
+            if stop(&self.hw) {
+                return true;
+            }
+            if self.hw.rendered_frame() {
+                frames += 1;
+            }
+            if likely(!self.hw.gpu.bus_stalled()) {
+                let cycle = self.hw.cycle();
+                let target = std::cmp::min(cycle + 30, self.hw.cycle_at_next_event());
+                self.arm9.emulate(&mut self.hw, target * 2);
+                self.arm7.emulate(&mut self.hw, target);
+                self.hw.clock_until(target);
+            } else {
+                self.hw.clock_until_event();
+                self.arm9.set_cycle(self.hw.cycle() * 2);
+                self.arm7.set_cycle(self.hw.cycle());
+            }
+        }
+        false
+    }
+
     /// Runs both CPUs until the GPU signals that a full frame has been rendered.
     ///
     /// Each iteration advances in ≤30-cycle slices to limit desync between
@@ -600,3 +654,7 @@ mod tests {
         let _ = std::fs::remove_file(&renamed_path);
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/nds.rs"]
+mod spec;

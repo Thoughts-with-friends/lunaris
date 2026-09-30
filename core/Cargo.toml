@@ -10,6 +10,9 @@ license.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# `core/tests/` holds specification tests that are mounted *inside* the lib
+# (as children of the source files they mirror), not integration targets.
+autotests = false
 
 [dependencies]
 bitfield = { path = "../bitfield" }
@@ -38,3 +41,10 @@ zstd = "0.13"
 
 [features]
 nightly = []
+# Diagnostic ARM9 instruction trace; see `core/examples/trace_pc.rs`.
+trace = []
+
+# The instruction-trace harness only exists under the `trace` feature.
+[[example]]
+name = "trace_pc"
+required-features = ["trace"]

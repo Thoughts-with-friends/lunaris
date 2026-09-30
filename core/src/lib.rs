@@ -30,6 +30,10 @@ use num_traits as num;
 mod arm;
 mod hw;
 
+/// Diagnostic ARM9 instruction trace, enabled by the `trace` feature.
+#[cfg(feature = "trace")]
+pub use crate::arm::trace;
+
 pub mod nds;
 pub use nds::NDS;
 
@@ -38,6 +42,13 @@ pub use nds::NDS;
 pub use crate::hw::net;
 
 mod macros;
+
+/// Shared helpers for the specification tests in `core/tests/` (report
+/// builders, test ROM, headless boot). Each test file there is mounted as a
+/// child of the source file it mirrors; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+pub(crate) mod test_support;
 
 pub type CheatMap = Vec<ArCode>;
 
@@ -90,3 +101,8 @@ fn strip_desmume_footer(bytes: &[u8]) -> Option<&[u8]> {
     // rather than risk truncating to a bogus length.
     if raw_size > footer_start { None } else { Some(&bytes[..raw_size]) }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../tests/lib.rs"]
+mod spec;

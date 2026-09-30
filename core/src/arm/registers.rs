@@ -311,3 +311,8 @@ impl std::ops::IndexMut<u32> for RegValues {
         &mut self.regs[index as usize]
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/arm/registers.rs"]
+mod spec;

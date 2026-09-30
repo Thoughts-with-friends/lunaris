@@ -644,3 +644,8 @@ impl GraphicsType {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../tests/hw.rs"]
+mod spec;

@@ -1327,3 +1327,8 @@ pub struct Polygon {
     pub is_front: bool,
     pub original_verts: Vec<(Matrix, [FixedPoint; 3])>,
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../../tests/hw/gpu/engine3d/geometry.rs"]
+mod spec;

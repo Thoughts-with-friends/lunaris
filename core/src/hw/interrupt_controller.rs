@@ -208,3 +208,8 @@ impl IORegister for InterruptRequest {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/interrupt_controller.rs"]
+mod spec;

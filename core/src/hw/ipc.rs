@@ -339,3 +339,8 @@ impl FIFOCNT {
         ((fifo.len() == IPC::FIFO_LEN) as u8) << 1 | fifo.is_empty() as u8
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/ipc.rs"]
+mod spec;

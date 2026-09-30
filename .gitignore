@@ -19,3 +19,7 @@ docs/design/
 core/examples/
 core/lunaris_emu/examples/
 core/lunaris_emu/tests/
+
+# Spec-test reports and the local test-ROM pointer (see core/tests/README.md)
+core/tests/dist/
+core/tests/test_rom.txt

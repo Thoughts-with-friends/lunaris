@@ -245,3 +245,8 @@ impl Hash for EventWrapper {
         self.event.hash(state);
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/scheduler.rs"]
+mod spec;

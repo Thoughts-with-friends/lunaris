@@ -66,3 +66,8 @@ impl TSC {
         self.y = 0xFFF;
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../tests/hw/spi/tsc.rs"]
+mod spec;

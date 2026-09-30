@@ -568,3 +568,8 @@ mod tests {
         assert_eq!(normalize_foreign_save(&short), short);
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../tests/hw/cartridge/backup.rs"]
+mod spec;

@@ -274,3 +274,8 @@ impl CP15 {
         self.interrupt_base
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../tests/hw/mem/cp15.rs"]
+mod spec;

@@ -337,3 +337,8 @@ impl TMCNT {
         TMCNT { prescaler: 0, count_up: false, irq: false, start: false }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/timers.rs"]
+mod spec;

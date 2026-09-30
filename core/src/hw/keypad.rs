@@ -184,3 +184,8 @@ impl EXTKEYIN {
         EXTKEYIN::PEN_DOWN | EXTKEYIN::DEBUG | EXTKEYIN::Y | EXTKEYIN::X
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/keypad.rs"]
+mod spec;

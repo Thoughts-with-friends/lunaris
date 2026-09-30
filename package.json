@@ -16,7 +16,10 @@
     "egui": "cargo run --release --features release --package lunaris",
     "egui:gnu": "cargo +stable-x86_64-pc-windows-gnu run --release",
     "melon": "cargo run --release --features release --package melon_egui",
-    "test:back": "cargo nextest run --workspace",
+    "tiny": "cargo run --release --features release --package egui_tiny",
+    "test": "cargo test -p nds-core --lib",
+    "test:spec:synthetic": "cross-env LUNARIS_TEST_ROM=none cargo test -p nds-core --lib",
+    "test:gpu": "npm run test -- hw::gpu",
     "release:major": "node ./tools/version_up.cjs major && git push --all",
     "release:minor": "node ./tools/version_up.cjs minor && git push --all",
     "release:patch": "node ./tools/version_up.cjs patch && git push --all"

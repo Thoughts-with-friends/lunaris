@@ -152,3 +152,8 @@ impl Region {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../tests/hw/cartridge/header.rs"]
+mod spec;

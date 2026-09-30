@@ -391,3 +391,8 @@ impl HW {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/ar.rs"]
+mod spec;

@@ -670,3 +670,8 @@ impl ROMCTRL {
         false
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/cartridge.rs"]
+mod spec;

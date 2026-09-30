@@ -398,3 +398,8 @@ impl IORegister for HALTCNT {
         assert!(self.mode != HaltMode::GBA && self.mode != HaltMode::Sleep); // TODO: Implement
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/hw/mem.rs"]
+mod spec;

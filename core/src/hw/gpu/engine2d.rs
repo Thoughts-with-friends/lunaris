@@ -1741,3 +1741,8 @@ mod tests {
         assert_eq!(mosaicked[0], mosaicked[1]);
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../tests/hw/gpu/engine2d.rs"]
+mod spec;

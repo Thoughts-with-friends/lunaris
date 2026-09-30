@@ -29,6 +29,49 @@ use crate::{
     likely, num, unlikely,
 };
 
+/// Diagnostic ARM9 instruction trace, used to diff this core against another
+/// implementation. Recording is off until [`trace::arm`] reserves room.
+#[cfg(feature = "trace")]
+pub mod trace {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PC_TRACE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+        /// Which core to record; the ARM9 unless [`select`] says otherwise.
+        static WANT_ARM9: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    }
+
+    /// Chooses which core the trace follows.
+    pub fn select(arm9: bool) {
+        WANT_ARM9.with(|w| w.set(arm9));
+    }
+
+    /// `true` when `is_arm9` is the core being recorded.
+    pub fn wanted(is_arm9: bool) -> bool {
+        WANT_ARM9.with(std::cell::Cell::get) == is_arm9
+    }
+
+    /// Starts recording, capping the trace at `limit` program counters.
+    pub fn arm(limit: usize) {
+        PC_TRACE.with(|t| t.borrow_mut().reserve_exact(limit));
+    }
+
+    /// Appends one program counter, ignoring the call once the cap is reached.
+    pub fn record(pc: u32) {
+        PC_TRACE.with(|t| {
+            let mut t = t.borrow_mut();
+            if t.len() < t.capacity() {
+                t.push(pc);
+            }
+        });
+    }
+
+    /// Removes and returns everything recorded so far.
+    pub fn take() -> Vec<u32> {
+        PC_TRACE.with(|t| std::mem::take(&mut *t.borrow_mut()))
+    }
+}
+
 /// 4096-entry ARM instruction dispatch table (bits [27:20] + [7:4] of opcode).
 type ArmLut<const IS_ARM9: bool> = [instructions::InstructionHandler<u32, IS_ARM9>; 4096];
 /// 256-entry THUMB instruction dispatch table (bits [15:8] of opcode).
@@ -91,6 +134,13 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
         cpu
     }
 
+    /// Test-only: the register file, for the specification tests in
+    /// `core/tests/`.
+    #[cfg(test)]
+    pub(crate) const fn regs(&self) -> &RegValues {
+        &self.regs
+    }
+
     pub fn set_cycle(&mut self, cycle: usize) {
         self.cycle = cycle;
     }
@@ -109,6 +159,10 @@ impl<const IS_ARM9: bool> ARM<IS_ARM9> {
     /// Dispatches to the THUMB or ARM path based on the T-bit in CPSR.
     pub fn emulate(&mut self, hw: &mut HW, target: usize) {
         while self.cycle < target {
+            #[cfg(feature = "trace")]
+            if trace::wanted(IS_ARM9) {
+                trace::record(self.regs[15]);
+            }
             self.handle_irq(hw);
             if self.is_halted(hw) {
                 self.cycle = target;
@@ -460,3 +514,8 @@ fn thumb_lut<const IS_ARM9: bool>() -> &'static ThumbLut<IS_ARM9> {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../tests/arm.rs"]
+mod spec;

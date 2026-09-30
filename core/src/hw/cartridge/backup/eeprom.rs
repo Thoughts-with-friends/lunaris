@@ -289,3 +289,8 @@ impl EEPROMType for EEPROMLarge {
         "Large"
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../../tests/hw/cartridge/backup/eeprom.rs"]
+mod spec;

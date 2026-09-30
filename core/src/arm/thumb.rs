@@ -681,3 +681,8 @@ pub(super) fn gen_lut<const IS_ARM9: bool>() -> [InstructionHandler<u16, IS_ARM9
 
     lut
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../tests/arm/thumb.rs"]
+mod spec;

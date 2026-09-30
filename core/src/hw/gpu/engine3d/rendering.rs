@@ -1114,3 +1114,8 @@ mod fog_tests {
         assert_eq!(padded[33], 9);
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../../tests/hw/gpu/engine3d/rendering.rs"]
+mod spec;

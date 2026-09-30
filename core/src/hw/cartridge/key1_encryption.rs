@@ -121,3 +121,8 @@ fn round(key_buf: &[u32], i: usize, x: &mut u32, y: &mut u32) {
     *x = f ^ *y;
     *y = z as u32;
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../tests/hw/cartridge/key1_encryption.rs"]
+mod spec;

@@ -297,3 +297,8 @@ impl Instr {
         }
     }
 }
+
+/// Specification tests + report generator; see `core/tests/README.md`.
+#[cfg(test)]
+#[path = "../../../../tests/hw/cartridge/backup/flash.rs"]
+mod spec;
