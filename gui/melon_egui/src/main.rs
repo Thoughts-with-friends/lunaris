@@ -69,34 +69,39 @@
 //! highlights included, so it is a UI check and not a source of reference
 //! images.
 
-/// The front end's state, and the lifecycle that drives it.
+// # Startup
+//
+// ```text
+// main()
+//  1. install the logger (instance1/logs), log where the instance tree is
+//  2. take --renderer and --mp out of the arguments
+//  3. --selftest → run headless, exit with its code
+//     --shot     → fixed RTC, then continue as a window
+//  4. read settings.json for the window size and vsync
+//  5. eframe::run_native → MelonEgui::new (app/boot.rs)
+//                        → update() every repaint (ui/frame.rs)
+// ```
+
+// Each module explains itself in its own header; README.md has the map.
 mod app;
 mod audio;
-/// Which key and which pad button each DS button answers to.
 mod bindings;
 mod emu;
-/// Everything that reaches the disk: carts, saves, savestates, cheats,
-/// settings. The half of a command that outlives the session.
 mod file;
 mod fonts;
 mod gl_screen;
 mod guest;
 mod i18n;
+mod lan;
 mod logger;
 mod mp;
 mod pad;
+mod remote;
 mod selftest;
 mod speed;
-/// Everything drawn. Stops at the button press; see [`ui`].
 mod ui;
 mod upscale;
 mod video;
-
-/// The VPN-tolerant LAN transport.
-pub(crate) mod lan;
-/// Remote Desktop mode: both consoles on the host, picture and sound out,
-/// buttons and stylus back.
-pub(crate) mod remote;
 
 fn main() -> eframe::Result<()> {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();

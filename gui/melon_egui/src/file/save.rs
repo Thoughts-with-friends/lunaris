@@ -1,5 +1,14 @@
-//! Save files and savestates: the commands, and the dialogs behind the
-//! "File..." entries.
+//! The File menu's save-data commands for the first console.
+//!
+//! * **Import savefile** — pick a file → strip a DeSmuME `.dsv` footer if
+//!   present → write it as the cart's `.sav` → reboot the console on it.
+//! * **Save / Load state** — a numbered slot (`<rom>.mlN`) acts at once;
+//!   "File..." opens a dialog first and acts when it answers
+//!   ([`crate::file::dialog`]).
+//! * **Undo state load** — loading keeps the previous state in memory.
+//!
+//! The second console's versions of these run on its own thread
+//! (`crate::guest::orders`); both use the same [`Emu`] helpers.
 
 use crate::app::*;
 
@@ -97,13 +106,9 @@ impl MelonEgui {
 
     pub(crate) fn write_state_to(&mut self, path: &Path) {
         let Some(emu) = &mut self.emu else { return };
-        let mut buf = Vec::new();
-        let outcome = emu.nds.save_state(&mut buf).map_err(|e| e.to_string()).and_then(|()| {
-            std::fs::write(path, &buf).map_err(|e| format!("cannot write {}: {e}", path.display()))
-        });
-        match outcome {
-            Ok(()) => {
-                let mib = buf.len() as f64 / (1024.0 * 1024.0);
+        match emu.save_state_to(path) {
+            Ok(bytes) => {
+                let mib = bytes as f64 / (1024.0 * 1024.0);
                 self.post_ok(format!("state saved to {} ({mib:.1} MiB)", path.display()));
             }
             Err(e) => self.post_error(format!("save state failed: {e}")),
@@ -125,20 +130,12 @@ impl MelonEgui {
         self.read_state_from(&path);
     }
 
+    /// Load a state, keeping the previous one for "Undo state load".
     pub(crate) fn read_state_from(&mut self, path: &Path) {
         let Some(emu) = &mut self.emu else { return };
-
-        // Snapshot first: a load with nothing to go back to is a load that
-        // cannot be undone, and melonDS offers exactly that undo.
-        let mut before = Vec::new();
-        let snapshot = emu.nds.save_state(&mut before).is_ok();
-
-        let outcome = std::fs::read(path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))
-            .and_then(|buf| emu.nds.load_state(&buf).map_err(|e| e.to_string()));
-        match outcome {
-            Ok(()) => {
-                self.undo_state = snapshot.then_some(before);
+        match emu.load_state_from(path) {
+            Ok(before) => {
+                self.undo_state = before;
                 self.post_ok(format!("state loaded from {}", path.display()));
             }
             Err(e) => self.post_error(format!("load state failed: {e}")),
@@ -155,8 +152,6 @@ impl MelonEgui {
             Err(e) => self.post_error(format!("undo failed: {e}")),
         }
     }
-
-    // -- the emulation loop -------------------------------------------------
 }
 
 /// The trailer DeSmuME appends to a `.dsv`, and the line at the head of it that
@@ -192,10 +187,10 @@ fn raw_save(data: &[u8]) -> (&[u8], Option<&'static str>) {
 
 /// Where `needle` last starts inside `haystack`.
 fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
+    if needle.is_empty() {
         return None;
     }
-    (0..=haystack.len() - needle.len()).rev().find(|&at| &haystack[at..at + needle.len()] == needle)
+    haystack.windows(needle.len()).rposition(|window| window == needle)
 }
 
 /// How an imported image compares with the cart's own backup memory, for the

@@ -1,4 +1,17 @@
 //! Starting up, and everything remembered between runs.
+//!
+//! # Startup ([`MelonEgui::new`], called once by eframe)
+//!
+//! 1. Load `instance1/settings.json` and `instance2/settings.json`.
+//! 2. Build the state from them (the sound device opens on its own thread).
+//! 3. `--renderer` overrides the saved renderer for this run only.
+//! 4. Bind OpenGL to eframe's context and build the blitter (`init_gl`).
+//! 5. Install a CJK font fallback, then the theme and UI scale.
+//! 6. Boot the ROM given on the command line, and with `--mp` the second
+//!    console too.
+//!
+//! [`MelonEgui::settings`] is the reverse: it gathers everything worth keeping
+//! into a [`Settings`] for `settings.json`.
 
 use super::*;
 
@@ -90,6 +103,7 @@ impl MelonEgui {
             lan_status: Notice::quiet(Severity::Info, "LAN room is offline"),
             lan_room: "No LAN room".to_owned(),
             instance2_settings,
+            instance2_saved: String::new(),
             guest_textures: None,
             guest_bottom: None,
             screens_live: [true, true],
@@ -114,25 +128,8 @@ impl MelonEgui {
             app.video.renderer = renderer;
             app.video.internal_scale = scale;
         }
-        // eframe's GL context is current on this thread here, which is what
-        // both of these need: glad binds against whatever is current, and the
-        // shader has to be created in the context that will draw it.
         if let Some(gl) = &cc.gl {
-            app.gl_loaded = melonds::gl_load(None);
-            match melonds::gl_info() {
-                // Which context was bound decides which renderers can work at
-                // all: a driver can bind and still be too old for melonDS's
-                // shaders, and that failure otherwise looks like a bug here.
-                Some(info) => log::info!("OpenGL bound: {info}"),
-                None => log::warn!(
-                    "could not bind OpenGL for this context, so the OpenGL renderers are \
-                     unavailable and the software rasteriser is used"
-                ),
-            }
-            match gl_screen::Screen::new(gl) {
-                Ok(screen) => app.gl_screen = Some(std::sync::Arc::new(screen)),
-                Err(e) => log::warn!("no GL blitter ({e}); OpenGL renderer disabled"),
-            }
+            app.init_gl(gl);
         }
 
         // Logged at startup because a missing sound card is otherwise only
@@ -141,14 +138,7 @@ impl MelonEgui {
         // Before the theme, so the first frame drawn already has it: a ROM
         // title in kana is otherwise a row of boxes until something else
         // rebuilds the font atlas.
-        app.font_note = match crate::fonts::install(&cc.egui_ctx) {
-            Some(path) => {
-                Notice::new(Severity::Success, format!("CJK fallback: {}", path.display()))
-            }
-            None => {
-                Notice::new(Severity::Warn, "No CJK font found; Japanese text will show as boxes.")
-            }
-        };
+        app.font_note = install_fonts(&cc.egui_ctx);
         app.set_theme(&cc.egui_ctx, app.dark_theme);
         if settings.ui_scale > 0.0 {
             cc.egui_ctx.set_zoom_factor(settings.ui_scale);
@@ -162,6 +152,25 @@ impl MelonEgui {
             app.launch_instance();
         }
         app
+    }
+
+    /// Bind melonDS's GL entry points and build the blitter, against eframe's
+    /// context (current on this thread now; the shader must live in the
+    /// context that draws it). Either failing leaves the software renderer.
+    fn init_gl(&mut self, gl: &std::sync::Arc<eframe::glow::Context>) {
+        self.gl_loaded = melonds::gl_load(None);
+        match melonds::gl_info() {
+            // A driver can bind and still be too old for melonDS's shaders.
+            Some(info) => log::info!("OpenGL bound: {info}"),
+            None => log::warn!(
+                "could not bind OpenGL for this context, so the OpenGL renderers are \
+                 unavailable and the software rasteriser is used"
+            ),
+        }
+        match gl_screen::Screen::new(gl) {
+            Ok(screen) => self.gl_screen = Some(std::sync::Arc::new(screen)),
+            Err(e) => log::warn!("no GL blitter ({e}); OpenGL renderer disabled"),
+        }
     }
 
     /// Record `rom` at the top of the recent list and save.
@@ -262,5 +271,14 @@ impl MelonEgui {
     /// Write the settings out, for a pane that changed one.
     pub fn save_settings(&self) {
         self.persist();
+    }
+}
+
+/// Install the CJK font fallback before the first frame (otherwise a ROM title
+/// in kana is a row of boxes), and say which font was used.
+fn install_fonts(ctx: &egui::Context) -> Notice {
+    match crate::fonts::install(ctx) {
+        Some(path) => Notice::new(Severity::Success, format!("CJK fallback: {}", path.display())),
+        None => Notice::new(Severity::Warn, "No CJK font found; Japanese text will show as boxes."),
     }
 }

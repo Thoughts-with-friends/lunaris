@@ -2,8 +2,6 @@
 
 use super::*;
 
-// -- frame queues ------------------------------------------------------------
-
 /// One side's inbox for a class of frames.
 #[derive(Default)]
 pub(crate) struct Queue {

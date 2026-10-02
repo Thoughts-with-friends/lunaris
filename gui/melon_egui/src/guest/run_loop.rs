@@ -1,7 +1,25 @@
-//! The console's own thread: boot, then frames on the wall clock.
+//! The second console's thread body.
+//!
+//! # Flow
+//!
+//! ```text
+//! boot (Emu::boot_mp) ─ fail ─→ report, finish
+//!   │
+//!   ├─ load its .mch cheats, start at the first console's frame count
+//!   ▼
+//! loop until Guest is dropped:
+//!   1. perform queued menu commands      (orders.rs)
+//!   2. paused?        → sleep 4 ms, retry
+//!   3. frame step owed → run those frames now
+//!   4. otherwise run as many frames as the wall clock has earned (max 4)
+//!      - input: the UI's sample, or (Remote Desktop) the remote player's,
+//!        re-read before every frame
+//!   5. publish the picture, drain/stream the audio, flush the save each 1 s
+//! ```
 
 use super::*;
 
+/// Everything the thread is started with. See [`Guest::spawn`].
 pub(crate) struct RunConfig<'a> {
     pub(crate) rom: &'a Path,
     pub(crate) save_dir: Option<PathBuf>,
@@ -15,7 +33,7 @@ pub(crate) struct RunConfig<'a> {
     pub(crate) shared: &'a Shared,
 }
 
-/// The thread body: boot, then run frames on the wall clock until asked to stop.
+/// The thread body.
 pub(crate) fn run(config: RunConfig) {
     let RunConfig {
         rom,
@@ -28,133 +46,77 @@ pub(crate) fn run(config: RunConfig) {
         stream,
         shared,
     } = config;
+    let stream = stream.as_deref();
 
     let mut emu = match Emu::boot_mp(rom, save_dir.as_ref(), state_dir.as_ref(), instance_id, mp) {
         Ok(emu) => emu,
-        Err(e) => {
-            shared.say(format!("could not boot: {e}"));
-            if let Ok(mut out) = shared.output.lock() {
-                out.finished = true;
-            }
-            return;
-        }
+        Err(e) => return finish(shared, format!("could not boot: {e}")),
     };
-    let cheat_path = crate::file::settings::Settings::redirect(cheat_dir.as_ref(), rom, "mch");
-    let cheats: Vec<Cheat> = crate::file::mch::load(&cheat_path)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|cheat| cheat.to_core())
-        .collect();
-    if !cheats.is_empty() {
-        emu.nds.set_cheats(cheats.as_slice());
-        log::info!("instance2 loaded {} cheat codes from {}", cheats.len(), cheat_path.display());
-    }
+    load_cheats(&mut emu, rom, cheat_dir.as_ref());
     // The wireless clock's epoch is the frame count, so a console joining a
-    // session already in progress has to start from its peer's.
+    // session in progress has to start from its peer's.
     emu.nds.set_frame_count(start_frame);
     shared.say(format!("running from frame {start_frame}"));
 
     let frame_time = Duration::from_secs_f64(1.0 / FRAME_RATE);
     let mut next = Instant::now();
     let mut last_flush = Instant::now();
-
-    // Savestate taken before the last `LoadState`, so it can be taken back.
+    // The state before the last `LoadState`, for "Undo state load".
     let mut undo: Option<Vec<u8>> = None;
-    // Frames owed by `Command::FrameStep`, which is the only way a paused
-    // console advances.
+    // Frames owed by `Command::FrameStep`, the only way a paused console moves.
     let mut stepping = 0u32;
 
     while !shared.quit.load(Ordering::Relaxed) {
-        // Between frames, which is the only safe point: every arm of this makes
-        // `melonds` calls, and the console is not re-entrant.
+        // Between frames is the only safe point for `melonds` calls.
         if perform_commands(&mut emu, shared, &mut undo, &mut stepping) == Outcome::Stopped {
             return;
         }
 
         if shared.paused.load(Ordering::Relaxed) && stepping == 0 {
-            // Held: the other console is not running either, so there is
-            // nothing to stay in step with.
             next = Instant::now();
             std::thread::sleep(Duration::from_millis(4));
             continue;
         }
 
-        // A step is owed regardless of the clock: `Frame step` is what advances
-        // a paused console, and waiting for wall time it is not accruing would
-        // make the entry do nothing.
+        // A frame step runs regardless of the clock.
         if stepping > 0 {
             let step = std::mem::take(&mut stepping);
-            if run_frames(&mut emu, shared, step) == Outcome::Stopped {
+            if run_frames(&mut emu, shared, step, |_| {}) == Outcome::Stopped {
                 return;
             }
-            shared.frames.store(emu.nds.frame_count(), Ordering::Relaxed);
-            publish(&mut emu, shared, stream.as_deref());
-            drain_audio(&mut emu, stream.as_deref());
+            after_frames(&mut emu, shared, stream);
             next = Instant::now();
             continue;
         }
 
-        // However many frames the clock has earned since the last pass, capped
-        // so a long stall does not turn into a burst.
-        let now = Instant::now();
-        let mut due = 0;
-        while next <= now && due < MAX_CATCH_UP {
-            next += frame_time;
-            due += 1;
-        }
+        let due = frames_due(&mut next, frame_time);
         if due == 0 {
-            // Ahead of the clock: wait out the remainder rather than spin. This
-            // is what keeps the pair overlapping in *wall* time, which is what
-            // makes the host's blocking reply collection work at all.
-            std::thread::sleep(next.saturating_duration_since(now).min(frame_time));
+            // Ahead of the clock: wait rather than spin. Staying level with
+            // the first console in *wall* time is what lets a wireless round's
+            // blocking reply collection work.
+            std::thread::sleep(next.saturating_duration_since(Instant::now()).min(frame_time));
             continue;
         }
-        if next < now {
-            next = now;
-        }
 
-        // In Remote Desktop mode the console belongs to the remote player, so
-        // their controls arrive over the network. The host's own window can
-        // still press buttons — the masks are OR-ed — but the stylus is the
-        // remote player's alone: two pointers fighting over one touchscreen
-        // produces a stylus that jitters between them, which is worse for both
-        // than one of them simply not having it.
         let local = shared.input.lock().map(|input| *input).unwrap_or_default();
-        let (keys, touch) = match &stream {
-            Some(stream) => {
-                let remote = stream.input();
-                (local.keys | remote.keys, remote.touch)
+        let outcome = match stream {
+            None => {
+                emu.set_input(local.keys, local.touch);
+                run_frames(&mut emu, shared, due, |_| {})
             }
-            None => (local.keys, local.touch),
-        };
-        emu.nds.set_keys(keys);
-        match touch {
-            Some((x, y)) => emu.nds.touch(x, y),
-            None => emu.nds.release_screen(),
-        }
-
-        // A pass may owe several frames, and in Remote Desktop mode the
-        // controls are arriving from the network all the while. Applying the
-        // one sample read above to every frame of the batch is what the remote
-        // player feels as the stylus trailing their finger, so each frame gets
-        // whatever has arrived by the time it starts.
-        let outcome = match &stream {
-            Some(stream) => run_frames_with(&mut emu, shared, due, |emu| {
+            // Remote Desktop: the remote player's controls are re-read before
+            // every frame so a batch is not driven by one stale sample. Keys
+            // from both sides are OR-ed; the stylus is the remote player's
+            // alone (two pointers on one touchscreen would make it jitter).
+            Some(stream) => run_frames(&mut emu, shared, due, |emu| {
                 let remote = stream.input();
-                emu.nds.set_keys(local.keys | remote.keys);
-                match remote.touch {
-                    Some((x, y)) => emu.nds.touch(x, y),
-                    None => emu.nds.release_screen(),
-                }
+                emu.set_input(local.keys | remote.keys, remote.touch);
             }),
-            None => run_frames(&mut emu, shared, due),
         };
         if outcome == Outcome::Stopped {
             return;
         }
-        shared.frames.store(emu.nds.frame_count(), Ordering::Relaxed);
-        publish(&mut emu, shared, stream.as_deref());
-        drain_audio(&mut emu, stream.as_deref());
+        after_frames(&mut emu, shared, stream);
 
         if last_flush.elapsed() >= Duration::from_secs(1) {
             emu.flush_save();
@@ -164,6 +126,36 @@ pub(crate) fn run(config: RunConfig) {
     emu.flush_save();
 }
 
+/// How many frames the wall clock has earned since `next`, at most
+/// [`MAX_CATCH_UP`]. A longer stall is forgotten rather than run as a burst,
+/// which on a link would flood the other console with rounds.
+fn frames_due(next: &mut Instant, frame_time: Duration) -> u32 {
+    let now = Instant::now();
+    let mut due = 0;
+    while *next <= now && due < MAX_CATCH_UP {
+        *next += frame_time;
+        due += 1;
+    }
+    if due > 0 && *next < now {
+        *next = now;
+    }
+    due
+}
+
+/// Read this console's own `.mch` and install its codes.
+fn load_cheats(emu: &mut Emu, rom: &Path, cheat_dir: Option<&PathBuf>) {
+    let path = crate::file::settings::Settings::redirect(cheat_dir, rom, "mch");
+    let cheats: Vec<Cheat> = crate::file::mch::load(&path)
+        .unwrap_or_default()
+        .iter()
+        .map(crate::file::mch::Cheat::to_core)
+        .collect();
+    if !cheats.is_empty() {
+        emu.nds.set_cheats(&cheats);
+        log::info!("instance2 loaded {} cheat codes from {}", cheats.len(), path.display());
+    }
+}
+
 /// Whether the run loop may carry on, or the console has stopped for good.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Outcome {
@@ -171,16 +163,17 @@ pub(crate) enum Outcome {
     Stopped,
 }
 
-/// Run `count` frames, reporting a console that stopped part way.
-pub(crate) fn run_frames(emu: &mut Emu, shared: &Shared, count: u32) -> Outcome {
-    run_frames_with(emu, shared, count, |_| {})
+/// Report `note` and mark the console as finished, so the UI closes its window.
+pub(crate) fn finish(shared: &Shared, note: String) {
+    shared.say(note);
+    if let Ok(mut out) = shared.output.lock() {
+        out.finished = true;
+    }
 }
 
-/// As [`run_frames`], but `before_each` runs immediately ahead of every frame.
-///
-/// That hook exists for one reason: to re-read the remote player's controls, so
-/// a batch of frames is not driven by one stale sample. See the call site.
-pub(crate) fn run_frames_with(
+/// Run `count` frames, calling `before_each` ahead of every one, and stop
+/// early (reporting why) if the console stops.
+fn run_frames(
     emu: &mut Emu,
     shared: &Shared,
     count: u32,
@@ -188,40 +181,41 @@ pub(crate) fn run_frames_with(
 ) -> Outcome {
     for _ in 0..count {
         before_each(emu);
-        emu.nds.run_frame();
-        if !emu.nds.is_running() {
-            let note = emu.stop_reason().unwrap_or_else(|| "stopped".to_owned());
-            shared.say(note);
-            if let Ok(mut out) = shared.output.lock() {
-                out.finished = true;
-            }
+        if let Err(note) = emu.run_frame_checked() {
+            finish(shared, note);
             return Outcome::Stopped;
         }
     }
     Outcome::Continue
 }
 
-/// Hand the console's picture to everyone who wants it: the UI thread, and —
-/// in Remote Desktop mode — the encoder.
-///
-/// Both are served from **one** read of the framebuffers. Serving them
-/// separately through [`Guest::take_screens`] would have them competing for the
-/// same slot, and each would get roughly every other frame.
-///
-/// The UI thread's copy really is a copy: the framebuffers belong to the
-/// console and are overwritten as it draws, and the UI thread must never be
-/// looking at one while that happens. The encoder is served in place, on this
-/// thread, so it costs nothing extra.
-pub(crate) fn publish(emu: &mut Emu, shared: &Shared, stream: Option<&RemoteHost>) {
+/// What follows every batch of frames: publish the frame count and picture,
+/// and take the audio.
+fn after_frames(emu: &mut Emu, shared: &Shared, stream: Option<&RemoteHost>) {
+    shared.frames.store(emu.nds.frame_count(), Ordering::Relaxed);
+    publish(emu, shared, stream);
+    // Drained even without a stream: the core buffers its output until read,
+    // so leaving it would be a backlog that only grows.
+    let samples = emu.drain_audio(AUDIO_DRAIN_PAIRS);
+    if let Some(stream) = stream
+        && !samples.is_empty()
+    {
+        stream.send_audio(&samples);
+    }
+}
+
+/// Hand the picture to the UI thread and, in Remote Desktop mode, to the
+/// encoder — both from **one** read of the framebuffers, so neither misses
+/// frames to the other. The encoder runs here, on this thread, so the first
+/// console's frame time is never spent on it.
+fn publish(emu: &mut Emu, shared: &Shared, stream: Option<&RemoteHost>) {
     let Some((top, bottom)) = emu.nds.framebuffers() else {
         return;
     };
-    // Encoded here, on the console's own thread. Doing it on the UI thread
-    // would spend the other console's frame time on it, which is exactly the
-    // frame rate loss Remote Desktop exists to remove.
     if let Some(stream) = stream {
         stream.send_frame(top, bottom);
     }
+    // A copy: the core keeps drawing into its own buffers.
     let screens = [top.to_vec(), bottom.to_vec()];
     debug_assert_eq!(screens[0].len(), SCREEN_WIDTH * SCREEN_HEIGHT);
     if let Ok(mut out) = shared.output.lock() {
@@ -230,35 +224,11 @@ pub(crate) fn publish(emu: &mut Emu, shared: &Shared, stream: Option<&RemoteHost
     }
 }
 
-/// Take the console's audio, and stream it if anyone is listening.
-///
-/// Drained **whether or not** there is a stream. The core buffers what its SPU
-/// produces until somebody reads it, and this console's output was never read
-/// before Remote Desktop existed; leaving it unread now would be a backlog that
-/// only grows. Draining and discarding costs a memcpy a frame.
-pub(crate) fn drain_audio(emu: &mut Emu, stream: Option<&RemoteHost>) {
-    let queued = emu.nds.audio_queued();
-    if queued == 0 {
-        return;
-    }
-    let mut buffer = vec![0i16; queued.min(AUDIO_DRAIN_PAIRS) * 2];
-    let pairs = emu.nds.read_audio(&mut buffer);
-    if let Some(stream) = stream {
-        stream.send_audio(&buffer[..pairs * 2]);
-    }
-}
+/// The most sample pairs drained in one go (a frame is ~800 at 48 kHz).
+const AUDIO_DRAIN_PAIRS: usize = 8192;
 
-/// How many sample pairs are drained from the console in one go.
-///
-/// A frame produces about 800 at 48 kHz; this is generous headroom for a pass
-/// that ran several frames, and bounds the allocation either way.
-pub(crate) const AUDIO_DRAIN_PAIRS: usize = 8192;
+/// The DS's video frame rate.
+const FRAME_RATE: f64 = crate::emu::FRAME_RATE;
 
-/// The DS's video frame rate, as [`crate::app`] uses it.
-pub(crate) const FRAME_RATE: f64 = 33_513_982.0 / 560_190.0;
-
-/// How long the thread waits before giving up on a frame it is late for. A
-/// console that has fallen further behind than this — the machine was asleep,
-/// say — starts afresh rather than sprinting to catch up, which on a link
-/// would flood the other console with a burst of rounds.
-pub(crate) const MAX_CATCH_UP: u32 = 4;
+/// The most frames one pass runs to catch up with the clock.
+const MAX_CATCH_UP: u32 = 4;

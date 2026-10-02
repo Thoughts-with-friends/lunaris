@@ -1,15 +1,26 @@
-//! Headless proof that the core and the bindings work, independent of any
-//! rendering this crate does.
+//! `--selftest`: proof that the core and the bindings work, with no window.
 //!
-//! Run it before blaming the blit: if this reports a framebuffer with content,
-//! a black window is this crate's fault; if it reports an all-black
-//! framebuffer, the window is honest and the problem is upstream of egui.
+//! # What it checks, in order
+//!
+//! 1. boot the cart and run `frames` frames — the console must not stop;
+//! 2. report audio, and how much of each screen is non-black (optionally
+//!    dumping both screens as PNGs, converted exactly as the window does);
+//! 3. `set_render` / the displayed-screens mask freeze and resume the picture;
+//! 4. the threaded software renderer draws, and OpenGL without a context
+//!    falls back to software honestly;
+//! 5. an Action Replay code writes RAM while installed and stops when removed;
+//! 6. two consoles on shared airwaves run side by side.
+//!
+//! If this passes and the window is black, the fault is in the window code.
 
 use std::path::Path;
 
 use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
-use crate::{emu::Emu, mp::Airwaves};
+use crate::{
+    emu::{Emu, has_picture},
+    mp::Airwaves,
+};
 
 /// Boot `rom`, run `frames` frames, and report progress and framebuffer
 /// content. When `dump` is set, both screens are also written there as
@@ -29,22 +40,11 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
     log::info!("selftest: booted {}", rom.display());
 
     let start = std::time::Instant::now();
-    let mut stopped_at = None;
-    for frame in 0..frames {
-        emu.nds.run_frame();
-        // Asked, not inferred: a sleeping console draws no scanlines and is
-        // still perfectly alive (see `MelonEgui::advance`).
-        if !emu.nds.is_running() {
-            stopped_at = Some(frame);
-            break;
-        }
-    }
-    let elapsed = start.elapsed();
-
-    if let Some(frame) = stopped_at {
+    if let Some(frame) = (0..frames).find(|_| emu.run_frame_checked().is_err()) {
         log::error!("selftest: core stopped at frame {frame}");
         return 1;
     }
+    let elapsed = start.elapsed();
 
     let ran = frames;
     log::info!(
@@ -54,10 +54,9 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
 
     // Audio is produced whether or not a device is open, so this reports on the
     // core's output rather than on the host's sound card.
-    let queued = emu.nds.audio_queued();
-    let mut samples = vec![0i16; queued * 2];
-    let read = emu.nds.read_audio(&mut samples);
-    let loudest = samples[..read * 2].iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
+    let samples = emu.drain_audio(usize::MAX);
+    let read = samples.len() / 2;
+    let loudest = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0);
     log::info!("selftest: audio {read} sample frames buffered, peak amplitude {loudest}");
 
     let Some((top, bottom)) = emu.nds.framebuffers() else {
@@ -91,16 +90,11 @@ pub fn run(rom: &Path, frames: u32, dump: Option<&str>) -> i32 {
         }
     }
 
-    if !check_render_knobs(&mut emu) {
-        return 1;
-    }
-    if !check_render_settings(&mut emu) {
-        return 1;
-    }
-    if !check_cheats(&mut emu) {
-        return 1;
-    }
-    if !check_two_instances(rom) {
+    if !(check_render_knobs(&mut emu)
+        && check_render_settings(&mut emu)
+        && check_cheats(&mut emu)
+        && check_two_instances(rom))
+    {
         return 1;
     }
 
@@ -151,7 +145,7 @@ fn check_cheats(emu: &mut Emu) -> bool {
 /// take it.
 ///
 /// Two things are checkable without a window. The threaded software renderer is
-/// a real选択 here — it needs no GL at all — so it is selected and the picture
+/// a real choice here — it needs no GL at all — so it is selected and the picture
 /// is required to keep moving and to stay a picture. An OpenGL renderer, on the
 /// other hand, cannot work without a context: melonDS falls back to software
 /// rather than leave a console unable to draw, and the test is that the
@@ -160,12 +154,10 @@ fn check_render_settings(emu: &mut Emu) -> bool {
     use melonds::{RenderSettings, Renderer};
 
     let threaded = RenderSettings { threaded: true, ..RenderSettings::default() };
-    let installed = emu.set_render_settings(threaded);
+    let installed = emu.nds.set_render_settings(threaded);
     advance(emu, 30);
-    let lit_threaded = emu.nds.framebuffers().is_some_and(|(top, bottom)| {
-        let lit = |fb: &[u32]| fb.iter().any(|&px| px & 0x00FF_FFFF != 0);
-        lit(top) || lit(bottom)
-    });
+    let lit_threaded =
+        emu.nds.framebuffers().is_some_and(|(top, bottom)| has_picture(top) || has_picture(bottom));
     log::info!(
         "selftest: threaded software renderer installed: {}; still drawing: {}",
         yes_no(installed == Renderer::Software),
@@ -174,8 +166,8 @@ fn check_render_settings(emu: &mut Emu) -> bool {
 
     // No GL context exists in a headless run, so this is the fallback path.
     let gl = RenderSettings { renderer: Renderer::OpenGl, scale: 4, ..RenderSettings::default() };
-    let fell_back = emu.set_render_settings(gl) == Renderer::Software;
-    let no_texture = emu.gl_output().is_none();
+    let fell_back = emu.nds.set_render_settings(gl) == Renderer::Software;
+    let no_texture = emu.nds.gl_output().is_none();
     log::info!(
         "selftest: OpenGL without a context falls back to software: {}; \
          and reports no GL output: {}",
@@ -184,7 +176,7 @@ fn check_render_settings(emu: &mut Emu) -> bool {
     );
 
     // Back to what the rest of the run expects.
-    emu.set_render_settings(RenderSettings::default());
+    emu.nds.set_render_settings(RenderSettings::default());
     advance(emu, 4);
 
     if !lit_threaded || !fell_back || !no_texture {
@@ -232,9 +224,7 @@ fn check_two_instances(rom: &Path) -> bool {
     // Both must have produced their own picture: a shared-state bug between
     // instances would most likely show up as one of them going dark.
     let lit = |emu: &mut Emu| {
-        emu.nds
-            .framebuffers()
-            .is_some_and(|(top, bottom)| top.iter().chain(bottom).any(|&px| px & 0x00FF_FFFF != 0))
+        emu.nds.framebuffers().is_some_and(|(top, bottom)| has_picture(top) || has_picture(bottom))
     };
     let (host_lit, guest_lit) = (lit(&mut host), lit(&mut guest));
 
@@ -272,12 +262,12 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
         return true;
     }
 
-    emu.set_render(false);
+    emu.nds.set_render(false);
     let frozen = digest(emu);
     advance(emu, 30);
     let still_frozen = digest(emu) == frozen;
 
-    emu.set_render(true);
+    emu.nds.set_render(true);
     advance(emu, 30);
     let moving_again = digest(emu) != frozen;
 
@@ -299,7 +289,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
             log::info!("selftest: {name}-only mask not checked, that screen is static here");
             continue;
         }
-        emu.set_displayed_screens(mask);
+        emu.nds.set_displayed_screens(mask);
         // A couple of frames for the change to take effect before sampling.
         advance(emu, 4);
         let before = screen_digests(emu);
@@ -316,7 +306,7 @@ fn check_render_knobs(emu: &mut Emu) -> bool {
             yes_no(dropped.0 == dropped.1),
         );
     }
-    emu.set_displayed_screens(0b11);
+    emu.nds.set_displayed_screens(0b11);
 
     if !still_frozen || !moving_again {
         log::error!("selftest: mds_set_render did not behave as documented");

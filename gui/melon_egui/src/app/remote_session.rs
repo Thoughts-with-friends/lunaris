@@ -1,5 +1,24 @@
-//! Remote Desktop mode: both consoles here, picture and sound out, controls
-//! back. See [`crate::remote`] for why this beats carrying the wireless.
+//! Remote Desktop mode: both consoles run on the host; the second one's picture
+//! and sound are streamed to the client, and the client's controls come back.
+//!
+//! # Flow
+//!
+//! ```text
+//!  HOST                                        CLIENT
+//!  start_remote(true)                          start_remote(false)
+//!   └ worker: RemoteHost::accept ←── hello ──── worker: RemoteClient::connect
+//!  poll_remote (connected)                     poll_remote (connected)
+//!   ├ mode = RemoteHost                         ├ unload the local cart
+//!   └ launch the second console with            └ mode = RemoteClient
+//!     the session as its "stream"
+//!  every frame (guest thread):                 every repaint:
+//!   send_frame / send_audio ── video+audio ──→  service_remote_client:
+//!   input()  ←───────────────── buttons ─────── 1. send input FIRST
+//!                                                2. decode → textures
+//!                                                3. audio → speakers
+//! ```
+//!
+//! Why this beats LAN mode over a VPN is explained in [`crate::remote`].
 
 use super::*;
 
@@ -10,11 +29,8 @@ impl MelonEgui {
         self.remote_host.is_some() || self.remote_client.is_some() || self.remote_pending.is_some()
     }
 
-    /// Begin a Remote Desktop session, without blocking the UI thread.
-    ///
-    /// As host: both consoles will run here, and the second one's picture and
-    /// sound go out to whoever connects. As client: this window stops being an
-    /// emulator and becomes a screen.
+    /// Start hosting (`host`) or joining a Remote Desktop session, without
+    /// blocking the UI thread.
     pub(crate) fn start_remote(&mut self, host: bool) {
         if self.remote_pending.is_some() {
             self.post_warn("a Remote Desktop session is already being established");
@@ -25,118 +41,61 @@ impl MelonEgui {
             return;
         }
         let tuning = self.remote_tuning;
-        let bind = self.lan_bind_address.clone();
-        let address = self.lan_guest_address.clone();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new()
-            .name(
-                if host { "melon-egui-remote-host" } else { "melon-egui-remote-client" }.to_owned(),
-            )
-            .spawn(move || {
-                let result = if host {
-                    parse_remote_address(&bind, tuning.port).and_then(|addr| {
-                        crate::remote::RemoteHost::accept(addr, tuning)
-                            .map(|host| RemoteSession::Host(Box::new(host)))
-                            .map_err(|error| format!("Remote Desktop host failed: {error}"))
-                    })
-                } else {
-                    parse_remote_address(&address, tuning.port).and_then(|remote| {
-                        // Any local port: the client only ever talks to the one
-                        // host, which answers wherever the hello came from.
-                        let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
-                        crate::remote::RemoteClient::connect(local, remote, tuning)
-                            .map(|client| RemoteSession::Client(Box::new(client)))
-                            .map_err(|error| format!("Remote Desktop client failed: {error}"))
-                    })
-                };
-                let _ = sender.send(result);
-            })
-            .map_err(|error| format!("cannot start a Remote Desktop session: {error}"));
-        if let Err(error) = spawned {
-            self.post_error(error);
-            return;
+        // The host binds its box's address; the client dials the other box.
+        let (address, what) = if host {
+            (self.lan_bind_address.clone(), "waiting for a client on")
+        } else {
+            (self.lan_guest_address.clone(), "connecting to")
+        };
+        let job_address = address.clone();
+        let name = if host { "melon-egui-remote-host" } else { "melon-egui-remote-client" };
+        let spawned = worker::spawn(name, move || {
+            let addr = parse_remote_address(&job_address, tuning.port)?;
+            if host {
+                crate::remote::RemoteHost::accept(addr, tuning)
+                    .map(|host| RemoteSession::Host(Box::new(host)))
+                    .map_err(|error| format!("Remote Desktop host failed: {error}"))
+            } else {
+                // Any local port: the host answers wherever the hello came from.
+                let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
+                crate::remote::RemoteClient::connect(local, addr, tuning)
+                    .map(|client| RemoteSession::Client(Box::new(client)))
+                    .map_err(|error| format!("Remote Desktop client failed: {error}"))
+            }
+        });
+        match spawned {
+            Ok(receiver) => self.remote_pending = Some(receiver),
+            Err(error) => {
+                return self.post_error(format!("cannot start a Remote Desktop session: {error}"));
+            }
         }
-        self.remote_pending = Some(receiver);
-        // Saved on the attempt: an address that did not answer is still the one
-        // the user meant to type.
+        // Saved on the attempt, so a retry does not mean typing it again.
         self.persist();
         self.lan_room =
             if host { "Remote Desktop: hosting" } else { "Remote Desktop: joining" }.to_owned();
-        // The port shown is the one that will actually be used — see
-        // `parse_remote_address`.
-        let (address, what) = if host {
-            (&self.lan_bind_address, "waiting for a client on")
-        } else {
-            (&self.lan_guest_address, "connecting to")
-        };
-        let address = parse_remote_address(address, self.remote_tuning.port)
+        // The port shown is the one actually used (see `parse_remote_address`).
+        let shown = parse_remote_address(&address, tuning.port)
             .map_or_else(|error| error, |addr| addr.to_string());
-        self.lan_status = Notice::quiet(Severity::Info, format!("{what} {address}"));
-        self.post(format!("{what} {address}"));
+        self.lan_status = Notice::quiet(Severity::Info, format!("{what} {shown}"));
+        self.post(format!("{what} {shown}"));
     }
 
-    /// Finish a Remote Desktop session that the connection thread established.
+    /// Sample the live session's numbers, and finish a session the worker
+    /// established.
     pub(crate) fn poll_remote(&mut self) {
-        // Sampled every repaint so the pane and the menu agree, and so a
-        // session that has gone quiet is visible rather than merely stale.
+        // Every repaint, so the pane and the menu read one consistent set.
         self.remote_stats = match (&self.remote_host, &self.remote_client) {
             (Some(host), _) => Some(host.stats()),
             (_, Some(client)) => Some(client.stats()),
             _ => None,
         };
 
-        let Some(receiver) = &self.remote_pending else { return };
-        let result = match receiver.try_recv() {
-            Ok(result) => result,
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => {
-                self.remote_pending = None;
-                self.post_error("the Remote Desktop worker stopped unexpectedly");
-                return;
-            }
-        };
-        self.remote_pending = None;
+        let Some(result) = worker::take(&mut self.remote_pending) else { return };
         match result {
-            Ok(RemoteSession::Host(host)) => {
-                let host = *host;
-                let local = host.local_addr().map_or_else(|_| "?".to_owned(), |a| a.to_string());
-                let remote = host.remote_addr();
-                self.remote_host = Some(std::sync::Arc::new(host));
-                self.mode = Mode::RemoteHost;
-                // The remote player's console. Launched *after* the session
-                // exists, because the stream is fixed when the thread starts.
-                self.close_guest();
-                self.launch_instance();
-                self.lan_room = "Remote Desktop: hosting".to_owned();
-                self.lan_status = Notice::quiet(
-                    Severity::Success,
-                    format!("Client {remote} connected; listening on {local}"),
-                );
-                self.post_ok(format!("Remote Desktop: {remote} is playing instance 2"));
-            }
-            Ok(RemoteSession::Client(client)) => {
-                let client = *client;
-                // A client emulates nothing, so whatever was running here stops
-                // — and its save is flushed on the way out.
-                self.emu = None;
-                self.drop_link();
-                self.close_guest();
-                self.textures = None;
-                let remote = client.remote_addr();
-                self.remote_client = Some(client);
-                self.mode = Mode::RemoteClient;
-                self.paused = false;
-                let local = self
-                    .remote_client
-                    .as_ref()
-                    .and_then(|client| client.local_addr().ok())
-                    .map_or_else(|| "?".to_owned(), |addr| addr.to_string());
-                self.lan_room = "Remote Desktop: connected".to_owned();
-                self.lan_status =
-                    Notice::quiet(Severity::Success, format!("Watching {remote} from {local}"));
-                self.post_ok(format!("Remote Desktop: connected to {remote}"));
-            }
-            Err(error) => {
+            None => self.post_error("the Remote Desktop worker stopped unexpectedly"),
+            Some(Ok(RemoteSession::Host(host))) => self.become_remote_host(*host),
+            Some(Ok(RemoteSession::Client(client))) => self.become_remote_client(*client),
+            Some(Err(error)) => {
                 self.lan_room = "Remote Desktop: offline".to_owned();
                 self.lan_status = Notice::quiet(Severity::Error, error.clone());
                 self.post_error(error);
@@ -144,7 +103,43 @@ impl MelonEgui {
         }
     }
 
-    /// End a Remote Desktop session and go back to being an ordinary window.
+    /// A client connected: the second console becomes theirs.
+    fn become_remote_host(&mut self, host: crate::remote::RemoteHost) {
+        let local = host.local_addr().map_or_else(|_| "?".to_owned(), |a| a.to_string());
+        let remote = host.remote_addr();
+        self.remote_host = Some(std::sync::Arc::new(host));
+        self.mode = Mode::RemoteHost;
+        // (Re)launched *after* the session exists: the stream a console sends
+        // to is fixed when its thread starts.
+        self.close_guest();
+        self.launch_instance();
+        self.lan_room = "Remote Desktop: hosting".to_owned();
+        self.lan_status = Notice::quiet(
+            Severity::Success,
+            format!("Client {remote} connected; listening on {local}"),
+        );
+        self.post_ok(format!("Remote Desktop: {remote} is playing instance 2"));
+    }
+
+    /// Connected to a host: this window stops emulating and becomes a screen.
+    fn become_remote_client(&mut self, client: crate::remote::RemoteClient) {
+        // Whatever was running here stops; its save is flushed on the way out.
+        self.emu = None;
+        self.drop_link();
+        self.close_guest();
+        self.textures = None;
+        let remote = client.remote_addr();
+        let local = client.local_addr().map_or_else(|_| "?".to_owned(), |addr| addr.to_string());
+        self.remote_client = Some(client);
+        self.mode = Mode::RemoteClient;
+        self.paused = false;
+        self.lan_room = "Remote Desktop: connected".to_owned();
+        self.lan_status =
+            Notice::quiet(Severity::Success, format!("Watching {remote} from {local}"));
+        self.post_ok(format!("Remote Desktop: connected to {remote}"));
+    }
+
+    /// End the session and go back to being an ordinary window.
     pub(crate) fn stop_remote(&mut self) {
         if self.remote_host.is_none() && self.remote_client.is_none() {
             self.post_warn("no Remote Desktop session is running");
@@ -162,66 +157,36 @@ impl MelonEgui {
         self.post("Remote Desktop session ended");
     }
 
-    /// Show the picture and play the sound a host is sending.
-    ///
-    /// Everything a client does in place of emulating: there is no core here,
-    /// so the textures are filled from the decoder and the audio ring from the
-    /// network rather than from an [`Emu`].
+    /// What a client does each repaint instead of emulating.
     pub(crate) fn service_remote_client(&mut self, ctx: &egui::Context) {
         let Some(client) = &self.remote_client else { return };
 
-        // **First**, before anything else in the repaint.
-        //
-        // Decoding a frame and uploading two textures costs several
-        // milliseconds, and until this call moved above them every one of those
-        // milliseconds sat between the player moving the stylus and the host
-        // hearing about it. Nothing below depends on the controls, so there is
-        // no reason for them to wait.
-        //
-        // The touch is mapped against the screen rectangle from the *previous*
-        // repaint, which is what `bottom_screen` holds: this runs before the
-        // panel is laid out. That is only ever wrong while the window is being
-        // resized, and it self-corrects on the next repaint — a far better
-        // trade than paying the decode on every sample.
-        // A client has no console of its own, so the speed clicks in this
-        // sample are dropped: the speed belongs to the host, which is where the
-        // emulation is.
+        // 1. Input goes out **first**, before the costly decode and upload, so
+        //    none of that sits between the stylus moving and the host hearing
+        //    of it. (Touch uses last repaint's screen rectangle; only wrong
+        //    for a repaint while resizing.) Speed clicks are dropped: the
+        //    speed belongs to the host.
         let pad_keys = self.pads.poll(&self.bindings).keys;
-        let keys = if self.listening.is_some() {
-            0
-        } else {
-            ctx.input(|i| self.bindings.key_mask(i)) | pad_keys
-        };
-        client.send_input(keys, self.sample_touch(ctx));
+        client.send_input(self.held_keys(ctx, pad_keys), self.sample_touch(ctx));
 
+        // 2. The newest picture, if any tile changed.
         if let Some([top, bottom]) = client.take_screens() {
-            let filter =
-                if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
-            let images = [
-                to_image(&top, self.video.upscale, self.video.upscale_factor()),
-                to_image(&bottom, self.video.upscale, self.video.upscale_factor()),
-            ];
-            match &mut self.textures {
-                Some(textures) => {
-                    for (texture, image) in textures.iter_mut().zip(images) {
-                        texture.set(image, filter);
-                    }
-                }
-                None => {
-                    let [t, b] = images;
-                    self.textures = Some([
-                        ctx.load_texture("remote-top", t, filter),
-                        ctx.load_texture("remote-bottom", b, filter),
-                    ]);
-                }
-            }
+            let (video, view) = (self.video, self.view);
+            upload_screens(
+                ctx,
+                &mut self.textures,
+                ["remote-top", "remote-bottom"],
+                [&top, &bottom],
+                &video,
+                &view,
+            );
             self.screens_live = [true, true];
             self.frames_run += 1;
             self.fps_frames += 1;
         }
 
-        // The sound arrives decimated; the resampler upsamples it to the
-        // device rate on its way into the ring. See `crate::remote::audio`.
+        // 3. Sound arrives decimated; `push_at` resamples it for the device.
+        let Some(client) = &self.remote_client else { return };
         let (samples, rate) = client.take_audio();
         if let (Ok(audio), false) = (&mut self.audio, samples.is_empty()) {
             audio.push_at(&samples, rate);

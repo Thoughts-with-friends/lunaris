@@ -23,75 +23,86 @@ pub(super) fn remote_desktop(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.small(app.i18n().t(K::RemoteDesktopExplained));
 
     if let Some(stats) = app.remote_stats {
-        ui.separator();
-        egui::Grid::new("remote-stats").striped(true).show(ui, |ui| {
-            ui.label(app.i18n().t(K::InputLatency));
-            // A button press reaches the console in half a round trip and the
-            // resulting picture comes back in the other half, plus the frame it
-            // was drawn in. Saying so is more use than the raw round trip.
-            ui.monospace(format!("{:.0} ms", stats.rtt_ms + 16.7));
-            ui.end_row();
-
-            ui.label(app.i18n().t(K::RoundTrip));
-            ui.monospace(format!("{:.1} ms", stats.rtt_ms));
-            ui.end_row();
-
-            ui.label(app.i18n().t(K::Video));
-            ui.monospace(format!(
-                "{:.0} fps, {:.2} Mbit/s  ({} tiles, {} B in the last frame)",
-                stats.video_fps,
-                stats.video_megabits_per_second(),
-                stats.last_frame_tiles,
-                stats.last_frame_bytes,
-            ));
-            ui.end_row();
-
-            // The saving is printed rather than claimed: the sound would be a
-            // third of the link at the console's own rate.
-            ui.label(app.i18n().t(K::StreamAudio));
-            ui.monospace(format!(
-                "{} Hz, {:.2} Mbit/s  (was {:.2} at 48 kHz)",
-                stats.audio_rate,
-                stats.audio_megabits_per_second(),
-                crate::remote::RemoteStats::audio_megabits_per_second_raw(),
-            ));
-            ui.end_row();
-
-            ui.label("Frames skipped");
-            ui.monospace(format!(
-                "{} (skipping costs smoothness, never latency)",
-                stats.frames_skipped
-            ));
-            ui.end_row();
-
-            ui.label("Frames");
-            ui.monospace(format!(
-                "{} ({} datagrams, {} MiB, {} discarded)",
-                stats.frames,
-                stats.video_datagrams,
-                stats.video_bytes / (1024 * 1024),
-                stats.discarded
-            ));
-            ui.end_row();
-
-            ui.label("Session");
-            ui.label(if stats.connected { "connected" } else { "not connected" });
-            ui.end_row();
-
-            ui.label("Audio delivered");
-            ui.monospace(format!(
-                "{} pairs, {} dropped to stay in step",
-                stats.audio_pairs, stats.audio_dropped
-            ));
-            ui.end_row();
-
-            ui.label("Input samples");
-            ui.monospace(stats.inputs.to_string());
-            ui.end_row();
-        });
-        ui.small(app.i18n().t(K::RemoteClientOwnsNothing));
+        session_stats(app, ui, &stats);
     }
+    session_settings(app, ui);
+}
 
+/// The live session's numbers: latency, video and audio bit rates, counters.
+fn session_stats(app: &MelonEgui, ui: &mut egui::Ui, stats: &crate::remote::RemoteStats) {
+    use crate::i18n::I18nKey as K;
+    ui.separator();
+    egui::Grid::new("remote-stats").striped(true).show(ui, |ui| {
+        ui.label(app.i18n().t(K::InputLatency));
+        // A button press reaches the console in half a round trip and the
+        // resulting picture comes back in the other half, plus the frame it
+        // was drawn in. Saying so is more use than the raw round trip.
+        ui.monospace(format!("{:.0} ms", stats.rtt_ms + 16.7));
+        ui.end_row();
+
+        ui.label(app.i18n().t(K::RoundTrip));
+        ui.monospace(format!("{:.1} ms", stats.rtt_ms));
+        ui.end_row();
+
+        ui.label(app.i18n().t(K::Video));
+        ui.monospace(format!(
+            "{:.0} fps, {:.2} Mbit/s  ({} tiles, {} B in the last frame)",
+            stats.video_fps,
+            stats.video_megabits_per_second(),
+            stats.last_frame_tiles,
+            stats.last_frame_bytes,
+        ));
+        ui.end_row();
+
+        // The saving is printed rather than claimed: the sound would be a
+        // third of the link at the console's own rate.
+        ui.label(app.i18n().t(K::StreamAudio));
+        ui.monospace(format!(
+            "{} Hz, {:.2} Mbit/s  (was {:.2} at 48 kHz)",
+            stats.audio_rate,
+            stats.audio_megabits_per_second(),
+            crate::remote::RemoteStats::audio_megabits_per_second_raw(),
+        ));
+        ui.end_row();
+
+        ui.label("Frames skipped");
+        ui.monospace(format!(
+            "{} (skipping costs smoothness, never latency)",
+            stats.frames_skipped
+        ));
+        ui.end_row();
+
+        ui.label("Frames");
+        ui.monospace(format!(
+            "{} ({} datagrams, {} MiB, {} discarded)",
+            stats.frames,
+            stats.video_datagrams,
+            stats.video_bytes / (1024 * 1024),
+            stats.discarded
+        ));
+        ui.end_row();
+
+        ui.label("Session");
+        ui.label(if stats.connected { "connected" } else { "not connected" });
+        ui.end_row();
+
+        ui.label("Audio delivered");
+        ui.monospace(format!(
+            "{} pairs, {} dropped to stay in step",
+            stats.audio_pairs, stats.audio_dropped
+        ));
+        ui.end_row();
+
+        ui.label("Input samples");
+        ui.monospace(stats.inputs.to_string());
+        ui.end_row();
+    });
+    ui.small(app.i18n().t(K::RemoteClientOwnsNothing));
+}
+
+/// The knobs for the *next* session.
+fn session_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    use crate::i18n::I18nKey as K;
     egui::CollapsingHeader::new(app.i18n().s(K::RemoteDesktopSettings)).default_open(false).show(
         ui,
         |ui| {

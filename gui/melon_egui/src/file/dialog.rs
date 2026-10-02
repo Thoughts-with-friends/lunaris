@@ -1,5 +1,15 @@
-//! Opening a system file dialog, and acting on its answer a few repaints
-//! later. See [`crate::file::picker`] for why it cannot simply block.
+//! Opening a system file dialog, and acting on its answer.
+//!
+//! ```text
+//!  menu click → ask(purpose, request)    the dialog opens on its own thread
+//!  every repaint → poll_dialog()          nothing yet → keep running
+//!                                         answered → dispatch on `purpose`
+//!                                         (load ROM, import save, ...)
+//! ```
+//!
+//! The [`DialogPurpose`] travels with the dialog, so an answer arriving
+//! several repaints later can never be applied to the wrong command. Why the
+//! dialog cannot simply block: see [`crate::file::picker`].
 
 use crate::app::*;
 

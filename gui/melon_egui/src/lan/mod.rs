@@ -27,7 +27,7 @@
 //!
 //! 1. **The wait is measured, not guessed.** `PING`/`PONG` frames ride the same
 //!    socket, and the round-trip estimate they produce sets both the reply wait
-//!    and the staleness window ([`Link::budget`]). A 150 ms VPN gets a 150 ms
+//!    and the staleness window ([`Peer::budget`]). A 150 ms VPN gets a 150 ms
 //!    budget; a LAN keeps a short one and stays responsive.
 //! 2. **Replies are sent more than once.** A dropped datagram on a
 //!    round-synchronous protocol is a lost round, and a lost round is a

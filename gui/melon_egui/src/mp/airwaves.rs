@@ -15,7 +15,7 @@ pub(crate) struct Mailbox {
     /// heard rather than from who spoke last on the medium.
     pub(crate) last_host: Option<usize>,
     /// When this console last did anything on the air. `None` until it does.
-    /// See [`PEER_TIMEOUT`].
+    /// See `client::PEER_TIMEOUT`.
     pub(crate) active: Option<Instant>,
 }
 
@@ -77,12 +77,7 @@ impl Airwaves {
 
     /// The bitmask of connected consoles, as melonDS's `ConnectedBitmask`.
     pub(crate) fn connected_mask(shared: &Shared) -> u16 {
-        shared.boxes.iter().enumerate().fold(
-            0u16,
-            |mask, (i, b)| {
-                if b.connected { mask | (1 << i) } else { mask }
-            },
-        )
+        shared.boxes.iter().enumerate().filter(|(_, b)| b.connected).fold(0, |m, (i, _)| m | 1 << i)
     }
 }
 

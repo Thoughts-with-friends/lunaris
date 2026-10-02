@@ -1,13 +1,16 @@
-//! Core ownership: booting a cart, and the [`melonds::Host`] the core calls
-//! back into.
+//! The emulated console: one booted melonDS core and what it needs from us.
 //!
-//! Everything host-side that melonDS's Qt frontend would own — save
-//! persistence, the clock, the airwaves — reaches the core through the `Host`
-//! trait. This front end implements only what a single offline console needs:
-//! backup memory on disk, and a real-time RTC. Wireless is deliberately left at
-//! the trait's defaults (an unlinked console); linking two instances is a
-//! separate job, see `docs/design/review_mp_local2.md`.
-
+//! # What lives here
+//!
+//! | file         | responsibility                                               |
+//! |--------------|--------------------------------------------------------------|
+//! | `console.rs` | [`Emu`]: boot a cart, run frames, savestates, save import   |
+//! | `bridge.rs`  | the callbacks the core makes back (save data, stop, wifi)   |
+//! | `cart.rs`    | the ROM header fields, and why a console stopped             |
+//! | `clock.rs`   | the real-time clock (wall clock, or fixed for tests)         |
+//!
+//! Both consoles use this module: the first one on the UI thread
+//! ([`crate::app`]) and the second one on its own thread ([`crate::guest`]).
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -26,9 +29,9 @@ pub use cart::{CartInfo, StopReason};
 // Only the calendar tests reach for this directly.
 #[cfg(test)]
 pub(crate) use clock::civil_from_days;
-pub use clock::{Clock, use_deterministic_rtc, utc_clock};
+pub use clock::{Clock, FRAME_RATE, use_deterministic_rtc, utc_clock};
 pub(crate) use clock::{FIXED_RTC, deterministic_rtc, utc_now};
-pub use console::Emu;
+pub use console::{Emu, has_picture};
 
 #[cfg(test)]
 mod tests {
@@ -39,15 +42,15 @@ mod tests {
     use super::{HostBridge, SaveSink, civil_from_days};
     use crate::mp::Airwaves;
 
-    /// A bridge with the seat a console booted for local play gets.
-    fn bridge(air: &Airwaves, instance: usize) -> HostBridge {
+    /// A bridge on `seat`, or with no seat at all when `None`.
+    fn bridge(seat: Option<crate::mp::Client>) -> HostBridge {
         HostBridge {
             saves: Arc::new(SaveSink {
                 path: std::path::PathBuf::from("unused.sav"),
                 pending: Mutex::new(None),
             }),
             stop: Arc::new(Mutex::new(None)),
-            mp: (instance < usize::MAX).then(|| air.client(instance)),
+            mp: seat,
             network: None,
         }
     }
@@ -59,7 +62,7 @@ mod tests {
     #[test]
     fn a_console_with_a_seat_is_actually_on_the_air() {
         let air = Airwaves::new();
-        let (host, guest) = (bridge(&air, 0), bridge(&air, 1));
+        let (host, guest) = (bridge(Some(air.client(0))), bridge(Some(air.client(1))));
         host.mp_begin();
         guest.mp_begin();
 
@@ -75,18 +78,10 @@ mod tests {
     #[test]
     fn a_console_without_a_seat_hears_nothing_and_is_heard_by_nobody() {
         let air = Airwaves::new();
-        let guest = bridge(&air, 1);
+        let guest = bridge(Some(air.client(1)));
         guest.mp_begin();
         // What `Emu::boot_with` builds: no seat at all.
-        let seatless = HostBridge {
-            saves: Arc::new(SaveSink {
-                path: std::path::PathBuf::from("unused.sav"),
-                pending: Mutex::new(None),
-            }),
-            stop: Arc::new(Mutex::new(None)),
-            mp: None,
-            network: None,
-        };
+        let seatless = bridge(None);
 
         // The trait's defaults claim the send succeeded, which is exactly why
         // this was invisible: nothing reports an error.

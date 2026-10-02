@@ -111,9 +111,6 @@ pub use tuning::Tuning;
 pub use {decoder::Decoder, encoder::Encoder};
 
 /// One DS screen, as `melonds::SCREEN_WIDTH` / `SCREEN_HEIGHT`.
-///
-/// Repeated here rather than imported so this module builds without the
-/// emulator core, which is what lets the codec be tested on any machine.
 pub const SCREEN_WIDTH: usize = 256;
 /// See [`SCREEN_WIDTH`].
 pub const SCREEN_HEIGHT: usize = 192;
@@ -128,12 +125,8 @@ pub const FRAME_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 2;
 /// codec exists to avoid.
 pub const MAX_DATAGRAM: usize = 1200;
 
-/// The rate the console's SPU hands samples over at, as
-/// [`crate::audio::SPU_SAMPLE_RATE`] explains.
-///
-/// Repeated for the same reason as [`SCREEN_WIDTH`]: this module has to build
-/// without the emulator core.
-pub const CONSOLE_SAMPLE_RATE: u32 = 48_000;
+/// The rate the console's SPU hands samples over at.
+pub const CONSOLE_SAMPLE_RATE: u32 = crate::audio::SPU_SAMPLE_RATE;
 
-/// The DS's video frame rate, `33_513_982 / 560_190` Hz.
-pub const NATIVE_FPS: f64 = 59.826_098;
+/// The DS's video frame rate ([`crate::emu::FRAME_RATE`]).
+pub const NATIVE_FPS: f64 = crate::emu::FRAME_RATE;

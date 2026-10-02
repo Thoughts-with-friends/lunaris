@@ -1,8 +1,11 @@
-//! The datagram layout, and the batching that shares one between frames.
+//! The datagram layout.
+//!
+//! ```text
+//!  one frame:  "MLN2" | kind u8 | aid u16 | timestamp u64 | sequence u32 | len u16 | payload
+//!  a datagram: one or more frames back to back, all with the same sequence
+//! ```
 
 use super::*;
-
-// -- wire format -------------------------------------------------------------
 
 /// Append one frame to `bytes`. Several frames may share a datagram; the
 /// decoder loops until the buffer is consumed, which is what makes

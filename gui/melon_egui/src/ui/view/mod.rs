@@ -5,7 +5,7 @@
 //! (`frontend/qt_sdl/Window.cpp`, the `View` block) so that the two front ends
 //! can be set up the same way and their pictures compared directly. Every option
 //! melonDS's View menu offers is implemented, with one documented simplification
-//! in [`hybrid`].
+//! in `place::hybrid`.
 
 use egui::{Rect, Vec2, pos2, vec2};
 use melonds::{SCREEN_HEIGHT, SCREEN_WIDTH};
@@ -17,7 +17,7 @@ mod place;
 pub use measure::window_size_for_scale;
 pub(crate) use measure::{content_size, fit, is_side_by_side, screen_sizes};
 pub use options::{AspectRatio, Rotation, SCREEN_GAPS, ScreenLayout, ScreenSizing, ViewOptions};
-pub use place::layout;
+pub use place::{Layout, layout};
 
 #[cfg(test)]
 mod tests {

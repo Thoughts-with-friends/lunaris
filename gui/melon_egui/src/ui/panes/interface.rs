@@ -6,7 +6,7 @@ pub(super) fn interface(app: &mut MelonEgui, ui: &mut egui::Ui) {
     language_picker(app, ui);
     ui.separator();
     app.font_note.show(ui).on_hover_text(
-        "egui's own fonts are Latin-only, so a system font is borrowed for          Japanese, Chinese and Korean. Set MELON_EGUI_FONT to a .ttf/.otf/.ttc          to choose a different one.",
+        "egui's own fonts are Latin-only, so a system font is borrowed for Japanese, Chinese and Korean. Set MELON_EGUI_FONT to a .ttf/.otf/.ttc to choose a different one.",
     );
     ui.separator();
     let mut dark = app.dark_theme;
@@ -49,7 +49,7 @@ pub(super) fn language_picker(app: &mut MelonEgui, ui: &mut egui::Ui) {
     if ui
         .button("Write translation templates")
         .on_hover_text(
-            "Writes instances/translation.<lang>.json for every language. Edit one to              change a wording without rebuilding; it is read over the built-in text at              startup.",
+            "Writes instances/translation.<lang>.json for every language. Edit one to change a wording without rebuilding; it is read over the built-in text at startup.",
         )
         .clicked()
     {

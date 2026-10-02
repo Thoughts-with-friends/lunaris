@@ -1,44 +1,56 @@
-//! A booted console, and everything done to one.
+//! A booted console ([`Emu`]) and the operations every caller shares.
+//!
+//! # Boot sequence ([`Emu::boot_inner`])
+//!
+//! 1. Read the ROM file, and the `.sav` beside it (or in the save directory).
+//! 2. Build the [`HostBridge`] the core will call back into (save sink, stop
+//!    reason, wireless).
+//! 3. `Nds::new` → set the RTC → `boot()` (direct boot with FreeBIOS; no BIOS
+//!    or firmware files are needed).
+//!
+//! Anything that talks to the raw core goes through `emu.nds` directly; the
+//! methods here exist only where two or more callers would otherwise repeat
+//! the same few lines (savestates, input, audio, stop handling).
 
 use super::*;
 
 /// A booted cart, plus the host-side state that outlives any single frame.
 pub struct Emu {
     pub nds: Nds,
-    /// Where the ROM came from, for window titles and for deriving the save and
-    /// savestate paths.
+    /// Where the ROM came from: window titles, and the save/state file names.
     pub rom_path: PathBuf,
     pub info: CartInfo,
-    /// The other end of the [`SaveSink`] handed to the core, so the front end
-    /// can flush pending backup memory on its own schedule.
+    /// The other end of the [`SaveSink`] given to the core.
     pub(crate) saves: Arc<SaveSink>,
     /// Where savestates go; `None` means beside the ROM.
     pub(crate) state_dir: Option<PathBuf>,
-    /// The reason the core last gave for stopping, filled in from the host
-    /// callback while `run_frame` was running.
+    /// Why the core stopped, filled in by the host callback during `run_frame`.
     pub(crate) stop: Arc<Mutex<Option<StopReason>>>,
-    /// This console's seat on the airwaves and the instance number that goes
-    /// with it, kept so that a reboot takes the same seat rather than dropping
-    /// off the air.
+    /// This console's airwaves seat and instance number, kept so a reboot
+    /// (save import) rejoins the same seat.
     pub(crate) seat: Option<(u32, crate::mp::Client)>,
 }
 
 impl Emu {
-    /// Read `rom_path`, restore its backup memory if a `.sav` sits beside it,
-    /// and direct-boot the cart.
-    ///
-    /// No BIOS or firmware files are needed: `melonds-sys`'s shim boots
-    /// FreeBIOS with generated firmware.
+    /// Boot with no wireless and the files beside the ROM (the self test).
     pub fn boot(rom_path: &Path) -> Result<Self, String> {
         Self::boot_with(rom_path, None, None)
     }
 
-    /// As [`Emu::boot_with`], but joined to shared airwaves as console
-    /// `instance_id`.
+    /// Boot with no wireless, the save and state directories overridden.
+    pub fn boot_with(
+        rom_path: &Path,
+        save_dir: Option<&PathBuf>,
+        state_dir: Option<&PathBuf>,
+    ) -> Result<Self, String> {
+        Self::boot_inner(rom_path, save_dir, state_dir, 0, None, None)
+    }
+
+    /// Boot as console `instance_id` on the shared in-process airwaves.
     ///
-    /// `instance_id` also uniquifies the generated firmware's MAC address, the
-    /// same way melonDS's frontend does, so two consoles on one medium are not
-    /// indistinguishable to each other.
+    /// `instance_id` also makes the generated firmware's MAC address unique,
+    /// as melonDS's own front end does, so two consoles can tell each other
+    /// apart.
     pub fn boot_mp(
         rom_path: &Path,
         save_dir: Option<&PathBuf>,
@@ -49,7 +61,7 @@ impl Emu {
         Self::boot_inner(rom_path, save_dir, state_dir, instance_id, Some(mp), None)
     }
 
-    /// Boot a cart using a LAN-backed melonDS multiplayer host.
+    /// Boot with a LAN link as the wireless back end.
     pub fn boot_lan(
         rom_path: &Path,
         save_dir: Option<&PathBuf>,
@@ -57,16 +69,6 @@ impl Emu {
         transport: Box<dyn melonds::Host>,
     ) -> Result<Self, String> {
         Self::boot_inner(rom_path, save_dir, state_dir, 0, None, Some(transport))
-    }
-
-    /// As [`Emu::boot`], but with the save and savestate directories overridden;
-    /// `None` for either means "beside the ROM".
-    pub fn boot_with(
-        rom_path: &Path,
-        save_dir: Option<&PathBuf>,
-        state_dir: Option<&PathBuf>,
-    ) -> Result<Self, String> {
-        Self::boot_inner(rom_path, save_dir, state_dir, 0, None, None)
     }
 
     pub(crate) fn boot_inner(
@@ -79,14 +81,12 @@ impl Emu {
     ) -> Result<Self, String> {
         let rom = std::fs::read(rom_path).map_err(|e| format!("cannot read ROM: {e}"))?;
         let save_path = crate::file::settings::Settings::redirect(save_dir, rom_path, "sav");
-        let state_dir = state_dir.cloned();
         let save = std::fs::read(&save_path).ok();
 
         let saves = Arc::new(SaveSink { path: save_path, pending: Mutex::new(None) });
         let stop = Arc::new(Mutex::new(None));
-        // The seat is cloned rather than moved: the console's `Host` owns one
-        // handle to the airwaves, and the front end keeps another so a reboot
-        // (importing a save) can take the same seat again.
+        // The core's `Host` owns one airwaves handle; this keeps another for
+        // a reboot.
         let seat = mp.clone().map(|mp| (instance_id, mp));
         let host = Box::new(HostBridge {
             saves: Arc::clone(&saves),
@@ -106,17 +106,47 @@ impl Emu {
             rom_path: rom_path.to_owned(),
             info: CartInfo::parse(&rom),
             saves,
-            state_dir,
+            state_dir: state_dir.cloned(),
             stop,
             seat,
         })
     }
 
-    /// Write out backup memory if the core has changed it since the last call.
+    /// Run one frame, returning why the console stopped if it did.
     ///
-    /// The core reports every write as it happens, which is far more often than
-    /// a file should be rewritten, so [`SaveSink`] only remembers the newest
-    /// image and the front end drains it on a timer.
+    /// "Stopped" is *asked* (`is_running`), never inferred from a blank frame:
+    /// a sleeping console draws nothing and is perfectly healthy.
+    pub fn run_frame_checked(&mut self) -> Result<(), String> {
+        self.nds.run_frame();
+        if self.nds.is_running() {
+            return Ok(());
+        }
+        Err(self.stop_reason().unwrap_or_else(|| "stopped".to_owned()))
+    }
+
+    /// Hand the console this frame's buttons and stylus (`None` = lifted).
+    pub fn set_input(&mut self, keys: u32, touch: Option<(u16, u16)>) {
+        self.nds.set_keys(keys);
+        match touch {
+            Some((x, y)) => self.nds.touch(x, y),
+            None => self.nds.release_screen(),
+        }
+    }
+
+    /// Take up to `max_pairs` stereo sample pairs of audio out of the core
+    /// (interleaved `i16`). Empty when nothing is queued.
+    pub fn drain_audio(&mut self, max_pairs: usize) -> Vec<i16> {
+        let queued = self.nds.audio_queued().min(max_pairs);
+        if queued == 0 {
+            return Vec::new();
+        }
+        let mut buffer = vec![0i16; queued * 2];
+        let pairs = self.nds.read_audio(&mut buffer);
+        buffer.truncate(pairs * 2);
+        buffer
+    }
+
+    /// Write out backup memory if the core has changed it since the last call.
     pub fn flush_save(&self) {
         let Some(data) = self.saves.pending.lock().unwrap().take() else {
             return;
@@ -126,11 +156,7 @@ impl Emu {
         }
     }
 
-    /// Why the core stopped, if it has, taken out on the way past.
-    ///
-    /// Reported with both CPUs' program counters, since the reason alone does
-    /// not say *where*: an ARM9 crash during wireless play, for instance, is
-    /// usually a fault the ARM7's wifi handling led it into.
+    /// Why the core stopped, with both CPUs' program counters, taken once.
     pub fn stop_reason(&mut self) -> Option<String> {
         let reason = self.stop.lock().unwrap().take()?;
         Some(format!(
@@ -141,98 +167,13 @@ impl Emu {
         ))
     }
 
-    /// Re-set the console's real-time clock.
-    ///
-    /// The RTC keeps counting in emulated time from whatever it is set to, so
-    /// this takes effect immediately; carts that only read the clock at startup
-    /// will not notice until they next look.
+    /// Re-set the real-time clock. It keeps counting in emulated time.
     pub fn set_clock(&mut self, clock: Clock) {
-        self.nds.set_rtc(
-            clock.year,
-            clock.month,
-            clock.day,
-            clock.hour,
-            clock.minute,
-            clock.second,
-        );
+        let Clock { year, month, day, hour, minute, second } = clock;
+        self.nds.set_rtc(year, month, day, hour, minute, second);
     }
 
-    /// Apply the Video settings, returning the renderer the core actually
-    /// installed.
-    ///
-    /// That can differ from the one asked for: melonDS falls back to the
-    /// software renderer rather than leave a console unable to draw, so a
-    /// machine whose driver cannot compile its shaders answers
-    /// [`melonds::Renderer::Software`] here. Asking for an OpenGL renderer
-    /// requires a current GL context on this thread, both here and on every
-    /// subsequent frame.
-    pub fn set_render_settings(&mut self, settings: melonds::RenderSettings) -> melonds::Renderer {
-        self.nds.set_render_settings(settings)
-    }
-
-    /// Where the OpenGL renderer left the picture, if it is the one in use.
-    pub fn gl_output(&mut self) -> Option<melonds::GlOutput> {
-        self.nds.gl_output()
-    }
-
-    /// Build one of a lazily-compiled renderer's shaders, reporting progress
-    /// as `(done, total)` while any remain. Only the compute renderer has
-    /// any; for the others this is `None` from the first call.
-    pub fn gl_shader_compile_step(&mut self) -> Option<(u32, u32)> {
-        self.nds.gl_shader_compile_step()
-    }
-
-    /// Read one screen of the OpenGL renderer's output back into host memory,
-    /// BGRA8888 and top-down, at the internal resolution.
-    ///
-    /// The headless harnesses capture the software renderer's framebuffers
-    /// directly; this is how they capture a picture that only ever existed in
-    /// a texture.
-    pub fn gl_read_output(&mut self, screen: u8, out: &mut [u32]) -> usize {
-        self.nds.gl_read_output(screen, out)
-    }
-
-    /// Open or close the lid, as melonDS's Power management does. Closing it
-    /// raises the lid IRQ, which is how a cart is told to sleep.
-    pub fn set_lid_closed(&mut self, closed: bool) {
-        self.nds.set_lid_closed(closed);
-    }
-
-    pub fn lid_closed(&mut self) -> bool {
-        self.nds.lid_closed()
-    }
-
-    /// What the power-management chip reports about the battery: `true` for
-    /// okay, `false` for the low level a cart warns about.
-    pub fn set_battery_okay(&mut self, okay: bool) {
-        self.nds.set_battery_okay(okay);
-    }
-
-    pub fn battery_okay(&mut self) -> bool {
-        self.nds.battery_okay()
-    }
-
-    /// Turn framebuffer production on or off.
-    ///
-    /// Off, the console keeps running and keeps capturing to VRAM; only the
-    /// framebuffer the front end reads goes stale.
-    pub fn set_render(&mut self, enabled: bool) {
-        self.nds.set_render(enabled);
-    }
-
-    /// Tell the core which screens anyone is looking at: bit 0 top, bit 1
-    /// bottom. An engine whose screen is not shown does not compose it.
-    pub fn set_displayed_screens(&mut self, mask: u8) {
-        self.nds.set_displayed_screens(mask);
-    }
-
-    /// Hold or release white noise on the microphone.
-    pub fn set_mic_static(&mut self, on: bool) {
-        self.nds.set_mic_static(on);
-    }
-
-    /// Savestate path for one of the numbered slots, following melonDS's
-    /// `<rom>.mlN` convention so the two front ends do not collide.
+    /// Savestate path for a numbered slot: melonDS's `<rom>.mlN` convention.
     pub fn state_path(&self, slot: u8) -> PathBuf {
         crate::file::settings::Settings::redirect(
             self.state_dir.as_ref(),
@@ -241,24 +182,43 @@ impl Emu {
         )
     }
 
-    /// Replace the cart's backup memory with `data` and restart, which is the
-    /// only way the core takes a foreign save: it reads backup memory once, at
-    /// construction.
+    /// Write a savestate to `path`, returning its size in bytes.
+    pub fn save_state_to(&mut self, path: &Path) -> Result<usize, String> {
+        let mut buffer = Vec::new();
+        self.nds.save_state(&mut buffer).map_err(|e| e.to_string())?;
+        std::fs::write(path, &buffer)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        Ok(buffer.len())
+    }
+
+    /// Load a savestate from `path`.
+    ///
+    /// Returns a snapshot of the state *before* the load (for "Undo state
+    /// load"), or `None` if that snapshot could not be taken.
+    pub fn load_state_from(&mut self, path: &Path) -> Result<Option<Vec<u8>>, String> {
+        let mut before = Vec::new();
+        let snapshot = self.nds.save_state(&mut before).is_ok();
+        let buffer =
+            std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        self.nds.load_state(&buffer).map_err(|e| e.to_string())?;
+        Ok(snapshot.then_some(before))
+    }
+
+    /// Replace the cart's backup memory with `data` and reboot.
+    ///
+    /// A reboot is the only way: the core reads backup memory once, when it is
+    /// constructed. The airwaves seat is kept, so the console stays on the air.
     pub fn import_save(&mut self, data: &[u8]) -> Result<(), String> {
         std::fs::write(&self.saves.path, data)
             .map_err(|e| format!("cannot write {}: {e}", self.saves.path.display()))?;
-        // Drop whatever the core was about to write, so the old save cannot
-        // land on top of the imported one.
+        // Drop any pending write so the old save cannot land on the new one.
         *self.saves.pending.lock().unwrap() = None;
-        // Rebooting must not cost this console its place on the airwaves: a
-        // `Host` is fixed at construction, so a console rebooted without its
-        // seat could never join one afterwards.
         let save_dir = self.saves.path.parent().map(Path::to_path_buf);
         let (instance_id, mp) = match self.seat.clone() {
             Some((id, mp)) => (id, Some(mp)),
             None => (0, None),
         };
-        let reloaded = Self::boot_inner(
+        *self = Self::boot_inner(
             &self.rom_path,
             save_dir.as_ref(),
             self.state_dir.as_ref(),
@@ -266,16 +226,20 @@ impl Emu {
             mp,
             None,
         )?;
-        *self = reloaded;
         Ok(())
     }
 }
 
 impl Drop for Emu {
-    /// A cart being unloaded is the last chance to persist its save.
+    /// Unloading a cart is the last chance to persist its save.
     fn drop(&mut self) {
         self.flush_save();
     }
+}
+
+/// Whether a framebuffer (`0x00RRGGBB` per pixel) has anything but black.
+pub fn has_picture(fb: &[u32]) -> bool {
+    fb.iter().any(|&px| px & 0x00FF_FFFF != 0)
 }
 
 #[cfg(test)]
@@ -284,14 +248,13 @@ mod tests {
 
     use super::Emu;
 
-    /// A cart to run these against, since none can be shipped: point
-    /// `MELON_TEST_ROM` at a `.nds` and they run, otherwise they pass trivially.
+    /// Set `MELON_TEST_ROM` to a `.nds` to run these; without it they pass
+    /// trivially, since no ROM can be shipped.
     fn test_rom() -> Option<PathBuf> {
         std::env::var_os("MELON_TEST_ROM").map(PathBuf::from).filter(|rom| rom.is_file())
     }
 
-    /// A scratch save directory of its own per test, so two of them cannot
-    /// write each other's `.sav`.
+    /// A scratch save directory per test, so tests cannot share a `.sav`.
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join("melon_egui-save-test").join(name);
         let _ = std::fs::remove_dir_all(&dir);
@@ -299,23 +262,19 @@ mod tests {
         dir
     }
 
-    /// A save image the cart cannot have written itself, so finding it in the
-    /// cart's memory proves it came from the file.
+    /// A save image the cart cannot have written itself.
     fn marked_save(len: usize) -> Vec<u8> {
         (0..len).map(|i| (i % 251) as u8).collect()
     }
 
-    /// The length the cart says its backup memory is, which is the only length
-    /// an imported file can be compared against.
+    /// The length the cart says its backup memory is.
     fn save_len(rom: &Path) -> usize {
         let dir = scratch("probe");
         let mut emu = Emu::boot_with(rom, Some(&dir), None).unwrap();
         emu.nds.save_memory().len()
     }
 
-    /// A `.sav` sitting where the cart's save belongs has to reach the cart's
-    /// backup memory, or every save in the instance directory is invisible to
-    /// the game that wrote it.
+    /// A `.sav` where the cart's save belongs must reach the cart.
     #[test]
     fn a_save_file_beside_the_cart_is_in_the_cart() {
         let Some(rom) = test_rom() else { return };
@@ -331,8 +290,7 @@ mod tests {
         assert_eq!(emu.nds.save_memory(), save, "the file did not reach the cart");
     }
 
-    /// What `File ▸ Import savefile` does: hand the bytes to a console that is
-    /// already running and have the cart come back up on them.
+    /// `File ▸ Import savefile`: the bytes reach a running cart and the disk.
     #[test]
     fn an_imported_save_reaches_the_running_cart() {
         let Some(rom) = test_rom() else { return };
@@ -344,15 +302,11 @@ mod tests {
         emu.import_save(&save).unwrap();
 
         assert_eq!(emu.nds.save_memory(), save, "the import did not reach the cart");
-        // And it is on disk under the cart's own name, which is what the next
-        // boot will read.
         let path = crate::file::settings::Settings::redirect(Some(&dir), &rom, "sav");
         assert_eq!(std::fs::read(&path).unwrap(), save, "the import was not written out");
     }
 
-    /// A save of the wrong length is the common case with files from another
-    /// emulator, and it must not be silently dropped: melonDS pads or truncates
-    /// to the cart's own size, and the leading bytes are what carry the game.
+    /// A save of the wrong length is still imported (melonDS pads/truncates).
     #[test]
     fn a_save_of_the_wrong_length_is_still_imported() {
         let Some(rom) = test_rom() else { return };

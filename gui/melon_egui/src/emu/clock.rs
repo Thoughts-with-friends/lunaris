@@ -1,6 +1,15 @@
-//! The console's real-time clock, and the fixed one a repeatable run needs.
+//! Time: the DS's frame rate, its real-time clock (RTC), and the fixed RTC a
+//! repeatable test run needs.
 
 use super::*;
+
+/// The DS video frame rate, `33_513_982 / 560_190` ≈ 59.826 Hz.
+///
+/// Slightly under a typical 60 Hz display, so every pacing loop counts frames
+/// against a clock rather than running one per repaint. The single definition
+/// shared by the UI pacing, the second console, the LAN link and Remote
+/// Desktop.
+pub const FRAME_RATE: f64 = 33_513_982.0 / 560_190.0;
 
 /// A wall-clock date and time, as the DS's RTC takes it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

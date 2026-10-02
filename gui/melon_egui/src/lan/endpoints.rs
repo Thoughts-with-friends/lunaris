@@ -1,8 +1,16 @@
-//! The host and guest ends, and the `melonds::Host` they present to a console.
+//! The two ends of a link and their handshake.
+//!
+//! ```text
+//!  LanHost::accept(bind)                 LanGuest::connect(host)
+//!    wait on the port  ←──── HELLO ────── send, retry every 1 s (×10)
+//!    send WELCOME ×3   ───── WELCOME ───→ received
+//!    Peer::start                          Peer::start
+//! ```
+//!
+//! After that both ends behave identically: `impl_link!` gives each the same
+//! accessors and `melonds::Host`, forwarding to its [`Peer`].
 
 use super::*;
-
-// -- the two ends ------------------------------------------------------------
 
 /// The host side of a link: binds a port and waits for one guest.
 pub struct LanHost {
@@ -46,43 +54,16 @@ impl LanHost {
                     let (peer, pace) = Peer::start(socket, guest, tuning)?;
                     return Ok(Self { peer, pace });
                 }
-                Err(ref error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    continue;
-                }
+                Err(ref error) if is_timeout(error) => continue,
                 Err(error) => return Err(error),
             }
         }
-    }
-
-    /// The address this end is bound to.
-    ///
-    /// # Errors
-    /// If the socket cannot report it.
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.peer.socket.local_addr()
     }
 
     /// The guest that connected.
     #[must_use]
     pub fn remote_addr(&self) -> SocketAddr {
         self.peer.remote
-    }
-
-    /// What the link is doing, for the diagnostics pane.
-    #[must_use]
-    pub fn stats(&self) -> LinkStats {
-        self.peer.stats()
-    }
-
-    /// The frame rate handle the front end paces the console to.
-    #[must_use]
-    pub fn pace(&self) -> LinkPace {
-        self.pace.clone()
     }
 }
 
@@ -119,14 +100,7 @@ impl LanGuest {
                     }
                 }
                 Ok(_) => continue,
-                Err(ref error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    continue;
-                }
+                Err(ref error) if is_timeout(error) => continue,
                 Err(error) => return Err(error),
             }
         }
@@ -135,34 +109,41 @@ impl LanGuest {
             format!("no answer from {host_addr} after 10 attempts"),
         ))
     }
-
-    /// The address this end is bound to.
-    ///
-    /// # Errors
-    /// If the socket cannot report it.
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.peer.socket.local_addr()
-    }
-
-    /// What the link is doing, for the diagnostics pane.
-    #[must_use]
-    pub fn stats(&self) -> LinkStats {
-        self.peer.stats()
-    }
-
-    /// The frame rate handle the front end paces the console to.
-    #[must_use]
-    pub fn pace(&self) -> LinkPace {
-        self.pace.clone()
-    }
 }
 
-/// The `Host` half, identical for both ends: which side of the handshake a
-/// console was on does not change how its wireless behaves.
-///
-/// Every method is a one-line forward to [`Peer`], where the behaviour lives.
-macro_rules! impl_host {
+/// Everything identical for both ends: the accessors, the `Host` the console
+/// talks to (each method a one-line forward to [`Peer`]), and shutting the
+/// threads down on drop — including a half-built connection being dropped.
+/// Whether a socket error is only the read timeout expiring.
+fn is_timeout(error: &io::Error) -> bool {
+    matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+}
+
+macro_rules! impl_link {
     ($type:ty) => {
+        impl $type {
+            /// The address this end is bound to.
+            ///
+            /// # Errors
+            /// If the socket cannot report it.
+            pub fn local_addr(&self) -> io::Result<SocketAddr> {
+                self.peer.socket.local_addr()
+            }
+
+            /// The frame rate handle the front end paces the console to.
+            #[must_use]
+            pub fn pace(&self) -> LinkPace {
+                self.pace.clone()
+            }
+
+            /// A reader for the link's live counters, which the Wireless pane
+            /// keeps while the console owns this handle.
+            pub fn stats_reader(&self) -> impl Fn() -> LinkStats + Send + 'static {
+                let peer = Arc::clone(&self.peer);
+                move || peer.stats()
+            }
+        }
+
         impl melonds::Host for $type {
             fn mp_begin(&self) {
                 self.peer.begin();
@@ -188,45 +169,19 @@ macro_rules! impl_host {
                 self.peer.send(Kind::Ack, data, timestamp, 0)
             }
 
-            fn mp_recv_packet(
-                &self,
-                data: &mut [u8],
-                _now: u64,
-                timestamp: &mut u64,
-            ) -> Option<i32> {
-                self.peer.recv_packet(data, timestamp)
+            fn mp_recv_packet(&self, data: &mut [u8], _now: u64, ts: &mut u64) -> Option<i32> {
+                self.peer.recv_packet(data, ts)
             }
 
-            fn mp_recv_host_packet(
-                &self,
-                data: &mut [u8],
-                _now: u64,
-                timestamp: &mut u64,
-            ) -> Option<i32> {
-                self.peer.recv_host_packet(data, timestamp)
+            fn mp_recv_host_packet(&self, data: &mut [u8], _now: u64, ts: &mut u64) -> Option<i32> {
+                self.peer.recv_host_packet(data, ts)
             }
 
-            fn mp_recv_replies(
-                &self,
-                data: &mut [u8],
-                _now: u64,
-                timestamp: u64,
-                aidmask: u16,
-            ) -> u16 {
-                self.peer.recv_replies(data, timestamp, aidmask)
+            fn mp_recv_replies(&self, data: &mut [u8], _now: u64, ts: u64, aidmask: u16) -> u16 {
+                self.peer.recv_replies(data, ts, aidmask)
             }
         }
-    };
-}
 
-impl_host!(LanHost);
-impl_host!(LanGuest);
-
-/// Winding the receive and service threads up is the same on both ends, and has
-/// to happen however the link ends — including when a connection attempt is
-/// dropped half-built.
-macro_rules! impl_drop {
-    ($type:ty) => {
         impl Drop for $type {
             fn drop(&mut self) {
                 self.peer.shutdown.store(true, Ordering::Relaxed);
@@ -235,5 +190,5 @@ macro_rules! impl_drop {
     };
 }
 
-impl_drop!(LanHost);
-impl_drop!(LanGuest);
+impl_link!(LanHost);
+impl_link!(LanGuest);

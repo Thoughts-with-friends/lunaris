@@ -2,13 +2,12 @@
 //!
 //! melonDS puts its messages and its frame rate over the screens rather than in
 //! a status bar, so this front end does too. The colour comes from the
-//! message's own [`Severity`](crate::ui::notice::Severity).
+//! message's own [`Severity`].
 
 use crate::app::*;
 
 impl MelonEgui {
-    /// The OSD: melonDS draws its messages and its frame rate over the picture
-    /// rather than in a status bar, so this front end does too.
+    /// Draw the FPS readout and the newest message (for [`OSD_LIFETIME`]).
     pub(crate) fn osd(&mut self, ui: &mut egui::Ui, area: Rect) {
         if !self.view.show_osd {
             return;

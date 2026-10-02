@@ -2,7 +2,7 @@
 
 use egui::Ui;
 
-use super::{Action, entry};
+use super::{Action, Picked};
 use crate::{
     app::MelonEgui,
     i18n::I18nKey as K,
@@ -10,13 +10,11 @@ use crate::{
 };
 
 pub(super) fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
-    let mut action = None;
+    let mut m = Picked::default();
     ui.menu_button(app.i18n().s(K::ViewLabel), |ui| {
         ui.menu_button(app.i18n().s(K::ScreenSize), |ui| {
             for scale in 1..=4 {
-                action = action.take().or_else(|| {
-                    entry(ui, true, &format!("{scale}x"), Action::ScreenSize(scale as f32))
-                });
+                m.entry(ui, true, &format!("{scale}x"), Action::ScreenSize(scale as f32));
             }
         });
 
@@ -68,23 +66,19 @@ pub(super) fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         });
         ui.separator();
 
-        action = action.take().or_else(|| entry(ui, true, &words.new_window, Action::NewWindow));
+        m.entry(ui, true, &words.new_window, Action::NewWindow);
         ui.separator();
 
         let view = &mut app.view;
         ui.checkbox(&mut view.filtering, &words.filtering);
         ui.checkbox(&mut view.show_osd, &words.show_osd);
     });
-    action
+    m.0
 }
 
-/// The View menu's labels, taken out of the translation map before `app.view`
-/// is borrowed mutably.
-///
-/// The borrow checker is the whole reason this exists: the menu's radio buttons
-/// need `&mut app.view` for the length of the closure, and every label needs
-/// `&app.i18n`. Copying eleven short strings once per menu open is cheaper than
-/// the alternative and much clearer than interleaving the two.
+/// The View menu's labels, copied out of the translation map first: the radio
+/// buttons hold `&mut app.view` for the whole closure, so `app.i18n()` cannot
+/// be called inside it.
 struct ViewWords {
     rotation: String,
     gap: String,

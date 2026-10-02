@@ -19,11 +19,7 @@ members = [
   "gui/*",
   "xtask",
 ]
-# `gui/egui_tiny` targets the removed `core_base` crate; `gui/egui_intro` is
-# its successor and lives under `gui/*` above.
-exclude = ["gui/egui_tiny"]
 resolver = "3"
-
 
 [profile.release]
 debug = true

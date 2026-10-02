@@ -1,7 +1,13 @@
-//! Where a screen is drawn, and where a click on it lands.
+//! From framebuffer to window, and from a click back to the touchscreen.
 //!
-//! Pure geometry: nothing here touches a console, which is what makes the
-//! touch mapping testable without one.
+//! ```text
+//!  framebuffer (u32 BGRA) ─ to_image ─→ egui image ─ upload_screens ─→ textures
+//!  textures ─ paint_screens / paint_screen (rotation) ─→ window
+//!  pointer position ─ touch_coords (inverse rotation) ─→ (x, y) on the DS
+//! ```
+//!
+//! Nothing here touches a console, so the touch mapping is testable without
+//! one.
 
 use crate::app::*;
 
@@ -71,17 +77,12 @@ pub(crate) fn touch_coords(rect: Rect, pos: Pos2, rotation: Rotation) -> Option<
     ))
 }
 
-/// A melonDS framebuffer as an egui image.
-///
-/// The core hands over one `u32` per pixel as `0xAARRGGBB` — byte order BGRA in
-/// memory, which is what melonDS calls the format (`GPU_Soft.cpp`, "convert to
-/// 32-bit BGRA"). Alpha is whatever the compositor left there, so it is
-/// discarded and the pixel forced opaque.
 /// One screen's framebuffer as an egui image, post-processed by `method` at
 /// `factor` on the way (see [`crate::upscale`]).
 ///
-/// The core's pixels are BGRA in memory; the swizzle here is the software
-/// renderer's counterpart to the one `gl_screen`'s shader does on the GPU.
+/// The core's pixels are `0xAARRGGBB` (BGRA in memory, melonDS's format);
+/// alpha is whatever the compositor left, so it is dropped and the pixel made
+/// opaque. `gl_screen`'s shader does the GPU equivalent.
 pub(crate) fn to_image(fb: &[u32], method: upscale::Method, factor: u8) -> ColorImage {
     let rgba: Vec<u8> =
         fb.iter().flat_map(|&px| [(px >> 16) as u8, (px >> 8) as u8, px as u8, 0xFF]).collect();
@@ -93,6 +94,66 @@ pub(crate) fn to_image(fb: &[u32], method: upscale::Method, factor: u8) -> Color
         pixels,
         source_size: egui::vec2(width as f32, height as f32),
     }
+}
+
+/// Upload a pair of framebuffers into `slot`'s textures, creating them (with
+/// `names`) on first use.
+///
+/// The filter goes in on every upload, so toggling "Screen filtering" takes
+/// effect on the next frame without rebuilding the textures.
+pub(crate) fn upload_screens(
+    ctx: &egui::Context,
+    slot: &mut Option<[TextureHandle; 2]>,
+    names: [&str; 2],
+    screens: [&[u32]; 2],
+    video: &VideoOptions,
+    view: &ViewOptions,
+) {
+    let filter = if view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
+    let images = screens.map(|fb| to_image(fb, video.upscale, video.upscale_factor()));
+    match slot {
+        Some(textures) => {
+            for (texture, image) in textures.iter_mut().zip(images) {
+                texture.set(image, filter);
+            }
+        }
+        None => {
+            let [top, bottom] = images;
+            *slot = Some([
+                ctx.load_texture(names[0], top, filter),
+                ctx.load_texture(names[1], bottom, filter),
+            ]);
+        }
+    }
+}
+
+/// Paint both screens where `placed` puts them (a hidden screen is `None`).
+pub(crate) fn paint_screens(
+    painter: &egui::Painter,
+    placed: &view::Layout,
+    textures: &[TextureHandle; 2],
+    rotation: Rotation,
+) {
+    for (rect, texture) in [(placed.top, &textures[0]), (placed.bottom, &textures[1])] {
+        if let Some(rect) = rect {
+            paint_screen(painter, texture.id(), rect, rotation);
+        }
+    }
+}
+
+/// Lay out and paint a whole window's screens on a black panel, returning
+/// where they landed. Used by the two extra windows.
+pub(crate) fn screen_panel(
+    ctx: &egui::Context,
+    view: &ViewOptions,
+    textures: &[TextureHandle; 2],
+) -> view::Layout {
+    let mut placed = view::Layout { top: None, bottom: None };
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(ctx, |ui| {
+        placed = view::layout(ui.max_rect(), view);
+        paint_screens(ui.painter(), &placed, textures, view.rotation);
+    });
+    placed
 }
 
 #[cfg(test)]

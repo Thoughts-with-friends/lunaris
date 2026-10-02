@@ -45,6 +45,6 @@ nightly = []
 trace = []
 
 # The instruction-trace harness only exists under the `trace` feature.
-[[example]]
-name = "trace_pc"
-required-features = ["trace"]
+# [[example]]
+# name = "trace_pc"
+# required-features = ["trace"]

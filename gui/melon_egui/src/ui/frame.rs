@@ -1,8 +1,18 @@
-//! One repaint, in the order it happens.
+//! One repaint, in the order it happens — the place to start reading.
 //!
-//! Deliberately short and linear: this is the file to read first to see what a
-//! frame of the front end actually does, and every step is one call into a
-//! module named for it.
+//! ```text
+//!  update()
+//!   1. advance            run the console, upload its picture   (app/emulation.rs)
+//!   2. update_window_info remember the window's position        (ui/window.rs)
+//!   3. menu bar           → Option<Action>                      (ui/menu)
+//!   4. central panel      screens + OSD                          (ui/screen.rs, ui/osd.rs)
+//!   5. panes::show        the open settings windows             (ui/panes)
+//!   6. guest_view         the second console's window           (ui/window.rs)
+//!   7. second_view        a second view of the first console    (ui/window.rs)
+//!   8. apply(action)      do what the menu asked                (app/commands.rs)
+//!   9. service_shot       --shot capture, when due               (ui/window.rs)
+//!  10. request_repaint    if anything is running or pending
+//! ```
 
 use crate::app::*;
 
@@ -33,15 +43,10 @@ impl eframe::App for MelonEgui {
 
         self.service_shot(ctx);
 
-        // The core is paced off wall-clock time, so the window has to keep
-        // repainting rather than wait for input. Paused, there is nothing to
-        // redraw until something happens.
-        // A dialog is answered on another thread, so the window has to keep
-        // repainting to notice — that is what makes the console keep running
-        // while it is open rather than freezing behind it.
-        // A client repaints continuously: its picture arrives from the network
-        // and its input has to leave on the same cadence, neither of which
-        // egui knows to wake up for.
+        // egui only repaints on input by default. Keep repainting while a
+        // console runs (it is paced by the clock), while a client streams,
+        // and while a worker thread or file dialog may answer — none of which
+        // egui would wake up for. Paused and idle, the window sleeps.
         if self.emu.is_some() && (!self.paused || self.step_pending)
             || self.mode == Mode::RemoteClient
             || self.lan_pending.is_some()

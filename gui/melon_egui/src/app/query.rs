@@ -1,21 +1,12 @@
-//! Small questions the UI asks, and small things it sets.
-//!
-//! Nothing here is more than a few lines: these are the accessors the menu
-//! and the panes need so they do not have to reach into the fields.
+//! Small getters and setters the menus and panes use, plus the OSD message
+//! helpers (`post*`) every command reports through.
 
 use super::*;
 
 impl MelonEgui {
-    /// Turn the next press into a binding, while the Input dialog is waiting
-    /// for one.
-    ///
-    /// Runs once a repaint from [`Self::advance`], ahead of the key sampling
-    /// that would otherwise hand the same press to the cart.
-    ///
-    /// Keys come from the event list rather than from the held state so that
-    /// the binding lands on the press and not on every frame it is held down;
-    /// a pad has no such list, so its buttons are read from state and the
-    /// dialog closes on the first one seen.
+    /// While the Input dialog is waiting, turn the next key or pad press into
+    /// a binding (Escape cancels). Runs before key sampling, so the press does
+    /// not also reach the cart.
     pub(crate) fn poll_rebind(&mut self, ctx: &egui::Context) {
         let Some((input, device)) = self.listening else { return };
 
@@ -31,19 +22,16 @@ impl MelonEgui {
         }
 
         let bound = match device {
-            crate::bindings::Device::Keyboard => pressed.inspect(|key| {
-                self.bindings.bind_key(input, *key);
-            }),
+            crate::bindings::Device::Keyboard => {
+                pressed.map(|key| self.bindings.bind_key(input, key)).is_some()
+            }
+            // Escape (above) also cancels a pad binding — the only way out when
+            // the pad is unplugged.
             crate::bindings::Device::Pad => {
-                // Escape cancels a pad binding too, which is the only way out
-                // when the pad that was going to be bound is unplugged.
-                self.pads.first_pressed().map(|button| {
-                    self.bindings.bind_button(input, button);
-                    egui::Key::Space
-                })
+                self.pads.first_pressed().map(|b| self.bindings.bind_button(input, b)).is_some()
             }
         };
-        if bound.is_some() {
+        if bound {
             self.listening = None;
             self.persist();
         }
@@ -57,11 +45,8 @@ impl MelonEgui {
         self.paused
     }
 
-    /// Whether a second console is running.
-    /// The second console's frame count, or `None` when there is no second
-    /// console. Its thread publishes this each frame, so a number that keeps
-    /// climbing is the visible proof that the pair really is running
-    /// concurrently rather than taking turns.
+    /// The second console's frame count, or `None` without one. A number that
+    /// keeps climbing shows the pair really runs concurrently.
     pub fn guest_frames(&self) -> Option<u32> {
         self.guest.as_ref().map(crate::guest::Guest::frame_count)
     }
@@ -100,25 +85,22 @@ impl MelonEgui {
         self.pads.connected()
     }
 
-    /// The console's power state as `(lid closed, battery okay)`, or `None`
-    /// with no cart running.
-    ///
-    /// Read from the core rather than mirrored here, so a cart that opens the
-    /// lid itself shows up in the dialog.
+    /// `(lid closed, battery okay)` read from the core, or `None` without a
+    /// cart. Read rather than mirrored, so a cart's own changes show.
     pub fn power_state(&mut self) -> Option<(bool, bool)> {
         let emu = self.emu.as_mut()?;
-        Some((emu.lid_closed(), emu.battery_okay()))
+        Some((emu.nds.lid_closed(), emu.nds.battery_okay()))
     }
 
     pub fn set_lid_closed(&mut self, closed: bool) {
         if let Some(emu) = &mut self.emu {
-            emu.set_lid_closed(closed);
+            emu.nds.set_lid_closed(closed);
         }
     }
 
     pub fn set_battery_okay(&mut self, okay: bool) {
         if let Some(emu) = &mut self.emu {
-            emu.set_battery_okay(okay);
+            emu.nds.set_battery_okay(okay);
         }
     }
 
@@ -197,11 +179,9 @@ impl MelonEgui {
         }
     }
 
-    // -- the RAM search -----------------------------------------------------
-
     /// Post an OSD message from a pane, at whatever severity it earned.
     pub fn post_message(&mut self, severity: Severity, message: impl Into<String>) {
-        self.notify(severity, message);
+        self.osd = Some((Notice::new(severity, message), Instant::now()));
     }
 
     /// Show `dir` in the system file manager, creating it first.
@@ -225,46 +205,24 @@ impl MelonEgui {
         }
     }
 
-    /// Recompute the throughput readout from the frames counted since the last
-    /// window closed.
-    ///
-    /// Split out so a Remote Desktop client — which counts *received* frames
-    /// rather than emulated ones — reports its rate the same way, and the
-    /// number in the corner means "frames a second on this screen" in both
-    /// modes.
-    pub(crate) fn report_fps(&mut self) {
-        let elapsed = self.fps_since.elapsed();
-        if elapsed >= Duration::from_millis(500) {
-            self.fps = f64::from(self.fps_frames) / elapsed.as_secs_f64();
-            self.fps_frames = 0;
-            self.fps_since = Instant::now();
-        }
-    }
-
     /// Post a neutral OSD message: a state change worth mentioning.
     pub(crate) fn post(&mut self, message: impl Into<String>) {
-        self.notify(Severity::Info, message);
+        self.post_message(Severity::Info, message);
     }
 
     /// Post a failure. Red on screen, `error!` in the log.
     pub(crate) fn post_error(&mut self, message: impl Into<String>) {
-        self.notify(Severity::Error, message);
+        self.post_message(Severity::Error, message);
     }
 
     /// Post a caveat: it happened, but not as asked. Yellow, `warn!`.
     pub(crate) fn post_warn(&mut self, message: impl Into<String>) {
-        self.notify(Severity::Warn, message);
+        self.post_message(Severity::Warn, message);
     }
 
     /// Post a success. Green on screen.
     pub(crate) fn post_ok(&mut self, message: impl Into<String>) {
-        self.notify(Severity::Success, message);
-    }
-
-    /// Where every command reports its outcome, so a failure is visible
-    /// without a console and recorded even when nobody was watching one.
-    fn notify(&mut self, severity: Severity, message: impl Into<String>) {
-        self.osd = Some((Notice::new(severity, message), Instant::now()));
+        self.post_message(Severity::Success, message);
     }
 
     /// Open or close one of the auxiliary windows.
@@ -276,13 +234,7 @@ impl MelonEgui {
         }
     }
 
-    /// Push the Video settings' two core-side knobs, when they have changed.
-    ///
-    /// The screen mask is taken from the *explicit* sizings only. Under
-    /// `ScreenSizing::Auto` it would feed back on itself: hiding a screen stops
-    /// it being composed, its framebuffer goes stale, and the staleness is then
-    /// read as the screen being idle.
-    /// Whether the OpenGL renderer can be offered at all.
+    /// Whether the OpenGL renderers can be offered at all.
     pub const fn gl_available(&self) -> bool {
         self.gl_loaded && self.gl_screen.is_some()
     }

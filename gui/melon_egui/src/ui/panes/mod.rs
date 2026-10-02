@@ -1,8 +1,18 @@
-//! The auxiliary windows behind the menu's dialog entries.
+//! The tool and settings windows behind the menu's dialog entries.
 //!
-//! melonDS opens each of these as a modal Qt dialog; here they are ordinary
-//! egui windows, so several can be open at once and none of them blocks
-//! emulation.
+//! Each open window is a [`Pane`] in `app.panes`; [`show`] draws every open
+//! one each repaint and drops those the user closed. Unlike melonDS's modal Qt
+//! dialogs these never block emulation, and the open set is saved between runs.
+//!
+//! | file             | panes                                                |
+//! |------------------|------------------------------------------------------|
+//! | `settings.rs`    | Emu, Preferences, Video, Audio, Input                |
+//! | `console.rs`     | Power, Date and time, ROM info, Crash report         |
+//! | `cheat_codes.rs` | Cheat codes (list + editor, drag to reorder)         |
+//! | `wireless.rs`    | Wireless status (+ `remote.rs`: Remote Desktop part) |
+//! | `interface.rs`   | Interface (language, theme, scale), About            |
+//! | `paths.rs`       | Path settings                                        |
+//! | `ram_search.rs`  | RAM search                                           |
 
 use egui::Context;
 

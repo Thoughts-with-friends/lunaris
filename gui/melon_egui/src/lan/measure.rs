@@ -1,8 +1,12 @@
 //! What the link is measured to be doing, and the pace that follows from it.
+//!
+//! * [`Measurements`] — atomic counters plus the smoothed round trip and
+//!   jitter (RFC 6298's estimator), fed by the receive thread's Ping/Pong.
+//! * [`LinkStats`] — a snapshot of them for the Wireless pane.
+//! * [`LinkPace`] — the frame rate the link sustains: one frame plus one
+//!   round's wait, smoothed. The UI paces the console to it.
 
 use super::*;
-
-// -- link measurement --------------------------------------------------------
 
 /// What the link is doing, in numbers the UI can show and the transport can act
 /// on.
@@ -82,8 +86,8 @@ impl LinkStats {
 #[derive(Clone, Default)]
 pub struct LinkPace(Arc<AtomicU32>);
 
-/// The DS's own video frame rate, `33_513_982 / 560_190` Hz.
-pub(crate) const NATIVE_FPS: f64 = 59.826_098;
+/// The DS's own video frame rate ([`crate::emu::FRAME_RATE`]).
+pub(crate) const NATIVE_FPS: f64 = crate::emu::FRAME_RATE;
 
 impl LinkPace {
     /// The frame rate to pace at, never above the DS's own and never so low the

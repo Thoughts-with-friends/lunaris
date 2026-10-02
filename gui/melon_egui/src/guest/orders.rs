@@ -1,13 +1,16 @@
-//! Carrying out the menu commands, between frames.
+//! Carrying out the second console's menu commands, between frames.
+//!
+//! The UI thread only *queues* a [`Command`]; this runs on the console's own
+//! thread at the top of every loop pass, because every `melonds` call for this
+//! console must happen here. Results come back to the UI as notes
+//! ([`Shared::say`]).
 
 use super::*;
 
-/// Perform everything the second console's menu has asked for since the last
-/// pass.
+/// Perform every command queued since the last pass.
 ///
-/// The queue is drained under its lock and acted on outside it, so that a
-/// savestate — which takes a moment for a large cart — does not hold up a UI
-/// thread that only wants to post the next command.
+/// The queue is emptied under its lock and acted on outside it, so a slow
+/// savestate does not block the UI thread from posting the next command.
 pub(crate) fn perform_commands(
     emu: &mut Emu,
     shared: &Shared,
@@ -26,34 +29,25 @@ pub(crate) fn perform_commands(
             }
             Command::FrameStep => *stepping += 1,
             Command::SaveState(slot, path) => {
-                let Some(path) = state_path(emu, slot, path) else { continue };
-                let mut buffer = Vec::new();
-                let outcome =
-                    emu.nds.save_state(&mut buffer).map_err(|e| e.to_string()).and_then(|()| {
-                        std::fs::write(&path, &buffer)
-                            .map_err(|e| format!("cannot write {}: {e}", path.display()))
-                    });
-                shared.say(match outcome {
-                    Ok(()) => format!(
+                let Some(path) = path.or_else(|| slot.map(|slot| emu.state_path(slot))) else {
+                    continue;
+                };
+                shared.say(match emu.save_state_to(&path) {
+                    Ok(bytes) => format!(
                         "state saved to {} ({:.1} MiB)",
                         path.display(),
-                        buffer.len() as f64 / (1024.0 * 1024.0)
+                        bytes as f64 / (1024.0 * 1024.0)
                     ),
                     Err(error) => format!("save state failed: {error}"),
                 });
             }
             Command::LoadState(slot, path) => {
-                let Some(path) = state_path(emu, slot, path) else { continue };
-                // Snapshot first, so the load can be taken back — the same undo
-                // the first console offers.
-                let mut before = Vec::new();
-                let snapshot = emu.nds.save_state(&mut before).is_ok();
-                let outcome = std::fs::read(&path)
-                    .map_err(|e| format!("cannot read {}: {e}", path.display()))
-                    .and_then(|buffer| emu.nds.load_state(&buffer).map_err(|e| e.to_string()));
-                shared.say(match outcome {
-                    Ok(()) => {
-                        *undo = snapshot.then_some(before);
+                let Some(path) = path.or_else(|| slot.map(|slot| emu.state_path(slot))) else {
+                    continue;
+                };
+                shared.say(match emu.load_state_from(&path) {
+                    Ok(before) => {
+                        *undo = before;
                         format!("state loaded from {}", path.display())
                     }
                     Err(error) => format!("load state failed: {error}"),
@@ -80,19 +74,10 @@ pub(crate) fn perform_commands(
             Command::SetClock(clock) => emu.set_clock(clock),
             Command::Stop => {
                 emu.flush_save();
-                shared.say("stopped".to_owned());
-                if let Ok(mut out) = shared.output.lock() {
-                    out.finished = true;
-                }
+                finish(shared, "stopped".to_owned());
                 return Outcome::Stopped;
             }
         }
     }
     Outcome::Continue
-}
-
-/// Where a savestate goes: the explicit path if the menu asked for one,
-/// otherwise the numbered slot in this instance's own `states` directory.
-pub(crate) fn state_path(emu: &Emu, slot: Option<u8>, path: Option<PathBuf>) -> Option<PathBuf> {
-    path.or_else(|| slot.map(|slot| emu.state_path(slot)))
 }

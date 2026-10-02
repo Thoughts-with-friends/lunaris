@@ -1,21 +1,11 @@
-//! A one-off instruction for the second console.
+//! The menu commands the second console's window can send it.
 
 use super::*;
 
-/// A one-off instruction for the second console.
+/// A one-off instruction for the second console, queued by its menu.
 ///
-/// # Why commands rather than direct calls
-///
-/// Everything the first console's menu does — reset, savestates, cheats — is a
-/// `melonds` call, and every `melonds` call for this console has to happen on
-/// *this console's thread*: the core is not re-entrant across threads, and the
-/// UI thread is inside `run_frame` on the first console for much of a repaint.
-/// So the menu posts a command and the run loop performs it between frames,
-/// which is the only place it is safe.
-///
-/// Without this the second console's menu bar drew every entry and only the
-/// ones that happen to be pure UI (screen layout, panes) did anything — the
-/// rest silently acted on the *first* console.
+/// Commands rather than direct calls because every `melonds` call for this
+/// console must run on *its* thread, between frames (see `orders.rs`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Reboot the cart, as `System ▸ Reset` does.

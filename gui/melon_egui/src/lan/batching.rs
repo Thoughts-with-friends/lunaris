@@ -2,8 +2,6 @@
 
 use super::*;
 
-// -- batching ----------------------------------------------------------------
-
 /// Ordinary frames waiting to share a datagram.
 ///
 /// Only `Kind::Packet` is ever held here — see the module documentation for why

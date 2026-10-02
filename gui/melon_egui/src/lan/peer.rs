@@ -1,8 +1,18 @@
-//! One end of a link: the socket, the inboxes, and the threads that feed them.
+//! One end of a link: the socket, the two inboxes, and the threads behind them.
+//!
+//! # Threads
+//!
+//! ```text
+//!  lan-rx thread   socket → decode → drop duplicates → Ping? answer Pong
+//!                                                       Pong? measure RTT
+//!                                                       Reply → `replies`
+//!                                                       other → `regular`
+//!  lan-tx thread   every 1 ms: flush an expired batch; every 250 ms: Ping
+//!  console thread  send (batch or send now, CMD/Reply duplicated) and the
+//!                  three receives, which wait up to the measured budget
+//! ```
 
 use super::*;
-
-// -- the peer ----------------------------------------------------------------
 
 /// One end of a link: a socket, the two inboxes, and everything measured about
 /// it.
@@ -55,20 +65,14 @@ impl Peer {
             live: AtomicBool::new(false),
         });
 
-        for (name, body) in [
-            ("melon_egui-lan-rx", Arc::clone(&peer) as Arc<Peer>),
-            ("melon_egui-lan-tx", Arc::clone(&peer)),
-        ] {
-            let receive = name.ends_with("-rx");
+        let receive: fn(&Self) = Self::receive_loop;
+        for (name, body) in
+            [("melon_egui-lan-rx", receive), ("melon_egui-lan-tx", Self::service_loop)]
+        {
+            let peer = Arc::clone(&peer);
             std::thread::Builder::new()
                 .name(name.to_owned())
-                .spawn(move || {
-                    if receive {
-                        body.receive_loop();
-                    } else {
-                        body.service_loop();
-                    }
-                })
+                .spawn(move || body(&peer))
                 .map_err(|error| io::Error::other(format!("cannot start {name}: {error}")))?;
         }
         Ok((peer, pace))
@@ -145,9 +149,7 @@ impl Peer {
                         self.transmit(&self.one(Kind::Pong, 0, frame.timestamp, &[]), 1);
                     }
                     Kind::Pong => {
-                        let sent = Duration::from_micros(frame.timestamp);
                         if let Some(rtt) = wall_clock_micros().checked_sub(frame.timestamp) {
-                            let _ = sent;
                             self.measurements.observe_rtt(Duration::from_micros(rtt));
                         }
                     }

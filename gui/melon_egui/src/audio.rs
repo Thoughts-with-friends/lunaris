@@ -1,6 +1,6 @@
 //! Audio output.
 //!
-//! melonDS's SPU produces interleaved stereo `i16` at [`DS_SAMPLE_RATE`]; the
+//! melonDS's SPU produces interleaved stereo `i16` at [`SPU_SAMPLE_RATE`]; the
 //! host device almost never runs at that rate, so samples are resampled on the
 //! way into a ring buffer that the device callback drains.
 //!

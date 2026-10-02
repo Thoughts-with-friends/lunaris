@@ -1,8 +1,15 @@
-//! What happens after the click, wherever it reaches the disk.
+//! Everything that reaches the disk.
 //!
-//! The other half of the boundary [`crate::ui`] describes: a cart, a save, a
-//! savestate, a cheat file, the settings. Every command that outlives the
-//! session ends up in one of these.
+//! | file          | what                                                    |
+//! |---------------|---------------------------------------------------------|
+//! | `rom.rs`      | booting a cart (File ▸ Open ROM)                        |
+//! | `save.rs`     | save import, savestates, undo                           |
+//! | `cheats.rs`   | the cheat list: edit, save, push to the consoles        |
+//! | `mch.rs`      | melonDS's `.mch` cheat file format                      |
+//! | `settings.rs` | `settings.json` and the `instances/` directory tree     |
+//! | `picker.rs`   | system file dialogs on a thread of their own            |
+//! | `dialog.rs`   | opening one, and acting on its answer                   |
+//! | `report.rs`   | the crash report a stopped console leaves               |
 
 pub mod cheats;
 pub mod dialog;

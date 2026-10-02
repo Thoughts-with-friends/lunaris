@@ -1,4 +1,10 @@
-//! One console's view of the airwaves, and the `melonds::Host` it presents.
+//! One console's seat on the airwaves, and the `melonds::Host` it presents.
+//!
+//! * send — copy the frame into every *other* connected console's queue
+//!   (replies into their reply queue), count it, log it, wake waiters;
+//! * receive — pop from this console's own queue; the host-packet and reply
+//!   receives **wait** (up to 25 ms) while a peer is still running, because
+//!   the answer is produced by the other console's thread meanwhile.
 
 use super::*;
 
@@ -167,7 +173,7 @@ impl melonds::Host for Client {
         Some(self.recv(data, now, timestamp))
     }
 
-    /// As [`Self::mp_recv_packet`], but reports `-1` once the console whose CMDs
+    /// As `mp_recv_packet`, but reports `-1` once the console whose CMDs
     /// this one has been following is no longer connected — which is how a
     /// client learns its host has gone rather than waiting forever.
     fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
@@ -244,13 +250,8 @@ impl Client {
         !result.timed_out()
     }
 
-    /// One pass over whatever replies have arrived, returning whether the round
-    /// is answered — every connected console has spoken, or every aid the
-    /// caller asked for has.
-    ///
-    /// Ported from melonDS's `RecvReplies`: replies from this console itself
-    /// and replies older than the round are skipped, and each reply is written
-    /// at `(aid - 1) * 1024`.
+    /// One pass over the replies that have arrived (see `mp_recv_replies`),
+    /// returning whether the round is answered.
     pub(crate) fn collect_replies(
         &self,
         data: &mut [u8],

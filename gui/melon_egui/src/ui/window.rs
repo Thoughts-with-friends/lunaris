@@ -1,28 +1,35 @@
-//! The windows beside the main one: the second console, a second view of the
-//! first, and the `--shot` capture.
+//! The windows beside the main one, the `--shot` capture, and remembering the
+//! main window's position.
+//!
+//! # The second console's window ([`MelonEgui::guest_view`])
+//!
+//! It has its own `instance2/settings.json` (view, language, theme...), yet it
+//! is drawn by the same `MelonEgui`. So each repaint:
+//!
+//! ```text
+//!  1. swap instance 2's settings in       (apply_runtime_settings(.., 2))
+//!  2. upload its newest picture
+//!  3. draw its viewport: menu bar, screens, panes; read its close button
+//!  4. save instance 2's settings if they changed, swap instance 1's back
+//!  5. act on its menu click                (apply_to_guest)
+//! ```
 
 use crate::app::*;
 
 impl MelonEgui {
-    /// Keys and touch for the second console, read from its own viewport.
-    ///
-    /// egui keeps a separate input state per viewport, so this reads the guest
-    /// window's rather than the main window's — otherwise one keypress would
-    /// drive both consoles.
+    /// Keys and touch for the second console, read from *its* viewport's input
+    /// (egui keeps one per viewport, so one keypress cannot drive both).
     pub(crate) fn sample_guest_input(&self, ctx: &egui::Context) -> (u32, Option<(u16, u16)>) {
         if self.guest.is_none() {
             return (0, None);
         }
-        let id = guest_viewport_id();
         let read = |i: &egui::InputState| {
             let keys = self.bindings.key_mask(i);
             let pointer = i.pointer.primary_down().then(|| i.pointer.interact_pos()).flatten();
             (keys, pointer)
         };
-        // Before the viewport's first repaint this reads a default state, which
-        // is simply "nothing held" -- the right answer for a window that has
-        // not appeared yet.
-        let (keys, pointer) = ctx.input_for(id, read);
+        // Before the window first appears this reads "nothing held".
+        let (keys, pointer) = ctx.input_for(guest_viewport_id(), read);
         let touch = self
             .guest_bottom
             .zip(pointer)
@@ -30,111 +37,89 @@ impl MelonEgui {
         (keys, touch)
     }
 
-    /// The second console's window: its own screens, its own input.
+    /// The second console's window: its own screens, menu, panes and input.
     pub(crate) fn guest_view(&mut self, ctx: &egui::Context) {
         if self.guest.is_none() {
             return;
         }
         let host_settings = self.settings();
         self.apply_runtime_settings(&self.instance2_settings.clone(), 2);
-        // Upload the guest's picture with the same conversion the host uses.
-        let filter =
-            if self.view.filtering { TextureOptions::LINEAR } else { TextureOptions::NEAREST };
-        if let Some(screens) = self.guest.as_ref().and_then(crate::guest::Guest::take_screens) {
-            let [top, bottom] = screens;
-            let images = [
-                to_image(&top, self.video.upscale, self.video.upscale_factor()),
-                to_image(&bottom, self.video.upscale, self.video.upscale_factor()),
-            ];
-            match &mut self.guest_textures {
-                Some(textures) => {
-                    for (texture, image) in textures.iter_mut().zip(images) {
-                        texture.set(image, filter);
-                    }
-                }
-                None => {
-                    let [t, b] = images;
-                    self.guest_textures = Some([
-                        ctx.load_texture("guest-top", t, filter),
-                        ctx.load_texture("guest-bottom", b, filter),
-                    ]);
-                }
-            }
-        }
-
-        let Some(textures) = self.guest_textures.clone() else {
-            let updated = self.settings();
-            updated.save_for(2);
-            self.instance2_settings = updated;
-            self.apply_runtime_settings(&host_settings, 1);
-            return;
-        };
-        let view = self.resolved_view();
-        let builder = egui::ViewportBuilder::default()
-            .with_title("melon_egui - instance 2")
-            .with_inner_size(default_window_size())
-            // Same COM-apartment reason as the main window.
-            .with_drag_and_drop(false);
-
-        let mut closed = false;
-        let mut bottom_rect = None;
-        let mut action = None;
-        ctx.show_viewport_immediate(guest_viewport_id(), builder, |ctx, _class| {
-            ctx.set_zoom_factor(self.ui_scale);
-            self.set_theme(ctx, self.dark_theme);
-            egui::TopBottomPanel::top("guest-menu").show(ctx, |ui| {
-                action = menu::bar(self, ui);
-            });
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
+        if let Some([top, bottom]) = self.guest.as_ref().and_then(crate::guest::Guest::take_screens)
+        {
+            let (video, view) = (self.video, self.view);
+            upload_screens(
                 ctx,
-                |ui| {
-                    let area = ui.max_rect();
-                    let placed = view::layout(area, &view);
-                    bottom_rect = placed.bottom;
-                    let painter = ui.painter();
-                    for (rect, texture) in
-                        [(placed.top, &textures[0]), (placed.bottom, &textures[1])]
-                    {
-                        if let Some(rect) = rect {
-                            paint_screen(painter, texture.id(), rect, view.rotation);
-                        }
-                    }
-                },
+                &mut self.guest_textures,
+                ["guest-top", "guest-bottom"],
+                [&top, &bottom],
+                &video,
+                &view,
             );
-            panes::show(self, ctx);
-            // Resizing has to happen against *this* viewport's context, so it
-            // is taken here rather than in `apply_to_guest`: sending it to the
-            // main window's context would resize the wrong window.
-            if let Some(Action::ScreenSize(scale)) = action {
-                let size = view::window_size_for_scale(scale, &self.view, CHROME_HEIGHT);
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-                action = None;
-            }
-            if ctx.input(|i| i.viewport().close_requested()) {
-                closed = true;
-            }
-        });
-        self.guest_bottom = bottom_rect;
-        let updated = self.settings();
-        updated.save_for(2);
-        self.instance2_settings = updated;
+        }
+        let shown =
+            self.guest_textures.clone().map(|textures| self.show_guest_window(ctx, textures));
+        self.store_guest_settings();
         self.apply_runtime_settings(&host_settings, 1);
+
+        let Some((action, closed)) = shown else { return };
         ctx.set_zoom_factor(self.ui_scale);
         self.set_theme(ctx, self.dark_theme);
-        // Routed to the *second* console. Before this existed the second
-        // window's menu bar drove the first console, which is what "only some
-        // of it works over there" was.
+        // Routed to the *second* console (it used to drive the first one).
         if let Some(action) = action {
             self.apply_to_guest(action);
         }
         if closed {
-            self.guest = None;
-            self.guest_textures = None;
+            self.close_guest();
         }
     }
 
-    /// A second window showing the same console, as melonDS's "Open new window"
-    /// does. It shares the textures, so it costs a blit and no emulation.
+    /// Draw the second console's viewport. Returns its menu click (if any) and
+    /// whether its close button was pressed.
+    fn show_guest_window(
+        &mut self,
+        ctx: &egui::Context,
+        textures: [TextureHandle; 2],
+    ) -> (Option<Action>, bool) {
+        let view = self.resolved_view();
+        let builder = egui::ViewportBuilder::default()
+            .with_title("melon_egui - instance 2")
+            .with_inner_size(default_window_size())
+            // winit's drag-and-drop initialises COM as STA, which conflicts with
+            // the audio thread's MTA (see `crate::audio`).
+            .with_drag_and_drop(false);
+
+        let (mut action, mut closed) = (None, false);
+        ctx.show_viewport_immediate(guest_viewport_id(), builder, |ctx, _class| {
+            ctx.set_zoom_factor(self.ui_scale);
+            self.set_theme(ctx, self.dark_theme);
+            egui::TopBottomPanel::top("guest-menu").show(ctx, |ui| action = menu::bar(self, ui));
+            self.guest_bottom = screen_panel(ctx, &view, &textures).bottom;
+            panes::show(self, ctx);
+            // Resizing must use *this* viewport's context, or the wrong window
+            // would resize.
+            if let Some(Action::ScreenSize(scale)) = action {
+                self.resize_for_scale(ctx, scale);
+                action = None;
+            }
+            closed = ctx.input(|i| i.viewport().close_requested());
+        });
+        (action, closed)
+    }
+
+    /// Write `instance2/settings.json` when what it would hold has changed
+    /// (and once when the window opens), rather than on every repaint.
+    fn store_guest_settings(&mut self) {
+        let updated = self.settings();
+        let json = serde_json::to_string(&updated).unwrap_or_default();
+        if json != self.instance2_saved {
+            updated.save_for(2);
+            self.instance2_saved = json;
+        }
+        self.instance2_settings = updated;
+    }
+
+    /// A second window showing the *same* console (melonDS's "Open new
+    /// window"). It shares the textures, so it costs a blit and no emulation.
     pub(crate) fn second_view(&mut self, ctx: &egui::Context) {
         if !self.second_window {
             return;
@@ -147,66 +132,35 @@ impl MelonEgui {
         let builder = egui::ViewportBuilder::default()
             .with_title("melon_egui - second view")
             .with_inner_size(default_window_size())
-            // Same reason main.rs needs it: winit's drag-and-drop support
-            // initialises COM as an STA, which conflicts with an MTA already
-            // established on this process.
             .with_drag_and_drop(false);
 
         let mut closed = false;
         ctx.show_viewport_immediate(id, builder, |ctx, _class| {
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
-                ctx,
-                |ui| {
-                    let area = ui.max_rect();
-                    let placed = view::layout(area, &view);
-                    let painter = ui.painter();
-                    for (rect, texture) in
-                        [(placed.top, &textures[0]), (placed.bottom, &textures[1])]
-                    {
-                        if let Some(rect) = rect {
-                            paint_screen(painter, texture.id(), rect, view.rotation);
-                        }
-                    }
-                },
-            );
-            if ctx.input(|i| i.viewport().close_requested()) {
-                closed = true;
-            }
+            screen_panel(ctx, &view, &textures);
+            closed = ctx.input(|i| i.viewport().close_requested());
         });
         if closed {
             self.second_window = false;
         }
     }
 
-    /// Drive a pending `--shot`: ask for the capture once the cart has run far
-    /// enough, then write whatever egui hands back and quit.
-    ///
-    /// The image arrives on a later repaint as an [`egui::Event::Screenshot`],
-    /// because the frame has to reach the GPU before it can be read back.
+    /// Drive a pending `--shot`: once enough frames have run, ask egui for a
+    /// screenshot; when it arrives (a later repaint), write it and quit.
     pub(crate) fn service_shot(&mut self, ctx: &egui::Context) {
         let Some((at, path)) = &self.shot else {
             return;
         };
 
-        if let Some(image) = ctx.input(|i| {
+        let image = ctx.input(|i| {
             i.events.iter().find_map(|event| match event {
                 egui::Event::Screenshot { image, .. } => Some(std::sync::Arc::clone(image)),
                 _ => None,
             })
-        }) {
+        });
+        if let Some(image) = image {
             let rgba: Vec<u8> = image.pixels.iter().flat_map(Color32::to_array).collect();
             let [w, h] = image.size;
-            let result = image::save_buffer(
-                path,
-                &rgba,
-                w as u32,
-                h as u32,
-                image::ExtendedColorType::Rgba8,
-            );
-            match result {
-                Ok(()) => log::info!("shot: wrote {} ({w}x{h})", path.display()),
-                Err(e) => log::error!("shot: failed to write {}: {e}", path.display()),
-            }
+            save_png(path, &rgba, w, h, image::ExtendedColorType::Rgba8);
             self.shot_core_picture(path.clone());
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
@@ -219,27 +173,21 @@ impl MelonEgui {
         }
     }
 
-    /// Alongside a `--shot` of the window, write the core's own picture when it
-    /// is an OpenGL renderer drawing it: `<out>_core_top.png` and
-    /// `<out>_core_bottom.png`, read back from the texture at the internal
-    /// resolution.
-    ///
-    /// The window capture is at window size whatever the renderer is doing, so
-    /// it cannot show that the internal resolution reached the rasteriser.
-    /// These can: their pixel size *is* `256*scale x 192*scale`.
+    /// Under an OpenGL renderer, also write the core's own texture at its
+    /// internal resolution (`<out>_core_top.png`, `<out>_core_bottom.png`):
+    /// the window capture cannot show that the internal resolution was used.
     pub(crate) fn shot_core_picture(&mut self, path: PathBuf) {
         let Some(emu) = &mut self.emu else { return };
-        let Some(output) = emu.gl_output() else { return };
+        let Some(output) = emu.nds.gl_output() else { return };
 
         let (w, h) = (output.width as usize, output.height as usize);
         let mut pixels = vec![0u32; w * h];
         for (screen, name) in [(0u8, "top"), (1, "bottom")] {
-            if emu.gl_read_output(screen, &mut pixels) == 0 {
+            if emu.nds.gl_read_output(screen, &mut pixels) == 0 {
                 log::error!("shot: could not read the {name} screen back from the GL renderer");
                 continue;
             }
-            // BGRA in memory, as the software framebuffers are, so the channel
-            // order here is the one `to_image` uses.
+            // BGRA in memory, like the software framebuffers.
             let rgb: Vec<u8> = pixels
                 .iter()
                 .flat_map(|&px| [(px >> 16) as u8, (px >> 8) as u8, px as u8])
@@ -248,78 +196,59 @@ impl MelonEgui {
                 "{}_core_{name}.png",
                 path.file_stem().unwrap_or_default().to_string_lossy()
             ));
-            match image::save_buffer(&out, &rgb, w as u32, h as u32, image::ExtendedColorType::Rgb8)
-            {
-                Ok(()) => log::info!("shot: wrote {} ({w}x{h})", out.display()),
-                Err(e) => log::error!("shot: failed to write {}: {e}", out.display()),
-            }
+            save_png(&out, &rgb, w, h, image::ExtendedColorType::Rgb8);
         }
     }
+
+    /// Remember the main window's position and size for the next run.
     pub(crate) fn update_window_info(&mut self, ctx: &egui::Context) {
-        update_window_geometry(ctx, egui::ViewportId::ROOT, &mut self.window);
-    }
-}
-
-fn update_window_geometry(
-    ctx: &egui::Context,
-    viewport_id: egui::ViewportId,
-    geometry: &mut WindowConfig,
-) {
-    // NOTE: Writing directly to `geometry` inside this closure would
-    // deadlock (egui holds an internal lock during `input()`).
-    let (pos, size, maximized) = ctx.input(|i| {
-        let mut temp_pos = None;
-        let mut temp_size = None;
-        let mut temp_maximized = None;
-
-        if let Some(info) = i.raw.viewports.get(&viewport_id) {
-            temp_maximized = Some(info.maximized.unwrap_or(false));
-
-            if let Some(inner_rect) = info.inner_rect {
-                temp_size = Some(inner_rect.size());
+        // Read inside `input`, written outside it: writing while egui holds its
+        // input lock would deadlock.
+        let info = ctx.input(|i| {
+            i.raw.viewports.get(&egui::ViewportId::ROOT).map(|info| {
+                (
+                    info.outer_rect.map(|rect| rect.min),
+                    info.inner_rect.map(|rect| rect.size()),
+                    info.maximized.unwrap_or(false),
+                )
+            })
+        });
+        let Some((pos, size, maximized)) = info else { return };
+        let geometry = &mut self.window;
+        // A maximised window's rectangle is not the one to restore to.
+        if !geometry.maximized {
+            if let Some(pos) = pos {
+                (geometry.pos_x, geometry.pos_y) = (pos.x, pos.y);
             }
-
-            if let Some(outer_rect) = info.outer_rect {
-                temp_pos = Some(outer_rect.min);
+            if let Some(size) = size {
+                (geometry.width, geometry.height) = (size.x, size.y);
             }
         }
-
-        (temp_pos, temp_size, temp_maximized)
-    });
-
-    if !geometry.maximized {
-        if let Some(pos) = pos {
-            geometry.pos_x = pos.x;
-            geometry.pos_y = pos.y;
-        }
-
-        if let Some(size) = size {
-            geometry.width = size.x;
-            geometry.height = size.y;
-        }
-    }
-
-    if let Some(maximized) = maximized {
         geometry.maximized = maximized;
     }
 }
 
+/// Write a PNG for `--shot`, logging the outcome either way.
+fn save_png(path: &Path, bytes: &[u8], w: usize, h: usize, colour: image::ExtendedColorType) {
+    match image::save_buffer(path, bytes, w as u32, h as u32, colour) {
+        Ok(()) => log::info!("shot: wrote {} ({w}x{h})", path.display()),
+        Err(e) => log::error!("shot: failed to write {}: {e}", path.display()),
+    }
+}
+
+/// The main window's last position and size, saved in `settings.json`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
-    /// X coordinate of the window's top-left corner (outer rect).
+    /// Left edge of the outer window (including OS decorations).
     pub pos_x: f32,
-
-    /// Y coordinate of the window's top-left corner (outer rect).
+    /// Top edge of the outer window.
     pub pos_y: f32,
-
-    /// Inner width of the window (excludes OS decorations).
+    /// Inner width (excluding OS decorations).
     pub width: f32,
-
-    /// Inner height of the window (excludes title bar and OS decorations).
+    /// Inner height (excluding the title bar).
     pub height: f32,
-
-    /// Whether the window was maximized when the application last closed.
+    /// Whether the window was maximised when it closed.
     pub maximized: bool,
 }
 

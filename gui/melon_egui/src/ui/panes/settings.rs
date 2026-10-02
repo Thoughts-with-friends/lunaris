@@ -6,7 +6,7 @@ pub(super) fn emu_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.limit_framerate, "Limit framerate")
         .on_hover_text("Off runs the core as fast as it will go.");
     ui.checkbox(&mut app.audio_sync, "Audio sync").on_hover_text(
-        "Only takes effect at 1.00x: any other speed deliberately outruns the          sound card, so pacing against it would cancel the speed setting out.",
+        "Only takes effect at 1.00x: any other speed deliberately outruns the sound card, so pacing against it would cancel the speed setting out.",
     );
     ui.separator();
 
@@ -50,7 +50,7 @@ fn emulation_speed(app: &mut MelonEgui, ui: &mut egui::Ui) {
     if app.speed_locked() {
         ui.colored_label(
             Severity::Warn.color(ui.visuals().dark_mode),
-            "Held at 1.00x: a second console or a LAN link is running, and both              consoles have to agree about time.",
+            "Held at 1.00x: a second console or a LAN link is running, and both consoles have to agree about time.",
         );
     }
     ui.label(concat!(
@@ -68,20 +68,34 @@ pub(super) fn preferences(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.monospace(config::config_dir().display().to_string());
 }
 
-/// melonDS's Video settings dialog, control for control.
-///
-/// Every 3D-renderer control here is live: `melonds-sys` builds the core with
-/// its OpenGL renderers and carries melonDS's whole `RendererSettings`. What a
-/// given machine can select still depends on its driver — see
-/// [`crate::video`] — so the OpenGL choices are disabled, with the reason on
-/// hover, when the context could not be bound.
+/// melonDS's Video settings dialog, control for control, one heading per
+/// function below. The OpenGL choices are disabled (reason on hover) when no
+/// usable GL context could be bound; see [`crate::video`].
 pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    renderer_choice(app, ui);
+    ui.separator();
+    opengl_options(app, ui);
+    ui.separator();
+    upscaling_2d(app, ui);
+    ui.separator();
+    display_scale(app, ui);
+    ui.separator();
+    display(app, ui);
+    ui.separator();
+    compositing(app, ui);
+    ui.separator();
+    aspect_ratio(app, ui);
+}
+
+/// The 3D renderer, and the software one's threading.
+fn renderer_choice(app: &mut MelonEgui, ui: &mut egui::Ui) {
     /// Why an OpenGL renderer cannot be selected on this machine.
     const NO_GL: &str = "No OpenGL context: melon_egui could not bind the GL entry \
                          points (or its blitter's shader would not build), so only \
                          the software renderer can draw.";
     /// Why the compute renderer in particular cannot.
-    const NO_COMPUTE: &str = "This context is not OpenGL 4.3, which the compute-shader                               renderer needs.";
+    const NO_COMPUTE: &str =
+        "This context is not OpenGL 4.3, which the compute-shader renderer needs.";
 
     ui.heading("3D renderer");
     let gl_ok = app.gl_available();
@@ -111,8 +125,11 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
                  spare; melonDS ships it off, so this does too.",
         );
     });
-    ui.separator();
+}
 
+/// The OpenGL renderers' own options (internal resolution etc.).
+fn opengl_options(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let gl_ok = app.gl_available();
     ui.heading("OpenGL options");
     let on_gl = app.video.renderer.is_gl() && gl_ok;
     ui.add_enabled_ui(on_gl, |ui| {
@@ -160,8 +177,10 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
         "Always on: this front end composites through egui's OpenGL painter \
          whichever renderer the core draws with, so there is nothing to turn off.",
     );
-    ui.separator();
+}
 
+/// xBRZ for the 2D layers, and which route applies it.
+fn upscaling_2d(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.heading("2D upscaling");
     // The one setting here that can improve a 2D layer: those come from tiles
     // at 256x192 whatever the renderer does, so the internal resolution above
@@ -203,14 +222,16 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
                 "So both settings apply at once and neither is capped by the other.",
             ));
             ui.label(format!(
-                "Costs one {w}x{h} readback per screen per frame, and {w}x{h} pixels through                  xBRZ — the same work the software renderer already does.",
+                "Costs one {w}x{h} readback per screen per frame, and {w}x{h} pixels through xBRZ — the same work the software renderer already does.",
                 w = crate::gl_screen::DS_WIDTH,
                 h = crate::gl_screen::DS_HEIGHT,
             ));
         }
     }
-    ui.separator();
+}
 
+/// Draw at a fixed magnification instead of fitting the window.
+fn display_scale(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.heading("Display scale");
     // `None` means "fit the window", which is the default and what the Screen
     // size menu entries assume.
@@ -236,8 +257,10 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     } else {
         ui.label("Fitting to the window (use Screen filtering to choose how it is sampled).");
     }
-    ui.separator();
+}
 
+/// VSync and screen filtering.
+fn display(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.heading("Display");
     ui.checkbox(&mut app.video.vsync, "VSync").on_hover_text(
         "Takes effect the next time melon_egui starts: the surface's \
@@ -245,8 +268,10 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     );
     ui.checkbox(&mut app.view.filtering, "Screen filtering")
         .on_hover_text("Smooth the picture when scaled, instead of square pixels.");
-    ui.separator();
+}
 
+/// "Render frames" and skipping hidden screens.
+fn compositing(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.heading("Compositing");
     ui.checkbox(&mut app.video.render, "Render frames").on_hover_text(
         "Off, the console keeps running but stops composing a picture. Emulation \
@@ -257,8 +282,10 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
         "In the Top only / Bottom only sizings, tell the core not to compose the \
              screen nobody is looking at. Most of the 2D renderer's work, saved.",
     );
-    ui.separator();
+}
 
+/// Per-screen aspect ratio.
+fn aspect_ratio(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.heading("Aspect ratio");
     egui::Grid::new("video-aspect").show(ui, |ui| {
         for (label, aspect) in

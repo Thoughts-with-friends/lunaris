@@ -1,7 +1,5 @@
 //! The knobs a slow link needs, and the bounds they are held to.
 
-// -- tuning -----------------------------------------------------------------
-
 /// The knobs a user can turn, persisted in the instance's `settings.json`.
 ///
 /// Defaults are the LAN-friendly end of each range: a link that needs none of

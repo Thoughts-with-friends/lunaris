@@ -30,7 +30,7 @@ pub(super) fn power(app: &mut MelonEgui, ui: &mut egui::Ui) {
         app.set_battery_okay(okay);
     }
     ui.label(
-        "What SPI's power-management chip reports; \"Low\" is what a cart's low-battery          warning reads.",
+        "What SPI's power-management chip reports; \"Low\" is what a cart's low-battery warning reads.",
     );
 }
 

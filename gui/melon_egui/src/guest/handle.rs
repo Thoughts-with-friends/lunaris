@@ -23,17 +23,17 @@ pub struct Guest {
 impl Guest {
     /// Boot `rom` as console `instance_id` on `mp`, on a thread of its own.
     ///
-    /// Returns as soon as the thread is spawned: whether the cart booted is
-    /// reported through [`Self::take_note`], since the answer arrives from the
-    /// other thread. `start_frame` is the frame count to begin at — the wifi
-    /// clock's epoch, which has to match the console it is joining (see
-    /// `melonds::Nds::set_frame_count`).
-    /// `stream` is set in Remote Desktop mode: this console's picture and
-    /// sound then go out over it, and its controls come back from it. See
-    /// [`crate::remote`].
+    /// Returns at once; a boot failure arrives later through
+    /// [`Self::take_note`].
+    ///
+    /// * `start_frame` — the frame count to start at. It is the wifi clock's
+    ///   epoch, so it must match the console being joined.
+    /// * `stream` — Remote Desktop only: this console's picture and sound go
+    ///   out over it and its controls come back from it ([`crate::remote`]).
     #[expect(
         clippy::too_many_arguments,
-        reason = "each is a distinct decision the caller makes once, at boot;                   gathering them into a struct would only move the same list"
+        reason = "each is a distinct decision the caller makes once, at boot; \
+                  gathering them into a struct would only move the same list"
     )]
     pub fn spawn(
         rom: &Path,
@@ -83,12 +83,8 @@ impl Guest {
         Self { input, output, commands, quit, paused, frames, handle }
     }
 
-    /// Post a menu command, to be performed between frames on the console's own
-    /// thread.
-    ///
-    /// Returns immediately: the answer — a savestate written, a boot failure —
-    /// comes back through [`Self::take_note`], because the work has not
-    /// happened yet when this returns.
+    /// Queue a menu command for the console's thread. The result arrives later
+    /// through [`Self::take_note`].
     pub fn send(&self, command: Command) {
         if let Ok(mut commands) = self.commands.lock() {
             commands.push(command);
@@ -107,11 +103,8 @@ impl Guest {
         self.paused.store(paused, Ordering::Relaxed);
     }
 
-    /// The newest picture, if there is a new one since last time.
-    ///
-    /// Taken rather than borrowed: the console is drawing into the other half
-    /// of this all the while, and holding its lock across an upload would stall
-    /// it for as long as egui takes.
+    /// The newest picture, if there is a new one since last time. Taken rather
+    /// than borrowed, so the lock is not held across a texture upload.
     pub fn take_screens(&self) -> Option<[Screen; 2]> {
         self.output.lock().ok()?.screens.take()
     }
@@ -134,9 +127,8 @@ impl Guest {
 }
 
 impl Drop for Guest {
-    /// Wind the thread up and wait for it: the console flushes its save on the
-    /// way out, and a half-dropped console still holding a seat on the
-    /// airwaves would keep the other one waiting for a peer that has gone.
+    /// Stop the thread and wait for it, so the save is flushed and the airwaves
+    /// seat is released before anything else happens.
     fn drop(&mut self) {
         self.quit.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {

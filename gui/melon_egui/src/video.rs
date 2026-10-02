@@ -1,34 +1,15 @@
-//! Graphics settings: the model behind melonDS's **Config ▸ Video settings**
-//! dialog.
+//! The settings behind **Config ▸ Video settings** ([`VideoOptions`]).
 //!
-//! # What is reachable
+//! | setting                          | goes to                               |
+//! |----------------------------------|---------------------------------------|
+//! | renderer, internal scale, ...    | the core, as [`melonds::RenderSettings`] (`to_core`) |
+//! | `render`, `skip_hidden_screens`  | the core's compositing switches (only skip work; emulation is identical) |
+//! | `upscale`, `upscale_factor`      | [`crate::upscale`] (xBRZ on the CPU)  |
+//! | `vsync`                          | the window, at the next start         |
 //!
-//! melonDS offers a choice of 3D renderer (software, OpenGL, compute) plus the
-//! options that hang off each — internal resolution, better polygon splitting,
-//! high-resolution coordinates, and threading for the software one. All of them
-//! are reachable: `melonds-sys` builds the core with `ENABLE_OGLRENDERER` and
-//! its FFI carries melonDS's `RendererSettings` whole, as
-//! [`melonds::RenderSettings`].
-//!
-//! What the core cannot answer for is decided here instead:
-//!
-//! * Two core knobs about *compositing* rather than rasterising —
-//!   `mds_set_render` and `mds_set_displayed_screens`, modelled as
-//!   [`VideoOptions::render`] and [`VideoOptions::skip_hidden_screens`]. Both
-//!   only skip work: melonDS documents emulation as bit-identical either way,
-//!   including display capture into VRAM, so neither changes what a cart
-//!   computes.
-//! * Everything this front end does itself when it blits — filtering, aspect
-//!   ratio, and vsync — which live in [`crate::ui::view::ViewOptions`] and here.
-//!
-//! # Which of them a given machine can actually use
-//!
-//! An OpenGL renderer needs entry points bound against the window's context
-//! (`melonds::gl_load`) and a driver new enough to compile melonDS's shaders;
-//! the compute one additionally needs GL 4.3. None of that is knowable from a
-//! settings file, so the choice is offered whenever the blitter came up and the
-//! core reports back which renderer it actually installed — see
-//! `MelonEgui::apply_render_settings`.
+//! Whether an OpenGL renderer actually works depends on the machine's driver,
+//! which no settings file can know: the core reports what it installed and
+//! `MelonEgui::apply_renderer` corrects the setting to match.
 
 /// The 3D renderers melonDS's dialog offers.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Serialize, serde::Deserialize)]
@@ -111,11 +92,9 @@ pub struct VideoOptions {
     /// (`mds_set_displayed_screens`). Saves most of the 2D renderer's work in
     /// the single-screen sizings.
     pub skip_hidden_screens: bool,
-    /// Post-process filter for the software renderer's finished picture.
-    ///
-    /// The only setting here that improves a *2D* layer: those are drawn from
-    /// tiles at 256x192 whatever the renderer does, so
-    /// [`Self::internal_scale`] cannot touch them. See [`crate::upscale`].
+    /// xBRZ for the 2D picture, under either renderer. The only setting that
+    /// improves a 2D layer ([`Self::internal_scale`] cannot). See
+    /// [`crate::upscale`].
     pub upscale: crate::upscale::Method,
     /// How far [`Self::upscale`] scales, 1 to 6.
     pub upscale_factor: u8,

@@ -1,15 +1,20 @@
-//! The wireless dialog: the shared airwaves, a LAN link, and its tuning.
+//! The **Wireless status** dialog, top to bottom:
+//!
+//! 1. LAN room — status and the two address boxes;
+//! 2. [`link_quality`] — the live LAN link's measurements (if one is up);
+//! 3. Remote Desktop — its numbers and settings (`remote.rs`);
+//! 4. [`vpn_tuning`] — the LAN transport's knobs;
+//! 5. [`air_status`] — the verdict: is anyone on the air, are rounds running;
+//! 6. [`per_console`] — counters per console;
+//! 7. [`traffic`] — the rolling frame log.
+//!
+//! The headline number is the CMD count: DS local play only starts when the
+//! host sends CMD frames, and "associated, but no CMD ever sent" is exactly
+//! where lunaris's own wireless stops (`docs/design/review_mp_local2.md` §4).
 
 use super::*;
 
-/// Everything the shared airwaves have seen, in the detail needed to compare
-/// this run against lunaris's own wireless trace.
-///
-/// The headline is deliberately the CMD count. DS local play only starts once
-/// the host begins sending CMD frames — association succeeding is *not* the same
-/// thing — and "association fine, no CMD ever sent" is exactly where lunaris
-/// currently stops (`docs/design/review_mp_local2.md` §4). So the one number
-/// that says whether this is working is how many CMD frames went out.
+/// Draw the whole dialog.
 pub(super) fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.heading("LAN room");
     ui.monospace(&app.lan_room);
@@ -29,6 +34,15 @@ pub(super) fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
     vpn_tuning(app, ui);
     ui.separator();
 
+    air_status(app, ui);
+    ui.separator();
+    per_console(app, ui);
+    ui.separator();
+    traffic(app, ui);
+}
+
+/// The headline verdict: is anyone on the air, and are MP rounds running?
+fn air_status(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let counters = app.airwaves.counters();
     let connected = app.airwaves.connected();
     let live: Vec<usize> =
@@ -39,7 +53,6 @@ pub(super) fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let acks: u64 = counters.iter().map(|c| c.sent_ack).sum();
     let generic: u64 = counters.iter().map(|c| c.sent_generic).sum();
 
-    // -- the verdict ----------------------------------------------------
     ui.heading("Status");
     match app.guest_frames() {
         // The second console runs on a thread of its own, so this climbing is
@@ -80,9 +93,12 @@ pub(super) fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
             );
         }
     }
-    ui.separator();
+}
 
-    // -- per console ----------------------------------------------------
+/// One row of counters per console that has been on the air.
+fn per_console(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let counters = app.airwaves.counters();
+    let connected = app.airwaves.connected();
     ui.heading("Per console");
     egui::ScrollArea::horizontal().id_salt("mp-counters").show(ui, |ui| {
         egui::Grid::new("mp-grid").striped(true).show(ui, |ui| {
@@ -130,9 +146,10 @@ pub(super) fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
          \"AID mask\" is what the last reply collection returned - a host asking and \
          getting 0000 is a host nobody answered.",
     );
-    ui.separator();
+}
 
-    // -- the traffic log ------------------------------------------------
+/// The rolling log of every frame sent, newest last.
+fn traffic(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.heading("Traffic");
         if ui.button("Clear").clicked() {

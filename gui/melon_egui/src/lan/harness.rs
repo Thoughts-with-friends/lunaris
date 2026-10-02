@@ -232,7 +232,7 @@ mod tests {
             answered,
             correct,
             effective_fps: f64::from(rounds) / elapsed.as_secs_f64(),
-            stats: host.stats(),
+            stats: host.peer.stats(),
         }
     }
 

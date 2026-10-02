@@ -1,13 +1,21 @@
-//! The menu bar, built to melonDS's shape.
+//! The menu bar, laid out like melonDS's own (`frontend/qt_sdl/Window.cpp`).
 //!
-//! Structure, wording and offered values are transcribed from melonDS's
-//! `frontend/qt_sdl/Window.cpp` (the `menubar->addMenu(...)` blocks), so that
-//! someone who knows melonDS finds the same commands in the same places.
+//! # How a click becomes work
 //!
-//! Every entry that *can* be backed is live. The rest are **shown but disabled**
-//! rather than omitted, each carrying the specific reason it cannot work — see
-//! [`Unavailable`]. The shape then matches melonDS's, and what is missing is
-//! visible in the UI instead of merely absent.
+//! ```text
+//!  bar(app, ui)
+//!   ├ file_menu / system_menu / view_menu / config_menu / help_menu
+//!   │    each entry: Picked::item(...) → records the clicked Action
+//!   └ returns Option<Action>
+//!  update() then calls app.apply(action)        (app/commands.rs)
+//! ```
+//!
+//! Some entries only toggle a value directly (checkboxes such as "Enable
+//! cheats", the View menu's radio buttons); everything else is an [`Action`].
+//!
+//! Entries melonDS has but the bindings cannot back are **shown disabled**
+//! with the reason on hover ([`Unavailable`]), so the menu keeps melonDS's
+//! shape and what is missing is visible.
 
 use egui::Ui;
 
@@ -109,20 +117,33 @@ fn unavailable(app: &MelonEgui, ui: &mut Ui, label: K, why: Unavailable) {
     ui.add_enabled(false, egui::Button::new(label)).on_disabled_hover_text(reason);
 }
 
-/// An entry that runs `action` and closes the menu.
-fn entry(ui: &mut Ui, enabled: bool, label: &str, action: Action) -> Option<Action> {
-    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-        ui.close();
-        return Some(action);
-    }
-    None
-}
-
-/// A translated entry, which is what nearly every entry here is.
+/// The entry clicked while the menus were drawn, if any.
 ///
-/// The label is copied out of the map before the widget is built: `app.i18n`
-/// borrows `app`, and several call sites need `&mut app` in the same
-/// expression.
-fn item(app: &MelonEgui, ui: &mut Ui, enabled: bool, label: K, action: Action) -> Option<Action> {
-    entry(ui, enabled, &app.i18n().s(label), action)
+/// Menus run inside egui closures that cannot hand `&mut app` back, so a
+/// click is recorded here and returned once drawing is done. The first click
+/// wins; once one is recorded, the remaining entries of that frame are not
+/// drawn (the menu is closing anyway).
+#[derive(Default)]
+struct Picked(Option<Action>);
+
+impl Picked {
+    /// An entry labelled `label` that records `action` and closes the menu.
+    fn entry(&mut self, ui: &mut Ui, enabled: bool, label: &str, action: Action) {
+        if self.0.is_none() && ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            ui.close();
+            self.0 = Some(action);
+        }
+    }
+
+    /// A translated entry, which is what nearly every entry is.
+    fn item(&mut self, app: &MelonEgui, ui: &mut Ui, enabled: bool, label: K, action: Action) {
+        // Copied out first: `app.i18n` borrows `app`.
+        let label = app.i18n().s(label);
+        self.entry(ui, enabled, &label, action);
+    }
+
+    /// A translated entry that opens or closes one of the auxiliary windows.
+    fn pane(&mut self, app: &MelonEgui, ui: &mut Ui, enabled: bool, label: K, pane: Pane) {
+        self.item(app, ui, enabled, label, Action::TogglePane(pane));
+    }
 }

@@ -136,7 +136,7 @@ impl Logger {
 
 impl log::Log for Logger {
     /// Always true: every record is kept for the files and the crash report,
-    /// and [`Self::log`] decides separately whether to print it.
+    /// and `log` decides separately whether to print it.
     fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
         true
     }

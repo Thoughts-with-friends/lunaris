@@ -1,12 +1,19 @@
-//! The cart's Action Replay codes: reading them, editing them, and handing
-//! them to both consoles.
+//! The cart's Action Replay cheat codes (System ▸ Setup cheat codes).
+//!
+//! ```text
+//!  instance1/cheats/<rom>.mch ── load at boot ──→ app.cheats (the list)
+//!  Cheat codes pane: select → editor boxes → Save → commit_cheat_editor
+//!                    add / delete / drag to reorder → written at once
+//!  every repaint: apply_cheats → core (and the second console), on a change
+//! ```
+//!
+//! The `.mch` format is melonDS's own ([`crate::file::mch`]), so the same file
+//! works in both front ends.
 
 use crate::app::*;
 
 impl MelonEgui {
-    /// The ROM info pane's rows, or `None` with no cart loaded.
-    /// Where a cart's codes live in instance1's dedicated cheat directory.
-    /// The file keeps melonDS's `.mch` format so both front ends can use it.
+    /// Where a cart's codes live: `instance1/cheats/<rom name>.mch`.
     pub fn cheat_path(rom: &Path) -> PathBuf {
         crate::file::settings::instance_data_dir(1, "cheats").join(rom.file_stem().map_or_else(
             || PathBuf::from("cheats.mch"),

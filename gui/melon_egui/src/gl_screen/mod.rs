@@ -1,7 +1,7 @@
 //! Drawing the core's OpenGL output.
 //!
 //! With the software rasteriser the core hands over CPU pixels, which become an
-//! ordinary egui texture (see `app::to_image`). The OpenGL renderer instead
+//! ordinary egui texture (see `ui::layout::to_image`). The OpenGL renderer instead
 //! leaves the picture in a `GL_TEXTURE_2D_ARRAY` of its own — layer 0 the top
 //! screen, layer 1 the bottom — at the internal resolution, and never fills the
 //! CPU framebuffers at all.

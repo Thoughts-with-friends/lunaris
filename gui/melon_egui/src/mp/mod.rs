@@ -16,7 +16,7 @@
 //! ordinary packets before any of that starts.
 //!
 //! Replies therefore live in their own queue, separate from ordinary packets:
-//! the host drains them all at once, keyed by AID, in [`Airwaves::recv_replies`].
+//! the host drains them all at once, keyed by AID, in `Client::mp_recv_replies`.
 //!
 //! # Differences from melonDS's LocalMP, and why
 //!
@@ -24,7 +24,7 @@
 //! semaphores), because its instances are separate program launches. Here both
 //! consoles live in one process, so a `Mutex` around plain `VecDeque`s does the
 //! same job. The blocking receives melonDS implements with a semaphore timeout
-//! are non-blocking here — see [`Airwaves::recv_host_packet`].
+//! are non-blocking here — see `Client::mp_recv_host_packet`.
 
 use std::{
     collections::VecDeque,

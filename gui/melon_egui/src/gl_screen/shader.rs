@@ -102,7 +102,7 @@ void main() {
 
     // The renderer's own picture. Its final pass writes RGBA -- unlike the
     // software rasteriser, whose host framebuffers are BGRA and are swizzled on
-    // the CPU (see `app::to_image`). Sampling it in any other order turns the
+    // the CPU (see `ui::layout::to_image`). Sampling it in any other order turns the
     // DS's blue sky orange, which is what this used to do.
     vec3 plain = texture(screen, vec3(uv, layer)).rgb;
     // The same screen with its 2D put through xBRZ. Sampled with the same `uv`,

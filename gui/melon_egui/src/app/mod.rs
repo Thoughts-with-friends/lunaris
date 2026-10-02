@@ -1,19 +1,38 @@
-//! The front end's state, and what it does with it.
+//! The front end's state ([`MelonEgui`]) and everything it does.
 //!
-//! [`MelonEgui`] is the one object the whole program is: the console, the
-//! settings, the windows that are open, the link that is up. The `impl` blocks
-//! beside this file are split by *what the methods are for* — booting, pacing
-//! the core, a LAN session — and the other two halves live elsewhere:
+//! # How the pieces fit
 //!
-//! * [`crate::ui`] draws it and reports what was clicked.
-//! * [`crate::file`] carries out whatever reaches the disk.
+//! ```text
+//!  eframe calls update() every repaint          (ui/frame.rs)
+//!     │
+//!     ├─ advance()        run the console        (app/emulation.rs)
+//!     ├─ menu::bar()      draw menus → Action    (ui/menu)
+//!     ├─ screens/osd      draw the picture       (ui/screen.rs, ui/osd.rs)
+//!     ├─ panes::show()    settings windows       (ui/panes)
+//!     ├─ guest_view()     second console window  (ui/window.rs)
+//!     └─ apply(Action)    do what was clicked    (app/commands.rs)
+//!                            │
+//!                            └─ disk work        (file/*)
+//! ```
 //!
-//! [`MelonEgui::apply`] is the seam between them: a menu returns an
-//! [`Action`], and that is where one becomes work.
+//! The `impl MelonEgui` blocks are split by responsibility:
+//!
+//! | file                | responsibility                                     |
+//! |---------------------|----------------------------------------------------|
+//! | `boot.rs`           | construction, settings load/save                   |
+//! | `emulation.rs`      | pacing and running the first console               |
+//! | `commands.rs`       | menu [`Action`] → work, per kind of window         |
+//! | `instances.rs`      | opening/closing the second console                 |
+//! | `lan_session.rs`    | LAN mode: wireless carried over UDP                |
+//! | `remote_session.rs` | Remote Desktop mode: picture out, input back       |
+//! | `net_address.rs`    | parsing the address boxes                          |
+//! | `worker.rs`         | running a network handshake off the UI thread      |
+//! | `query.rs`          | small getters/setters the menus and panes use      |
+//! | `ram_search.rs`     | the RAM search pane's scanning                     |
 
 pub(crate) use std::{
     path::{Path, PathBuf},
-    sync::mpsc::{Receiver, TryRecvError},
+    sync::mpsc::Receiver,
     time::{Duration, Instant},
 };
 
@@ -42,20 +61,20 @@ pub(crate) use crate::{
 mod boot;
 mod commands;
 mod emulation;
-mod host_bridge;
 mod instances;
 mod lan_session;
 mod net_address;
 mod query;
 mod ram_search;
 mod remote_session;
+mod worker;
 
 pub(crate) use gl_screen::FULL_CLIP;
-pub(crate) use host_bridge::{ArcHost, LanConnection};
+pub(crate) use lan_session::LanConnection;
 pub(crate) use net_address::{parse_lan_address, parse_remote_address};
 
 pub(crate) use crate::ui::{
-    layout::{guest_viewport_id, paint_screen, to_image, touch_coords},
+    layout::{guest_viewport_id, paint_screens, screen_panel, touch_coords, upload_screens},
     window::WindowConfig,
 };
 
@@ -127,10 +146,8 @@ pub enum DialogPurpose {
     Directory(crate::ui::panes::PathSetting),
 }
 
-/// The DS video frame rate: `33_513_982 / 560_190` Hz. Slightly under the 60 Hz
-/// a display usually runs at, so pacing has to come from a clock rather than
-/// from one frame per repaint.
-pub(crate) const FRAME_RATE: f64 = 59.826_1;
+/// The DS video frame rate. See [`crate::emu::FRAME_RATE`].
+pub(crate) const FRAME_RATE: f64 = crate::emu::FRAME_RATE;
 
 /// How many emulated frames a single repaint may run to catch up. A window that
 /// was dragged or occluded can leave an arbitrarily large debt; running all of
@@ -260,10 +277,8 @@ pub struct MelonEgui {
     pub(crate) second_window: bool,
     /// The shared wireless medium every console here sits on.
     pub airwaves: Airwaves,
-    /// The second console, when "Launch new instance" has opened one. It is a
-    /// separate DS on the same airwaves, not another view of the first.
-    /// The second console, which runs on a thread of its own — see
-    /// [`crate::guest`] for why local wireless play requires that.
+    /// The second console ("Launch new instance"): a separate DS on the same
+    /// airwaves, running on a thread of its own — see [`crate::guest`].
     pub(crate) guest: Option<crate::guest::Guest>,
     /// A LAN host or guest connection being established off the UI thread.
     pub(crate) lan_pending: Option<Receiver<Result<LanConnection, String>>>,
@@ -302,6 +317,9 @@ pub struct MelonEgui {
     pub lan_room: String,
     /// Settings persisted independently for the second console.
     pub(crate) instance2_settings: Settings,
+    /// The JSON last written to `instance2/settings.json`, so it is only
+    /// rewritten when something changed.
+    pub(crate) instance2_saved: String,
     pub(crate) guest_textures: Option<[TextureHandle; 2]>,
     /// Where the guest's bottom screen was drawn, for its own touch input.
     pub(crate) guest_bottom: Option<Rect>,

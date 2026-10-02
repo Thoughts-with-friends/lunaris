@@ -9,7 +9,7 @@
 /// Pack one framebuffer pixel into RGB565.
 ///
 /// The core hands pixels over as `0x00RRGGBB` in a `u32` — the same order
-/// `crate::app::to_image` reads them in, which is where this shift pattern
+/// `crate::ui::layout::to_image` reads them in, which is where this shift pattern
 /// comes from.
 ///
 /// 565 rather than the framebuffer's 888 halves the bytes and costs almost
