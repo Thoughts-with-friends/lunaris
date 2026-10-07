@@ -33,7 +33,7 @@ mod map;
 
 pub use keys::I18nKey;
 pub use language::Language;
-pub use map::{I18nMap, Translations};
+pub use map::{I18nMap, Translations, fill};
 
 #[cfg(test)]
 mod tests {
@@ -84,6 +84,20 @@ mod tests {
         }
         assert_eq!(translations.get(Language::Japanese).t(I18nKey::FileLabel), "ファイル");
         assert_eq!(translations.get(Language::English).t(I18nKey::FileLabel), "File");
+    }
+
+    /// Japanese moves the value; the template has to be able to follow it.
+    #[test]
+    fn placeholders_are_filled_by_position() {
+        assert_eq!(super::fill("{1} から {0}", &[&"a", &3]), "3 から a");
+        assert_eq!(super::fill("{0} and {0}", &[&"x"]), "x and x");
+        assert_eq!(super::fill("left {1}", &[&"x"]), "left {1}", "an unfilled slot stays visible");
+        assert_eq!(
+            super::fill("{0} then {1}", &[&"C:/a{1}b", &"z"]),
+            "C:/a{1}b then z",
+            "a brace inside a value is the value's, not a placeholder"
+        );
+        assert_eq!(super::fill("{x} {} {0", &[&"v"]), "{x} {} {0", "non-slots pass through");
     }
 
     #[test]

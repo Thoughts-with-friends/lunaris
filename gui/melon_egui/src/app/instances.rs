@@ -18,7 +18,7 @@ impl MelonEgui {
     pub fn command_guest(&mut self, command: crate::guest::Command) {
         match &self.guest {
             Some(guest) => guest.send(command),
-            None => self.post_warn("no second console is running"),
+            None => self.post_warn(self.i18n().s(K::NoSecondConsole)),
         }
     }
 
@@ -34,7 +34,7 @@ impl MelonEgui {
         let host_save = Settings::redirect(self.save_dir.as_ref(), rom, "sav");
         let dir = crate::file::settings::instance_data_dir(2, "saves");
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            self.post_warn(format!("cannot make {}: {e}; sharing the save", dir.display()));
+            self.post_warn(self.i18n().f(K::GuestSaveDirFailed, &[&dir.display(), &e]));
             return None;
         }
         let guest_save = Settings::redirect(Some(&dir), rom, "sav");
@@ -42,7 +42,7 @@ impl MelonEgui {
             && host_save.exists()
             && let Err(e) = std::fs::copy(&host_save, &guest_save)
         {
-            self.post_error(format!("cannot seed {}: {e}", guest_save.display()));
+            self.post_error(self.i18n().f(K::GuestSaveSeedFailed, &[&guest_save.display(), &e]));
         }
         Some(dir)
     }
@@ -52,12 +52,10 @@ impl MelonEgui {
     pub(crate) fn launch_instance(&mut self) {
         if self.guest.is_some() {
             self.close_guest();
-            self.post("second instance closed");
-            return;
+            return self.post(self.i18n().s(K::SecondConsoleClosed));
         }
         let Some(rom) = self.emu.as_ref().map(|emu| emu.rom_path.clone()) else {
-            self.post_warn("load a cart first");
-            return;
+            return self.post_warn(self.i18n().s(K::LoadCartFirst));
         };
         let save_dir = self.guest_save_dir(&rom);
         // melonDS starts a wifi clock at `frames * 16716`, so a console booted
@@ -75,11 +73,8 @@ impl MelonEgui {
             start_frame,
             stream,
         ));
-        self.post(if streamed {
-            "second instance launched — its picture and sound go to the remote player"
-        } else {
-            "second instance launched - both consoles share the airwaves"
-        });
+        let said = if streamed { K::SecondConsoleStreamed } else { K::SecondConsoleLaunched };
+        self.post(self.i18n().s(said));
     }
 
     /// Show the first console's instance directory in the file manager.

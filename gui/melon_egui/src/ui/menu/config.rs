@@ -31,7 +31,7 @@ pub(super) fn config_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         ui.checkbox(&mut app.limit_framerate, limit);
         let has_audio = app.has_audio();
         ui.add_enabled(has_audio, egui::Checkbox::new(&mut app.audio_sync, sync))
-            .on_disabled_hover_text("No audio output device.");
+            .on_disabled_hover_text(app.i18n().t(K::NoAudioDevice));
     });
     m.0
 }

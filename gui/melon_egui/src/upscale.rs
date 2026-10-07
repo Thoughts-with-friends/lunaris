@@ -29,9 +29,10 @@ pub enum Method {
 impl Method {
     pub const ALL: [Self; 2] = [Self::None, Self::Xbrz];
 
-    pub const fn label(self) -> &'static str {
+    /// What the Video settings dialog calls it, in the UI's language.
+    pub fn label(self, tr: &crate::i18n::I18nMap) -> &str {
         match self {
-            Self::None => "None",
+            Self::None => tr.t(crate::i18n::I18nKey::UpscaleNone),
             Self::Xbrz => "xBRZ",
         }
     }

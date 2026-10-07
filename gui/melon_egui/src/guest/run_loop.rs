@@ -50,13 +50,13 @@ pub(crate) fn run(config: RunConfig) {
 
     let mut emu = match Emu::boot_mp(rom, save_dir.as_ref(), state_dir.as_ref(), instance_id, mp) {
         Ok(emu) => emu,
-        Err(e) => return finish(shared, format!("could not boot: {e}")),
+        Err(e) => return finish(shared, Note::new(K::GuestBootFailed, &[&e])),
     };
     load_cheats(&mut emu, rom, cheat_dir.as_ref());
     // The wireless clock's epoch is the frame count, so a console joining a
     // session in progress has to start from its peer's.
     emu.nds.set_frame_count(start_frame);
-    shared.say(format!("running from frame {start_frame}"));
+    shared.say(Note::new(K::GuestRunningFrom, &[&start_frame]));
 
     let frame_time = Duration::from_secs_f64(1.0 / FRAME_RATE);
     let mut next = Instant::now();
@@ -164,7 +164,7 @@ pub(crate) enum Outcome {
 }
 
 /// Report `note` and mark the console as finished, so the UI closes its window.
-pub(crate) fn finish(shared: &Shared, note: String) {
+pub(crate) fn finish(shared: &Shared, note: Note) {
     shared.say(note);
     if let Ok(mut out) = shared.output.lock() {
         out.finished = true;
@@ -181,8 +181,8 @@ fn run_frames(
 ) -> Outcome {
     for _ in 0..count {
         before_each(emu);
-        if let Err(note) = emu.run_frame_checked() {
-            finish(shared, note);
+        if let Err(reason) = emu.run_frame_checked() {
+            finish(shared, Note::new(K::GuestCrashed, &[&reason]));
             return Outcome::Stopped;
         }
     }

@@ -56,6 +56,17 @@ impl I18nMap {
         self.t(key).to_owned()
     }
 
+    /// Translate `key` and fill its `{0}`, `{1}`, … placeholders with `args`.
+    ///
+    /// Positional rather than `format!`, because the template is data — a
+    /// `const fn`'s output or a user's override file — and because Japanese
+    /// puts the values in a different place in the sentence than English does,
+    /// which concatenating a translated prefix onto a value cannot express.
+    #[must_use]
+    pub fn f(&self, key: I18nKey, args: &[&dyn std::fmt::Display]) -> String {
+        fill(self.t(key), args)
+    }
+
     /// Load `path` as a translation file.
     ///
     /// # Errors
@@ -121,6 +132,41 @@ impl I18nMap {
         std::fs::write(&path, text).with_context(|_| WriteFileSnafu { path: path.clone() })?;
         Ok(path)
     }
+}
+
+/// Replace each `{n}` in `template` with `args[n]`.
+///
+/// A placeholder with no matching argument is left as written, so a template
+/// from an override file with one placeholder too many shows the slip instead
+/// of panicking.
+///
+/// One pass over the template, copying each argument through untouched: a
+/// value that itself contains `{1}` — a path, a user's cheat name — must not be
+/// mistaken for a placeholder.
+#[must_use]
+pub fn fill(template: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let slot = after
+            .find('}')
+            .and_then(|close| Some((after[..close].parse::<usize>().ok()?, close)))
+            .and_then(|(index, close)| Some((args.get(index)?, close)));
+        match slot {
+            Some((arg, close)) => {
+                out.push_str(&arg.to_string());
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Every language's strings, read once.

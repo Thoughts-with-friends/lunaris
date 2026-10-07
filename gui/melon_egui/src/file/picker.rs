@@ -168,6 +168,9 @@ impl<P> Pending<P> {
     /// If the thread cannot be started. The caller should report that rather
     /// than silently doing nothing, since from the user's side the difference
     /// is a menu entry that appears to have been ignored.
+    ///
+    /// The error is the bare reason; the caller says what failed, in the UI's
+    /// language.
     pub(crate) fn spawn(purpose: P, request: Request) -> Result<Self, String> {
         let (sender, answers) = channel();
         std::thread::Builder::new()
@@ -177,7 +180,7 @@ impl<P> Pending<P> {
                 // window closed while the dialog was up. Nothing to report to.
                 let _ = sender.send(request.show());
             })
-            .map_err(|error| format!("cannot open a file dialog: {error}"))?;
+            .map_err(|error| error.to_string())?;
         Ok(Self { purpose, answers })
     }
 

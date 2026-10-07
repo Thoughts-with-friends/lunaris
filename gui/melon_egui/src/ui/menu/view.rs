@@ -11,48 +11,48 @@ use crate::{
 
 pub(super) fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
     let mut m = Picked::default();
-    ui.menu_button(app.i18n().s(K::ViewLabel), |ui| {
-        ui.menu_button(app.i18n().s(K::ScreenSize), |ui| {
+    // Borrowed as the one field rather than through `app.i18n()`, so the radio
+    // buttons below can hold `&mut app.view` beside it.
+    let tr = app.translations.get(app.language);
+    ui.menu_button(tr.t(K::ViewLabel), |ui| {
+        ui.menu_button(tr.t(K::ScreenSize), |ui| {
             for scale in 1..=4 {
                 m.entry(ui, true, &format!("{scale}x"), Action::ScreenSize(scale as f32));
             }
         });
 
-        // The labels are read out of the map first: `app.i18n` borrows `app`,
-        // and `app.view` below needs it mutably.
-        let words = ViewWords::of(app);
         let view = &mut app.view;
-        ui.menu_button(&words.rotation, |ui| {
+        ui.menu_button(tr.t(K::ScreenRotation), |ui| {
             for rotation in Rotation::ALL {
                 ui.radio_value(&mut view.rotation, rotation, format!("{}°", rotation.degrees()));
             }
         });
-        ui.menu_button(&words.gap, |ui| {
+        ui.menu_button(tr.t(K::ScreenGap), |ui| {
             for gap in SCREEN_GAPS {
                 ui.radio_value(&mut view.gap, gap, format!("{gap} px"));
             }
         });
-        ui.menu_button(&words.layout, |ui| {
+        ui.menu_button(tr.t(K::ScreenLayout), |ui| {
             for layout in ScreenLayout::ALL {
-                ui.radio_value(&mut view.layout, layout, layout.label());
+                ui.radio_value(&mut view.layout, layout, layout.label(tr));
             }
             ui.separator();
-            ui.checkbox(&mut view.swap, &words.swap);
+            ui.checkbox(&mut view.swap, tr.t(K::SwapScreens));
         });
-        ui.menu_button(&words.sizing, |ui| {
+        ui.menu_button(tr.t(K::ScreenSizing), |ui| {
             for sizing in ScreenSizing::ALL {
-                ui.radio_value(&mut view.sizing, sizing, sizing.label());
+                ui.radio_value(&mut view.sizing, sizing, sizing.label(tr));
             }
             ui.separator();
-            ui.checkbox(&mut view.integer_scaling, &words.integer_scaling);
+            ui.checkbox(&mut view.integer_scaling, tr.t(K::IntegerScaling));
         });
-        ui.menu_button(&words.aspect, |ui| {
+        ui.menu_button(tr.t(K::AspectRatio), |ui| {
             // Per screen, and labelled per screen, exactly as melonDS lists it.
             for aspect in AspectRatio::ALL {
                 ui.radio_value(
                     &mut view.aspect_top,
                     aspect,
-                    format!("{} {}", words.top, aspect.label()),
+                    format!("{} {}", tr.t(K::TopScreen), aspect.label(tr)),
                 );
             }
             ui.separator();
@@ -60,55 +60,18 @@ pub(super) fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
                 ui.radio_value(
                     &mut view.aspect_bottom,
                     aspect,
-                    format!("{} {}", words.bottom, aspect.label()),
+                    format!("{} {}", tr.t(K::BottomScreen), aspect.label(tr)),
                 );
             }
         });
         ui.separator();
 
-        m.entry(ui, true, &words.new_window, Action::NewWindow);
+        m.entry(ui, true, tr.t(K::NewWindow), Action::NewWindow);
         ui.separator();
 
         let view = &mut app.view;
-        ui.checkbox(&mut view.filtering, &words.filtering);
-        ui.checkbox(&mut view.show_osd, &words.show_osd);
+        ui.checkbox(&mut view.filtering, tr.t(K::ScreenFiltering));
+        ui.checkbox(&mut view.show_osd, tr.t(K::ShowOsd));
     });
     m.0
-}
-
-/// The View menu's labels, copied out of the translation map first: the radio
-/// buttons hold `&mut app.view` for the whole closure, so `app.i18n()` cannot
-/// be called inside it.
-struct ViewWords {
-    rotation: String,
-    gap: String,
-    layout: String,
-    swap: String,
-    sizing: String,
-    integer_scaling: String,
-    aspect: String,
-    top: String,
-    bottom: String,
-    new_window: String,
-    filtering: String,
-    show_osd: String,
-}
-
-impl ViewWords {
-    fn of(app: &MelonEgui) -> Self {
-        Self {
-            rotation: app.i18n().s(K::ScreenRotation),
-            gap: app.i18n().s(K::ScreenGap),
-            layout: app.i18n().s(K::ScreenLayout),
-            swap: app.i18n().s(K::SwapScreens),
-            sizing: app.i18n().s(K::ScreenSizing),
-            integer_scaling: app.i18n().s(K::IntegerScaling),
-            aspect: app.i18n().s(K::AspectRatio),
-            top: app.i18n().s(K::TopScreen),
-            bottom: app.i18n().s(K::BottomScreen),
-            new_window: app.i18n().s(K::NewWindow),
-            filtering: app.i18n().s(K::ScreenFiltering),
-            show_osd: app.i18n().s(K::ShowOsd),
-        }
-    }
 }

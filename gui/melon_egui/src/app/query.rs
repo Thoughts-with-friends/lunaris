@@ -70,7 +70,7 @@ impl MelonEgui {
     /// What melonDS shows next to "DS slot:".
     pub fn cart_label(&self) -> String {
         self.emu.as_ref().map_or_else(
-            || "(none)".to_owned(),
+            || self.i18n().s(K::None),
             |emu| {
                 emu.rom_path.file_name().map_or_else(
                     || emu.rom_path.display().to_string(),
@@ -104,14 +104,15 @@ impl MelonEgui {
         }
     }
 
-    pub fn cart_info(&self) -> Option<Vec<(&'static str, String)>> {
+    /// The ROM info pane's rows: what each is called, and its value.
+    pub fn cart_info(&self) -> Option<Vec<(K, String)>> {
         let emu = self.emu.as_ref()?;
         Some(vec![
-            ("Title", emu.info.title.clone()),
-            ("Game code", emu.info.gamecode.clone()),
-            ("Maker code", emu.info.maker.clone()),
-            ("ROM size", format!("{:.1} MiB", emu.info.size as f64 / (1024.0 * 1024.0))),
-            ("File", emu.rom_path.display().to_string()),
+            (K::InfoTitle, emu.info.title.clone()),
+            (K::InfoGameCode, emu.info.gamecode.clone()),
+            (K::InfoMakerCode, emu.info.maker.clone()),
+            (K::InfoRomSize, format!("{:.1} MiB", emu.info.size as f64 / (1024.0 * 1024.0))),
+            (K::InfoFile, emu.rom_path.display().to_string()),
         ])
     }
 
@@ -126,10 +127,11 @@ impl MelonEgui {
     /// What the Audio settings pane says about the device.
     pub fn audio_status(&self) -> Notice {
         match &self.audio {
-            Ok(audio) => {
-                Notice::quiet(Severity::Success, format!("Playing on {}", audio.description()))
-            }
-            Err(e) => Notice::quiet(Severity::Error, format!("No audio output: {e}")),
+            Ok(audio) => Notice::quiet(
+                Severity::Success,
+                self.i18n().f(K::AudioPlayingOn, &[&audio.description()]),
+            ),
+            Err(e) => Notice::quiet(Severity::Error, self.i18n().f(K::AudioNone, &[e])),
         }
     }
 
@@ -158,18 +160,17 @@ impl MelonEgui {
     /// Push the dialog's clock into the console.
     pub fn apply_clock(&mut self) {
         let clock = self.clock;
+        let tr = self.translations.get(self.language);
         match &mut self.emu {
             Some(emu) => {
                 emu.set_clock(clock);
-                self.clock_note = Notice::new(
-                    Severity::Success,
-                    format!(
-                        "set to {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                        clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second
-                    ),
+                let when = format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    clock.year, clock.month, clock.day, clock.hour, clock.minute, clock.second
                 );
+                self.clock_note = Notice::new(Severity::Success, tr.f(K::ClockSet, &[&when]));
             }
-            None => self.clock_note = Notice::new(Severity::Warn, "no cart loaded"),
+            None => self.clock_note = Notice::new(Severity::Warn, tr.s(K::NoCartLoaded)),
         }
         // Both consoles, always: two carts that disagree about the date behave
         // differently in any game that checks it, and on a link that is a
@@ -187,7 +188,7 @@ impl MelonEgui {
     /// Show `dir` in the system file manager, creating it first.
     pub fn reveal(&mut self, dir: &Path) {
         if let Err(error) = std::fs::create_dir_all(dir) {
-            self.post_error(format!("cannot create {}: {error}", dir.display()));
+            self.post_error(self.i18n().f(K::CannotCreate, &[&dir.display(), &error]));
             return;
         }
         let command = if cfg!(windows) {
@@ -200,8 +201,8 @@ impl MelonEgui {
         match std::process::Command::new(command).arg(dir).spawn() {
             // `explorer` exits non-zero even on success, so a spawned child is
             // as much confirmation as there is to be had.
-            Ok(_) => self.post_ok(format!("opened {}", dir.display())),
-            Err(error) => self.post_error(format!("cannot open {}: {error}", dir.display())),
+            Ok(_) => self.post_ok(self.i18n().f(K::Opened, &[&dir.display()])),
+            Err(error) => self.post_error(self.i18n().f(K::CannotOpen, &[&dir.display(), &error])),
         }
     }
 

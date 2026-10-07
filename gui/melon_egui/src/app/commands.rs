@@ -25,15 +25,15 @@ impl MelonEgui {
         match action {
             Action::OpenRom | Action::InsertCart => self.ask(
                 DialogPurpose::OpenRom,
-                crate::file::picker::Request::open("Open a Nintendo DS ROM")
-                    .filter("Nintendo DS ROM", &["nds", "dsi", "srl"])
+                crate::file::picker::Request::open(self.i18n().s(K::PickOpenRom))
+                    .filter(self.i18n().t(K::FilterDsRom), &["nds", "dsi", "srl"])
                     .directory(
                         self.recents.first().and_then(|rom| rom.parent().map(Path::to_path_buf)),
                     ),
             ),
             Action::EjectCart | Action::Stop => {
                 self.unload_cart();
-                self.post("cart ejected");
+                self.post(self.i18n().s(K::CartEjected));
             }
             Action::OpenRecent(index) => {
                 if let Some(rom) = self.recents.get(index).cloned() {
@@ -42,13 +42,14 @@ impl MelonEgui {
             }
             Action::ClearRecent => {
                 self.clear_recent();
-                self.post("recent list cleared");
+                self.post(self.i18n().s(K::RecentCleared));
             }
             Action::OpenDirectory => self.open_directory(),
             Action::NewWindow => {
                 self.second_window = !self.second_window;
                 let opened = self.second_window;
-                self.post(if opened { "second window opened" } else { "second window closed" });
+                let said = if opened { K::SecondWindowOpened } else { K::SecondWindowClosed };
+                self.post(self.i18n().s(said));
             }
             Action::ImportSavefile => self.import_savefile(),
             Action::SaveState(slot) => self.save_state(slot),
@@ -60,7 +61,7 @@ impl MelonEgui {
                 if let Some(emu) = &mut self.emu {
                     emu.nds.boot();
                     self.frames_run = 0;
-                    self.post("reset");
+                    self.post(self.i18n().s(K::ResetDone));
                 }
             }
             Action::FrameStep => {
@@ -95,7 +96,7 @@ impl MelonEgui {
             Action::Stop | Action::EjectCart => {
                 self.command_guest(Command::Stop);
                 self.close_guest();
-                self.post("second console stopped");
+                self.post(self.i18n().s(K::SecondConsoleStopped));
             }
             Action::SaveState(Some(slot)) => {
                 self.command_guest(Command::SaveState(Some(slot), None));
@@ -105,21 +106,21 @@ impl MelonEgui {
             }
             Action::SaveState(None) => self.ask_for_guest_file(
                 DialogPurpose::GuestSaveState,
-                crate::file::picker::Request::save("Save instance 2 state"),
-                ("savestate", &["ml1"]),
+                crate::file::picker::Request::save(self.i18n().s(K::PickSaveGuestState)),
+                (K::FilterSavestate, &["ml1"]),
                 "states",
             ),
             Action::LoadState(None) => self.ask_for_guest_file(
                 DialogPurpose::GuestLoadState,
-                crate::file::picker::Request::open("Load instance 2 state"),
-                ("savestate", &["ml1"]),
+                crate::file::picker::Request::open(self.i18n().s(K::PickLoadGuestState)),
+                (K::FilterSavestate, &["ml1"]),
                 "states",
             ),
             Action::UndoStateLoad => self.command_guest(Command::UndoStateLoad),
             Action::ImportSavefile => self.ask_for_guest_file(
                 DialogPurpose::GuestImportSave,
-                crate::file::picker::Request::open("Import a save into instance 2"),
-                ("save file", &["sav", "dsv", "bin"]),
+                crate::file::picker::Request::open(self.i18n().s(K::PickImportGuestSave)),
+                (K::FilterSaveFile, &["sav", "dsv", "bin"]),
                 "saves",
             ),
             Action::OpenDirectory => self.open_instance_directory(2),
@@ -128,7 +129,7 @@ impl MelonEgui {
             Action::ScreenSize(_) => {}
             Action::Quit => {
                 self.close_guest();
-                self.post("second console closed");
+                self.post(self.i18n().s(K::SecondConsoleClosed));
             }
             Action::ClearRecent => self.clear_recent(),
             Action::NewWindow => self.second_window = !self.second_window,
@@ -143,7 +144,7 @@ impl MelonEgui {
             | Action::HostRemoteDesktop
             | Action::JoinRemoteDesktop
             | Action::StopRemoteDesktop => {
-                self.post_warn("that command belongs to the first console");
+                self.post_warn(self.i18n().s(K::FirstConsoleOnly));
             }
         }
     }
@@ -174,9 +175,7 @@ impl MelonEgui {
             | Action::GuestLanGame
             | Action::HostRemoteDesktop
             | Action::JoinRemoteDesktop => {
-                self.post_warn(
-                    "this window is a Remote Desktop client — the host owns the console",
-                );
+                self.post_warn(self.i18n().s(K::RemoteClientNoConsole));
             }
         }
     }
@@ -207,10 +206,11 @@ impl MelonEgui {
         &mut self,
         purpose: DialogPurpose,
         request: crate::file::picker::Request,
-        (filter, extensions): (&str, &[&str]),
+        (filter, extensions): (K, &[&str]),
         kind: &str,
     ) {
         let dir = crate::file::settings::instance_data_dir(2, kind);
-        self.ask(purpose, request.filter(filter, extensions).directory(Some(dir)));
+        let request = request.filter(self.i18n().t(filter), extensions).directory(Some(dir));
+        self.ask(purpose, request);
     }
 }

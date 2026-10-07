@@ -82,7 +82,7 @@ impl MelonEgui {
     ) -> (Option<Action>, bool) {
         let view = self.resolved_view();
         let builder = egui::ViewportBuilder::default()
-            .with_title("melon_egui - instance 2")
+            .with_title(self.i18n().t(crate::i18n::I18nKey::Instance2Title))
             .with_inner_size(default_window_size())
             // winit's drag-and-drop initialises COM as STA, which conflicts with
             // the audio thread's MTA (see `crate::audio`).
@@ -130,7 +130,7 @@ impl MelonEgui {
         let view = self.resolved_view();
         let id = egui::ViewportId::from_hash_of("melon_egui-second-view");
         let builder = egui::ViewportBuilder::default()
-            .with_title("melon_egui - second view")
+            .with_title(self.i18n().t(crate::i18n::I18nKey::SecondViewTitle))
             .with_inner_size(default_window_size())
             .with_drag_and_drop(false);
 

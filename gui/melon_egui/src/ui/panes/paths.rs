@@ -3,10 +3,7 @@
 use super::*;
 
 pub(super) fn paths(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.label(
-        "Empty means \"beside the ROM\". By default each console keeps its own files under \
-         instances/instanceN/, which is where lunaris keeps its.",
-    );
+    ui.label(app.i18n().t(K::PathsExplained));
     ui.separator();
     // What each row does, gathered first: the buttons need `&mut app` and the
     // labels need to read the directories, which cannot both borrow at once.
@@ -17,18 +14,18 @@ pub(super) fn paths(app: &mut MelonEgui, ui: &mut egui::Ui) {
             PathSetting::Saves => app.save_dir.clone(),
             PathSetting::States => app.state_dir.clone(),
         };
+        let tr = app.i18n();
         ui.horizontal(|ui| {
-            ui.label(setting.label());
-            let shown = dir
-                .as_ref()
-                .map_or_else(|| "(beside the ROM)".to_owned(), |d| d.display().to_string());
+            ui.label(tr.t(setting.label()));
+            let shown =
+                dir.as_ref().map_or_else(|| tr.s(K::BesideRom), |d| d.display().to_string());
             ui.monospace(shown);
         });
         ui.horizontal(|ui| {
-            if ui.button(format!("Choose {}...", setting.label().to_lowercase())).clicked() {
+            if ui.button(tr.t(setting.choose())).clicked() {
                 asked = Some(setting);
             }
-            if ui.add_enabled(dir.is_some(), egui::Button::new("Reset")).clicked() {
+            if ui.add_enabled(dir.is_some(), egui::Button::new(tr.t(K::PathReset))).clicked() {
                 reset = Some(setting);
             }
         });
@@ -45,11 +42,8 @@ pub(super) fn paths(app: &mut MelonEgui, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    ui.heading("Per-instance directories");
-    ui.label(
-        "Each console gets saves/, states/, cheats/ and its own settings.json. \
-         Instance 2 is the console System ▸ Multiplayer ▸ Launch new instance opens.",
-    );
+    ui.heading(app.i18n().t(K::PerInstanceDirs));
+    ui.label(app.i18n().t(K::PerInstanceExplained));
     egui::Grid::new("instance-paths").striped(true).show(ui, |ui| {
         ui.label("");
         for kind in ["saves", "states", "cheats"] {
@@ -64,11 +58,11 @@ pub(super) fn paths(app: &mut MelonEgui, ui: &mut egui::Ui) {
             ui.end_row();
         }
     });
-    if ui.button("Open the instances folder").clicked() {
+    if ui.button(app.i18n().t(K::OpenInstancesFolder)).clicked() {
         app.reveal(&config::instances_dir());
     }
     ui.separator();
-    ui.label("These take effect for the next cart loaded.");
+    ui.label(app.i18n().t(K::PathsNextCart));
 }
 
 /// Which directory a folder dialog was opened for.
@@ -92,10 +86,18 @@ impl PathSetting {
     }
 
     /// The label the settings row is drawn under.
-    const fn label(self) -> &'static str {
+    const fn label(self) -> K {
         match self {
-            Self::Saves => "Save files",
-            Self::States => "Savestates",
+            Self::Saves => K::SaveFiles,
+            Self::States => K::Savestates,
+        }
+    }
+
+    /// The button that opens its folder dialog.
+    const fn choose(self) -> K {
+        match self {
+            Self::Saves => K::ChooseSaveFolder,
+            Self::States => K::ChooseStateFolder,
         }
     }
 }

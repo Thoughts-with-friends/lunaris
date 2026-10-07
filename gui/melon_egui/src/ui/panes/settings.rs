@@ -1,22 +1,26 @@
 //! The Config menu's settings dialogs.
+//!
+//! Each function takes `tr` from `app.translations` — the one field — rather
+//! than calling `app.i18n()`, so the checkboxes can hold `&mut app.<setting>`
+//! beside it.
 
 use super::*;
 
 pub(super) fn emu_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.checkbox(&mut app.limit_framerate, "Limit framerate")
-        .on_hover_text("Off runs the core as fast as it will go.");
-    ui.checkbox(&mut app.audio_sync, "Audio sync").on_hover_text(
-        "Only takes effect at 1.00x: any other speed deliberately outruns the sound card, so pacing against it would cancel the speed setting out.",
-    );
+    let tr = app.translations.get(app.language);
+    ui.checkbox(&mut app.limit_framerate, tr.t(K::LimitFramerate))
+        .on_hover_text(tr.t(K::LimitFramerateHint));
+    ui.checkbox(&mut app.audio_sync, tr.t(K::AudioSync)).on_hover_text(tr.t(K::AudioSyncSpeedHint));
     ui.separator();
 
     emulation_speed(app, ui);
     ui.separator();
-    ui.label("Console: DS, direct boot, FreeBIOS + generated firmware.");
-    ui.label("The shim offers no other boot mode, so there is nothing else to pick.");
+    let tr = app.translations.get(app.language);
+    ui.label(tr.t(K::ConsoleKind));
+    ui.label(tr.t(K::NoOtherBootMode));
     ui.separator();
-    ui.checkbox(&mut app.mic_static, "Microphone: white noise")
-        .on_hover_text("The only mic input this build has; carts wanting a breath hear static.");
+    ui.checkbox(&mut app.mic_static, tr.t(K::MicWhiteNoise))
+        .on_hover_text(tr.t(K::MicWhiteNoiseHint));
 }
 
 /// The Emu settings pane's speed control.
@@ -25,12 +29,13 @@ pub(super) fn emu_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
 /// moves when the pad is clicked and vice versa -- there is one value, and both
 /// are views of it. See [`crate::speed`].
 fn emulation_speed(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("Emulation speed");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::EmulationSpeed));
 
     let mut speed = app.speed;
     let slider = egui::Slider::new(&mut speed, crate::speed::MIN..=crate::speed::MAX)
         .step_by(0.05)
-        .text("Speed")
+        .text(tr.t(K::Speed))
         .custom_formatter(|v, _| crate::speed::label(v as f32));
     if ui.add(slider).changed() {
         app.set_speed(speed);
@@ -47,24 +52,19 @@ fn emulation_speed(app: &mut MelonEgui, ui: &mut egui::Ui) {
         }
     });
 
+    let tr = app.translations.get(app.language);
     if app.speed_locked() {
-        ui.colored_label(
-            Severity::Warn.color(ui.visuals().dark_mode),
-            "Held at 1.00x: a second console or a LAN link is running, and both consoles have to agree about time.",
-        );
+        ui.colored_label(Severity::Warn.color(ui.visuals().dark_mode), tr.t(K::SpeedHeld));
     }
-    ui.label(concat!(
-        "Clicking the pad's left stick steps through the same list. The console is not ",
-        "reclocked -- what changes is how many emulated frames one repaint may run, so ",
-        "a frame at 2x is the same frame it would have been at 1x.",
-    ));
+    ui.label(tr.t(K::SpeedExplained));
 }
 
 pub(super) fn preferences(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.checkbox(&mut app.pause_when_unfocused, "Pause when the window loses focus");
-    ui.checkbox(&mut app.confirm_on_quit, "Ask before quitting with a cart running");
+    let tr = app.translations.get(app.language);
+    ui.checkbox(&mut app.pause_when_unfocused, tr.t(K::PauseUnfocused));
+    ui.checkbox(&mut app.confirm_on_quit, tr.t(K::ConfirmQuit));
     ui.separator();
-    ui.label("Settings are written to:");
+    ui.label(tr.t(K::SettingsWrittenTo));
     ui.monospace(config::config_dir().display().to_string());
 }
 
@@ -89,16 +89,9 @@ pub(super) fn video_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
 
 /// The 3D renderer, and the software one's threading.
 fn renderer_choice(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    /// Why an OpenGL renderer cannot be selected on this machine.
-    const NO_GL: &str = "No OpenGL context: melon_egui could not bind the GL entry \
-                         points (or its blitter's shader would not build), so only \
-                         the software renderer can draw.";
-    /// Why the compute renderer in particular cannot.
-    const NO_COMPUTE: &str =
-        "This context is not OpenGL 4.3, which the compute-shader renderer needs.";
-
-    ui.heading("3D renderer");
     let gl_ok = app.gl_available();
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::Renderer3d));
     let compute_ok = gl_ok && melonds::gl_supports_compute();
     for renderer in Renderer::ALL {
         let available = match renderer {
@@ -108,33 +101,34 @@ fn renderer_choice(app: &mut MelonEgui, ui: &mut egui::Ui) {
         };
         let button = ui.add_enabled(
             available,
-            egui::RadioButton::new(app.video.renderer == renderer, renderer.label()),
+            egui::RadioButton::new(app.video.renderer == renderer, renderer.label(tr)),
         );
         if available && button.clicked() {
             app.video.renderer = renderer;
         }
         if !available {
-            button.on_disabled_hover_text(if gl_ok { NO_COMPUTE } else { NO_GL });
+            // Why an OpenGL renderer cannot be selected on this machine, or
+            // why the compute one in particular cannot.
+            button.on_disabled_hover_text(tr.t(if gl_ok { K::NoCompute } else { K::NoGl }));
         }
     }
     // Threading is the software 3D rasteriser's own setting, so it is offered
     // with that renderer selected and no other.
     ui.add_enabled_ui(app.video.renderer == Renderer::Software, |ui| {
-        ui.checkbox(&mut app.video.threaded_software, "Threaded software renderer").on_hover_text(
-            "Rasterise 3D on worker threads. Faster where there are cores to \
-                 spare; melonDS ships it off, so this does too.",
-        );
+        ui.checkbox(&mut app.video.threaded_software, tr.t(K::ThreadedSoftware))
+            .on_hover_text(tr.t(K::ThreadedSoftwareHint));
     });
 }
 
 /// The OpenGL renderers' own options (internal resolution etc.).
 fn opengl_options(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let gl_ok = app.gl_available();
-    ui.heading("OpenGL options");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::OpenGlOptions));
     let on_gl = app.video.renderer.is_gl() && gl_ok;
     ui.add_enabled_ui(on_gl, |ui| {
         let mut scale = app.video.scale();
-        egui::ComboBox::from_label("Internal resolution")
+        egui::ComboBox::new("internal-resolution", tr.t(K::InternalResolution))
             .selected_text(format!("{scale}x  ({} x {})", 256 * scale, 192 * scale))
             .show_ui(ui, |ui| {
                 for choice in 1..=16u32 {
@@ -150,99 +144,72 @@ fn opengl_options(app: &mut MelonEgui, ui: &mut egui::Ui) {
         }
     });
     if !on_gl {
-        ui.label("Select an OpenGL renderer above to change the internal resolution.");
+        ui.label(tr.t(K::SelectGlForResolution));
     }
-    ui.label(
-        "This rasterises the 3D geometry itself at the higher resolution, so it adds real \
-         detail — unlike Display scale below, which magnifies the finished picture.",
-    );
+    ui.label(tr.t(K::InternalResolutionExplained));
     // Each of these belongs to one of the two OpenGL renderers, exactly as in
     // melonDS: the core ignores the one its renderer has no use for, and this
     // says which is which instead of letting a dead checkbox look live.
     ui.add_enabled_ui(app.video.renderer == Renderer::OpenGl && gl_ok, |ui| {
-        ui.checkbox(&mut app.video.better_polygons, "Better polygons").on_hover_text(
-            "Improved polygon splitting. Closes the seams upscaling opens in some \
-                 geometry, for some speed. Regular OpenGL renderer only.",
-        );
+        ui.checkbox(&mut app.video.better_polygons, tr.t(K::BetterPolygons))
+            .on_hover_text(tr.t(K::BetterPolygonsHint));
     });
     ui.add_enabled_ui(app.video.renderer == Renderer::Compute && gl_ok, |ui| {
-        ui.checkbox(&mut app.video.hires_coordinates, "High-resolution coordinates").on_hover_text(
-            "Keep the extra vertex precision upscaling makes visible instead of \
-                 rounding to the DS's own grid. Compute-shader renderer only.",
-        );
+        ui.checkbox(&mut app.video.hires_coordinates, tr.t(K::HiresCoordinates))
+            .on_hover_text(tr.t(K::HiresCoordinatesHint));
     });
-    disabled_checkbox(
-        ui,
-        "GL display",
-        "Always on: this front end composites through egui's OpenGL painter \
-         whichever renderer the core draws with, so there is nothing to turn off.",
-    );
+    disabled_checkbox(ui, tr.t(K::GlDisplay), tr.t(K::GlDisplayHint));
 }
 
 /// xBRZ for the 2D layers, and which route applies it.
 fn upscaling_2d(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("2D upscaling");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::Upscaling2d));
     // The one setting here that can improve a 2D layer: those come from tiles
     // at 256x192 whatever the renderer does, so the internal resolution above
     // cannot touch them.
     ui.horizontal(|ui| {
         for method in upscale::Method::ALL {
-            ui.selectable_value(&mut app.video.upscale, method, method.label());
+            ui.selectable_value(&mut app.video.upscale, method, method.label(tr));
         }
     });
     let mut factor = app.video.upscale_factor();
     let slider = egui::Slider::new(&mut factor, upscale::MIN_FACTOR..=upscale::MAX_FACTOR)
-        .text("Factor")
+        .text(tr.t(K::Factor))
         .custom_formatter(|v, _| format!("{v}x"));
     let on = app.video.upscale != upscale::Method::None;
     if ui.add_enabled(on, slider).changed() {
         app.video.upscale_factor = factor;
     }
-    ui.label(concat!(
-        "xBRZ redraws the picture edge by edge, which is what smooths sprites and ",
-        "text rather than blurring them. It is the only setting here that improves ",
-        "a 2D layer — those are built from tiles at 256x192 whatever the renderer ",
-        "does, so the internal resolution above cannot touch them.",
-    ));
+    ui.label(tr.t(K::XbrzExplained));
 
     if on {
         // Which of the two routes is in use is worth saying: the setting is
         // shared, but what it does — and what it costs — is not.
         if app.video.renderer == Renderer::Software {
-            ui.label(format!(
-                "Software renderer: filtered on the CPU at {}x, once per screen per frame.",
-                factor
-            ));
+            ui.label(tr.f(K::XbrzSoftwareRoute, &[&factor]));
         } else {
-            ui.label(concat!(
-                "OpenGL renderer: the same filter, at the same 256x192, on the same CPU — ",
-                "the 2D content is read back off the GPU at the DS's own size, filtered, ",
-                "and shown wherever the picture came from the 2D engine. The 3D never ",
-                "makes the trip and keeps every pixel the internal resolution above drew. ",
-                "So both settings apply at once and neither is capped by the other.",
-            ));
-            ui.label(format!(
-                "Costs one {w}x{h} readback per screen per frame, and {w}x{h} pixels through xBRZ — the same work the software renderer already does.",
-                w = crate::gl_screen::DS_WIDTH,
-                h = crate::gl_screen::DS_HEIGHT,
-            ));
+            ui.label(tr.t(K::XbrzGlRoute));
+            let size = format!("{}x{}", crate::gl_screen::DS_WIDTH, crate::gl_screen::DS_HEIGHT);
+            ui.label(tr.f(K::XbrzGlCost, &[&size]));
         }
     }
 }
 
 /// Draw at a fixed magnification instead of fitting the window.
 fn display_scale(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("Display scale");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::DisplayScale));
     // `None` means "fit the window", which is the default and what the Screen
     // size menu entries assume.
     let mut fixed = app.view.display_scale.is_some();
-    if ui.checkbox(&mut fixed, "Draw at a fixed scale").changed() {
+    if ui.checkbox(&mut fixed, tr.t(K::FixedScale)).changed() {
         app.view.display_scale = fixed.then_some(2.0);
     }
     let mut scale = app.view.display_scale.unwrap_or(2.0);
     let slider = egui::Slider::new(&mut scale, 1.0..=8.0)
         .step_by(0.25)
-        .text("Scale")
+        .text(tr.t(K::Scale))
         .custom_formatter(|v, _| format!("{v:.2}x"));
     if ui.add_enabled(fixed, slider).changed() {
         app.view.display_scale = Some(scale);
@@ -252,49 +219,47 @@ fn display_scale(app: &mut MelonEgui, ui: &mut egui::Ui) {
             (melonds::SCREEN_WIDTH as f32 * scale).round() as u32,
             (melonds::SCREEN_HEIGHT as f32 * scale).round() as u32,
         );
-        ui.label(format!("Each screen drawn at {w} x {h} pixels."));
-        ui.label("Larger than the window simply crops; the layout still centres it.");
+        ui.label(tr.f(K::EachScreenDrawnAt, &[&w, &h]));
+        ui.label(tr.t(K::LargerCrops));
     } else {
-        ui.label("Fitting to the window (use Screen filtering to choose how it is sampled).");
+        ui.label(tr.t(K::FittingWindow));
     }
 }
 
 /// VSync and screen filtering.
 fn display(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("Display");
-    ui.checkbox(&mut app.video.vsync, "VSync").on_hover_text(
-        "Takes effect the next time melon_egui starts: the surface's \
-                        present mode is fixed when the window is created.",
-    );
-    ui.checkbox(&mut app.view.filtering, "Screen filtering")
-        .on_hover_text("Smooth the picture when scaled, instead of square pixels.");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::Display));
+    ui.checkbox(&mut app.video.vsync, "VSync").on_hover_text(tr.t(K::VsyncHint));
+    ui.checkbox(&mut app.view.filtering, tr.t(K::ScreenFiltering))
+        .on_hover_text(tr.t(K::ScreenFilteringHint));
 }
 
 /// "Render frames" and skipping hidden screens.
 fn compositing(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("Compositing");
-    ui.checkbox(&mut app.video.render, "Render frames").on_hover_text(
-        "Off, the console keeps running but stops composing a picture. Emulation \
-             is unaffected -- melonDS documents it as bit-identical either way -- so \
-             this only makes the window go still.",
-    );
-    ui.checkbox(&mut app.video.skip_hidden_screens, "Skip screens the layout hides").on_hover_text(
-        "In the Top only / Bottom only sizings, tell the core not to compose the \
-             screen nobody is looking at. Most of the 2D renderer's work, saved.",
-    );
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::Compositing));
+    ui.checkbox(&mut app.video.render, tr.t(K::RenderFrames))
+        .on_hover_text(tr.t(K::RenderFramesHint));
+    ui.checkbox(&mut app.video.skip_hidden_screens, tr.t(K::SkipHiddenScreens))
+        .on_hover_text(tr.t(K::SkipHiddenScreensHint));
 }
 
 /// Per-screen aspect ratio.
 fn aspect_ratio(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("Aspect ratio");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::AspectRatio));
     egui::Grid::new("video-aspect").show(ui, |ui| {
-        for (label, aspect) in
-            [("Top", &mut app.view.aspect_top), ("Bottom", &mut app.view.aspect_bottom)]
-        {
-            ui.label(label);
-            egui::ComboBox::from_id_salt(label).selected_text(aspect.label()).show_ui(ui, |ui| {
+        // The id is the fixed English name, not the label: a language switch
+        // must not turn the combo box into a different widget.
+        for (id, label, aspect) in [
+            ("Top", K::TopScreen, &mut app.view.aspect_top),
+            ("Bottom", K::BottomScreen, &mut app.view.aspect_bottom),
+        ] {
+            ui.label(tr.t(label));
+            egui::ComboBox::from_id_salt(id).selected_text(aspect.label(tr)).show_ui(ui, |ui| {
                 for choice in AspectRatio::ALL {
-                    ui.selectable_value(aspect, choice, choice.label());
+                    ui.selectable_value(aspect, choice, choice.label(tr));
                 }
             });
             ui.end_row();
@@ -306,29 +271,28 @@ pub(super) fn audio_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
     app.audio_status().show(ui);
     ui.separator();
 
+    let tr = app.translations.get(app.language);
     let mut volume = app.volume();
     // Past 100% is a boost rather than a normalisation: the DS's own mix sits
     // some way below full scale, so unity is quieter than most other things on
     // the desktop. Loud material will clip up here, hence the hint below.
     let slider = egui::Slider::new(&mut volume, 0.0..=2.0)
-        .text("Volume")
+        .text(tr.t(K::Volume))
         .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
     if ui.add_enabled(app.has_audio(), slider).changed() {
         app.set_volume(volume);
     }
+    let tr = app.translations.get(app.language);
     if volume > 1.0 {
-        ui.label("Above 100% is a boost; loud passages may clip.");
+        ui.label(tr.t(K::VolumeBoost));
     }
-    ui.add_enabled(app.has_audio(), egui::Checkbox::new(&mut app.audio_sync, "Audio sync"))
-        .on_hover_text("Pace emulation against the sound card instead of the clock.");
+    ui.add_enabled(app.has_audio(), egui::Checkbox::new(&mut app.audio_sync, tr.t(K::AudioSync)))
+        .on_hover_text(tr.t(K::AudioSyncHint));
     ui.separator();
 
-    ui.label(format!(
-        "Source rate: {} Hz (the core's SPU output; fixed by the bindings)",
-        crate::audio::SPU_SAMPLE_RATE,
-    ));
+    ui.label(tr.f(K::SourceRate, &[&crate::audio::SPU_SAMPLE_RATE]));
     ui.separator();
-    ui.checkbox(&mut app.mic_static, "Microphone: white noise");
+    ui.checkbox(&mut app.mic_static, tr.t(K::MicWhiteNoise));
 }
 
 /// melonDS's Input dialog: one row per DS button, a keyboard column and a
@@ -349,22 +313,23 @@ pub(super) fn input(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let mut arm: Option<(DsInput, Device)> = None;
     let mut clear: Option<(DsInput, Device)> = None;
     let listening = app.listening;
+    let tr = app.translations.get(app.language);
 
     egui::Grid::new("bindings").striped(true).num_columns(3).show(ui, |ui| {
         ui.label("");
-        ui.strong("Keyboard");
-        ui.strong("Controller");
+        ui.strong(tr.t(K::Keyboard));
+        ui.strong(tr.t(K::Controller));
         ui.end_row();
 
         for input in DsInput::ALL {
             let binding = app.bindings.get(input);
-            ui.label(input.label());
+            ui.label(input.label(tr));
             for (device, bound) in
                 [(Device::Keyboard, binding.key.clone()), (Device::Pad, binding.button.clone())]
             {
                 let armed = listening == Some((input, device));
                 let text = if armed {
-                    "press...".to_owned()
+                    tr.s(K::PressKey)
                 } else {
                     bound.unwrap_or_else(|| "—".to_owned())
                 };
@@ -373,7 +338,7 @@ pub(super) fn input(app: &mut MelonEgui, ui: &mut egui::Ui) {
                         [130.0, 20.0],
                         egui::Button::new(text).selected(armed).min_size(egui::vec2(130.0, 20.0)),
                     )
-                    .on_hover_text("Click to rebind, right-click to clear.");
+                    .on_hover_text(tr.t(K::RebindHint));
                 if cell.clicked() {
                     arm = Some((input, device));
                 }
@@ -384,8 +349,8 @@ pub(super) fn input(app: &mut MelonEgui, ui: &mut egui::Ui) {
             ui.end_row();
         }
 
-        ui.label("Touch");
-        ui.monospace("click the bottom screen");
+        ui.label(tr.t(K::Touch));
+        ui.monospace(tr.t(K::TouchHow));
         ui.monospace("—");
         ui.end_row();
     });
@@ -399,20 +364,22 @@ pub(super) fn input(app: &mut MelonEgui, ui: &mut egui::Ui) {
         app.save_settings();
     }
 
+    let tr = app.translations.get(app.language);
     if app.listening.is_some() {
-        ui.label("Waiting for a press. Escape cancels.");
+        ui.label(tr.t(K::WaitingForPress));
     }
-    if ui.button("Reset to melonDS's defaults").clicked() {
+    if ui.button(tr.t(K::ResetBindings)).clicked() {
         app.bindings = crate::bindings::Bindings::default();
         app.listening = None;
         app.save_settings();
     }
     ui.separator();
 
-    ui.heading("Controllers");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::Controllers));
     match app.connected_pads() {
         [] => {
-            ui.label("None connected. A pad is picked up as soon as it is plugged in.");
+            ui.label(tr.t(K::NoControllers));
         }
         pads => {
             for pad in pads {
@@ -420,9 +387,5 @@ pub(super) fn input(app: &mut MelonEgui, ui: &mut egui::Ui) {
             }
         }
     }
-    ui.label(concat!(
-        "The left stick always steers, whatever the D-pad is bound to: a stick is an ",
-        "axis and the D-pad is four switches, and many pads report their D-pad as that ",
-        "axis anyway. Pad and keyboard are merged, so either works at any time.",
-    ));
+    ui.label(tr.t(K::StickExplained));
 }

@@ -80,9 +80,11 @@ impl DsInput {
         }
     }
 
-    /// What the dialog calls it.
+    /// What the Input dialog calls it, in the UI's language. The face
+    /// buttons are printed on the console and read the same everywhere.
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self, tr: &crate::i18n::I18nMap) -> &str {
+        use crate::i18n::I18nKey as K;
         match self {
             Self::A => "A",
             Self::B => "B",
@@ -90,12 +92,12 @@ impl DsInput {
             Self::Y => "Y",
             Self::L => "L",
             Self::R => "R",
-            Self::Start => "Start",
-            Self::Select => "Select",
-            Self::Up => "Up",
-            Self::Down => "Down",
-            Self::Left => "Left",
-            Self::Right => "Right",
+            Self::Start => tr.t(K::ButtonStart),
+            Self::Select => tr.t(K::ButtonSelect),
+            Self::Up => tr.t(K::DirUp),
+            Self::Down => tr.t(K::DirDown),
+            Self::Left => tr.t(K::DirLeft),
+            Self::Right => tr.t(K::DirRight),
         }
     }
 

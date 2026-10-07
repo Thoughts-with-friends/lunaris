@@ -23,11 +23,13 @@ pub enum Renderer {
 impl Renderer {
     pub const ALL: [Self; 3] = [Self::Software, Self::OpenGl, Self::Compute];
 
-    pub const fn label(self) -> &'static str {
+    /// What the Video settings dialog calls it, in the UI's language.
+    pub fn label(self, tr: &crate::i18n::I18nMap) -> &str {
+        use crate::i18n::I18nKey as K;
         match self {
-            Self::Software => "Software",
+            Self::Software => tr.t(K::RendererSoftware),
             Self::OpenGl => "OpenGL",
-            Self::Compute => "OpenGL (compute shader)",
+            Self::Compute => tr.t(K::RendererCompute),
         }
     }
 

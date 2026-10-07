@@ -16,15 +16,16 @@ use super::*;
 
 /// Draw the whole dialog.
 pub(super) fn wireless(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.heading("LAN room");
+    let tr = app.translations.get(app.language);
+    ui.heading(tr.t(K::LanRoom));
     ui.monospace(&app.lan_room);
     app.lan_status.show(ui);
     ui.horizontal(|ui| {
-        ui.label("Host bind");
+        ui.label(tr.t(K::HostBind));
         ui.text_edit_singleline(&mut app.lan_bind_address);
     });
     ui.horizontal(|ui| {
-        ui.label("Guest IP");
+        ui.label(tr.t(K::GuestIp));
         // Persisted on connect, so the last address typed here comes back next
         // session — see `MelonEgui::settings`.
         ui.text_edit_singleline(&mut app.lan_guest_address);
@@ -53,44 +54,31 @@ fn air_status(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let acks: u64 = counters.iter().map(|c| c.sent_ack).sum();
     let generic: u64 = counters.iter().map(|c| c.sent_generic).sum();
 
-    ui.heading("Status");
+    let tr = app.i18n();
+    ui.heading(tr.t(K::Status));
     match app.guest_frames() {
         // The second console runs on a thread of its own, so this climbing is
         // what says the pair is running *concurrently* -- which is what makes
         // a wireless round's reply arrive while the host is still asking for
         // it. See `crate::guest`.
-        Some(frames) => ui.label(format!("Second console: running, frame {frames}")),
-        None => ui.label("No second console. System ▸ Multiplayer ▸ Launch new instance."),
+        Some(frames) => ui.label(tr.f(K::SecondConsoleRunning, &[&frames])),
+        None => ui.label(tr.t(K::NoSecondConsoleHint)),
     };
     if live.is_empty() {
-        ui.label(
-            "No console is on the air yet. A cart only joins when it opens its \
-             wireless menu, so this stays empty until then.",
-        );
+        ui.label(tr.t(K::NobodyOnAir));
     } else if cmds == 0 {
         ui.colored_label(
             egui::Color32::from_rgb(0xE0, 0xA0, 0x40),
-            format!(
-                "{} console(s) on the air, {generic} frames exchanged, but no CMD frame \
-                 has been sent.",
-                live.len()
-            ),
+            tr.f(K::OnAirNoCmd, &[&live.len(), &generic]),
         );
-        ui.label(
-            "Beacons and the association handshake are ordinary frames; local play only \
-             begins when the host starts an MP round with a CMD. This is the exact point \
-             lunaris does not get past.",
-        );
+        ui.label(tr.t(K::OnAirNoCmdExplained));
     } else {
         ui.colored_label(
             egui::Color32::from_rgb(0x60, 0xC0, 0x60),
-            format!("MP rounds are running: {cmds} CMD, {replies} replies, {acks} ACK."),
+            tr.f(K::RoundsRunning, &[&cmds, &replies, &acks]),
         );
         if replies == 0 {
-            ui.colored_label(
-                egui::Color32::from_rgb(0xE0, 0xA0, 0x40),
-                "The host is asking but no client has answered.",
-            );
+            ui.colored_label(egui::Color32::from_rgb(0xE0, 0xA0, 0x40), tr.t(K::NoClientAnswered));
         }
     }
 }
@@ -99,22 +87,23 @@ fn air_status(app: &mut MelonEgui, ui: &mut egui::Ui) {
 fn per_console(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let counters = app.airwaves.counters();
     let connected = app.airwaves.connected();
-    ui.heading("Per console");
+    let tr = app.i18n();
+    ui.heading(tr.t(K::PerConsole));
     egui::ScrollArea::horizontal().id_salt("mp-counters").show(ui, |ui| {
         egui::Grid::new("mp-grid").striped(true).show(ui, |ui| {
             for heading in [
                 "#",
-                "on air",
-                "wifi clock",
-                "sent pkt",
+                tr.t(K::ColOnAir),
+                tr.t(K::ColWifiClock),
+                tr.t(K::ColSentPkt),
                 "CMD",
-                "reply",
+                tr.t(K::ColReply),
                 "ACK",
-                "recv pkt",
-                "recv CMD",
-                "recv reply",
-                "stale",
-                "AID mask",
+                tr.t(K::ColRecvPkt),
+                tr.t(K::ColRecvCmd),
+                tr.t(K::ColRecvReply),
+                tr.t(K::ColStale),
+                tr.t(K::ColAidMask),
             ] {
                 ui.strong(heading);
             }
@@ -126,7 +115,7 @@ fn per_console(app: &mut MelonEgui, ui: &mut egui::Ui) {
                     continue;
                 }
                 ui.monospace(i.to_string());
-                ui.monospace(if connected[i] { "yes" } else { "no" });
+                ui.monospace(tr.t(if connected[i] { K::Yes } else { K::No }));
                 ui.monospace(c.clock.to_string());
                 ui.monospace(c.sent_generic.to_string());
                 ui.monospace(c.sent_cmd.to_string());
@@ -141,24 +130,21 @@ fn per_console(app: &mut MelonEgui, ui: &mut egui::Ui) {
             }
         });
     });
-    ui.label(
-        "\"stale\" counts replies discarded for arriving outside the host's round, and \
-         \"AID mask\" is what the last reply collection returned - a host asking and \
-         getting 0000 is a host nobody answered.",
-    );
+    ui.label(tr.t(K::PerConsoleExplained));
 }
 
 /// The rolling log of every frame sent, newest last.
 fn traffic(app: &mut MelonEgui, ui: &mut egui::Ui) {
+    let tr = app.translations.get(app.language);
     ui.horizontal(|ui| {
-        ui.heading("Traffic");
-        if ui.button("Clear").clicked() {
+        ui.heading(tr.t(K::Traffic));
+        if ui.button(tr.t(K::Clear)).clicked() {
             app.airwaves.clear_log();
         }
     });
     let log = app.airwaves.log();
     if log.is_empty() {
-        ui.label("(nothing yet)");
+        ui.label(tr.t(K::NothingYet));
         return;
     }
     // Newest last, scrolled to the bottom, so it reads like a trace.
@@ -167,13 +153,14 @@ fn traffic(app: &mut MelonEgui, ui: &mut egui::Ui) {
         |ui| {
             for event in &log {
                 let kind = match event.kind {
-                    Kind::Reply(aid) => format!("reply aid={aid}"),
+                    Kind::Reply(aid) => format!("{} aid={aid}", tr.t(K::ColReply)),
+                    Kind::Generic => tr.s(K::KindPacket),
                     other => other.label().to_owned(),
                 };
-                ui.monospace(format!(
-                    "inst {}  t={:<12} {:<12} {} bytes",
-                    event.sender, event.timestamp, kind, event.len
-                ));
+                // Padded here rather than in the template, which is data and
+                // knows nothing of widths.
+                let (stamp, kind) = (format!("{:<12}", event.timestamp), format!("{kind:<12}"));
+                ui.monospace(tr.f(K::TrafficLine, &[&event.sender, &stamp, &kind, &event.len]));
             }
         },
     );
@@ -189,18 +176,20 @@ pub(super) fn link_quality(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let Some(stats) = app.lan_stats() else {
         return;
     };
+    let tr = app.i18n();
     ui.separator();
-    ui.heading("Link quality");
+    ui.heading(tr.t(K::LinkQuality));
     egui::Grid::new("link-quality").striped(true).show(ui, |ui| {
-        ui.label("Round trip");
-        ui.monospace(format!("{:.1} ms (jitter {:.1} ms)", stats.rtt_ms, stats.jitter_ms));
+        ui.label(tr.t(K::RoundTrip));
+        let (rtt, jitter) = (format!("{:.1}", stats.rtt_ms), format!("{:.1}", stats.jitter_ms));
+        ui.monospace(tr.f(K::RoundTripValue, &[&rtt, &jitter]));
         ui.end_row();
 
-        ui.label("Reply budget");
+        ui.label(tr.t(K::ReplyBudget));
         ui.monospace(format!("{:.0} ms", stats.budget_ms));
         ui.end_row();
 
-        ui.label("Rounds completed");
+        ui.label(tr.t(K::RoundsCompleted));
         match stats.round_success() {
             Some(fraction) => {
                 let colour = if fraction > 0.95 {
@@ -210,50 +199,43 @@ pub(super) fn link_quality(app: &mut MelonEgui, ui: &mut egui::Ui) {
                 } else {
                     egui::Color32::from_rgb(0xE0, 0x60, 0x50)
                 };
+                let percent = format!("{:.1}", fraction * 100.0);
+                let total = stats.rounds_answered + stats.rounds_timed_out;
                 ui.colored_label(
                     colour,
-                    format!(
-                        "{:.1}%  ({} of {})",
-                        fraction * 100.0,
-                        stats.rounds_answered,
-                        stats.rounds_answered + stats.rounds_timed_out
-                    ),
+                    tr.f(K::RoundsValue, &[&percent, &stats.rounds_answered, &total]),
                 );
             }
             None => {
-                ui.label("no round yet");
+                ui.label(tr.t(K::NoRoundYet));
             }
         }
         ui.end_row();
 
-        ui.label("Sustainable frame rate");
+        ui.label(tr.t(K::SustainableFps));
         ui.monospace(format!("{:.1} fps", stats.sustainable_fps));
         ui.end_row();
 
-        ui.label("Datagrams");
-        ui.monospace(format!(
-            "{} sent, {} received, {} duplicates discarded",
-            stats.datagrams_sent, stats.datagrams_received, stats.duplicates_dropped
+        ui.label(tr.t(K::Datagrams));
+        ui.monospace(tr.f(
+            K::DatagramsValue,
+            &[&stats.datagrams_sent, &stats.datagrams_received, &stats.duplicates_dropped],
         ));
         ui.end_row();
 
         // Frames rather than datagrams: the difference between the two is what
         // batching bought, and the difference between datagrams sent and frames
         // sent is what redundancy cost.
-        ui.label("Wireless frames");
-        ui.monospace(format!("{} sent, {} received", stats.frames_sent, stats.frames_received));
+        ui.label(tr.t(K::WirelessFrames));
+        ui.monospace(tr.f(K::SentReceived, &[&stats.frames_sent, &stats.frames_received]));
         ui.end_row();
 
-        ui.label("Stale replies");
+        ui.label(tr.t(K::StaleReplies));
         ui.monospace(stats.stale_replies.to_string());
         ui.end_row();
 
-        ui.label("Wireless");
-        ui.label(if stats.wireless_on {
-            "on (the cart has opened its wireless menu)"
-        } else {
-            "off (the cart has not started multiplayer yet)"
-        });
+        ui.label(tr.t(K::Wireless));
+        ui.label(tr.t(if stats.wireless_on { K::WirelessOn } else { K::WirelessOff }));
         ui.end_row();
     });
 }
@@ -265,57 +247,46 @@ pub(super) fn link_quality(app: &mut MelonEgui, ui: &mut egui::Ui) {
 /// one. Changes apply to the *next* connection.
 pub(super) fn vpn_tuning(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.separator();
-    egui::CollapsingHeader::new("VPN tuning").default_open(false).show(ui, |ui| {
-        ui.label(
-            "Applies to the next LAN connection. The reply budget is measured from the \
-             link itself; these only bound and shape it.",
-        );
-        let tuning = &mut app.lan_tuning;
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut tuning.min_budget_ms).range(1..=200));
-            ui.label("Minimum reply wait (ms)");
-        });
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut tuning.max_budget_ms).range(1..=1000));
-            ui.label("Maximum reply wait (ms)");
-        })
-        .response
-        .on_hover_text(
-            "The worst link that will still be played over. Past this a game's own \
-             timeouts give up anyway.",
-        );
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut tuning.jitter_factor).range(0..=16));
-            ui.label("Jitter allowance");
-        })
-        .response
-        .on_hover_text("Multiples of the measured jitter added on top of the round trip.");
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut tuning.reply_copies).range(1..=4));
-            ui.label("Copies of each reply");
-        })
-        .response
-        .on_hover_text(
-            "A lost reply is a lost round, and a lost round is a communication error. \
-             Sending two copies costs bandwidth and removes most single-packet losses.",
-        );
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut tuning.batch_window_ms).range(0..=50));
-            ui.label("Batch window (ms)");
-        })
-        .response
-        .on_hover_text(
-            "How long ordinary frames (beacons, association) may wait to share one \
-             datagram. 0 sends each on its own. Rounds are never batched: a round has \
-             to finish inside its own emulated frame.",
-        );
-        ui.checkbox(&mut tuning.pace_to_link, "Follow the link's frame rate").on_hover_text(
-            "Run the console at the rate the link can sustain instead of dropping the \
-             rounds it cannot service.",
-        );
-        if ui.button("Reset to defaults").clicked() {
-            *tuning = crate::lan::Tuning::default();
-        }
-        app.lan_tuning.normalize();
-    });
+    let tr = app.translations.get(app.language);
+    egui::CollapsingHeader::new(tr.t(K::VpnTuning)).id_salt("vpn-tuning").default_open(false).show(
+        ui,
+        |ui| {
+            ui.label(tr.t(K::VpnAppliesNext));
+            let tuning = &mut app.lan_tuning;
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.min_budget_ms).range(1..=200));
+                ui.label(tr.t(K::MinBudget));
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.max_budget_ms).range(1..=1000));
+                ui.label(tr.t(K::MaxBudget));
+            })
+            .response
+            .on_hover_text(tr.t(K::MaxBudgetHint));
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.jitter_factor).range(0..=16));
+                ui.label(tr.t(K::JitterFactor));
+            })
+            .response
+            .on_hover_text(tr.t(K::JitterFactorHint));
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.reply_copies).range(1..=4));
+                ui.label(tr.t(K::ReplyCopies));
+            })
+            .response
+            .on_hover_text(tr.t(K::ReplyCopiesHint));
+            ui.horizontal(|ui| {
+                ui.add(egui::DragValue::new(&mut tuning.batch_window_ms).range(0..=50));
+                ui.label(tr.t(K::BatchWindow));
+            })
+            .response
+            .on_hover_text(tr.t(K::BatchWindowHint));
+            ui.checkbox(&mut tuning.pace_to_link, tr.t(K::PaceToLink))
+                .on_hover_text(tr.t(K::PaceToLinkHint));
+            if ui.button(tr.t(K::ResetToDefaults)).clicked() {
+                *tuning = crate::lan::Tuning::default();
+            }
+            app.lan_tuning.normalize();
+        },
+    );
 }

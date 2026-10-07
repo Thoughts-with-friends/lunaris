@@ -44,9 +44,9 @@ impl MelonEgui {
                 }
                 self.push_recent(rom);
                 self.resume_fresh();
-                self.post_ok(format!("loaded {}", rom.display()));
+                self.post_ok(self.i18n().f(K::RomLoaded, &[&rom.display()]));
             }
-            Err(e) => self.post_error(format!("failed to load {}: {e}", rom.display())),
+            Err(e) => self.post_error(self.i18n().f(K::RomLoadFailed, &[&rom.display(), &e])),
         }
     }
 

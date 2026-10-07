@@ -110,7 +110,7 @@ impl Guest {
     }
 
     /// Anything the console has to say — a boot failure, a stop — once.
-    pub fn take_note(&self) -> Option<String> {
+    pub fn take_note(&self) -> Option<Note> {
         self.output.lock().ok()?.note.take()
     }
 
@@ -153,7 +153,7 @@ pub(crate) struct Output {
     /// Frames run, for the stop report.
     pub(crate) frames: u32,
     /// The last thing worth saying: a boot failure, or why it stopped.
-    pub(crate) note: Option<String>,
+    pub(crate) note: Option<Note>,
     /// Set once the console has stopped for good.
     pub(crate) finished: bool,
 }
@@ -168,9 +168,38 @@ pub(crate) struct Shared {
     pub(crate) frames: Arc<AtomicU32>,
 }
 
+/// Something the second console has to say, as a key and its values rather
+/// than as text: this thread has no access to the UI's strings, and the UI
+/// may switch language before the note is read.
+#[derive(Clone, Debug)]
+pub struct Note {
+    pub key: K,
+    pub args: Vec<String>,
+}
+
+impl Note {
+    pub(crate) fn new(key: K, args: &[&dyn std::fmt::Display]) -> Self {
+        Self { key, args: args.iter().map(ToString::to_string).collect() }
+    }
+
+    /// The note in the UI's language.
+    #[must_use]
+    pub fn render(&self, tr: &crate::i18n::I18nMap) -> String {
+        let args: Vec<&dyn std::fmt::Display> =
+            self.args.iter().map(|arg| arg as &dyn std::fmt::Display).collect();
+        tr.f(self.key, &args)
+    }
+
+    /// The note in English, for the log and the stop report.
+    #[must_use]
+    pub fn english(&self) -> String {
+        self.render(&crate::i18n::I18nMap::built_in(crate::i18n::Language::English))
+    }
+}
+
 impl Shared {
-    pub(crate) fn say(&self, note: String) {
-        log::info!("second instance {note}");
+    pub(crate) fn say(&self, note: Note) {
+        log::info!("second instance: {}", note.english());
         if let Ok(mut out) = self.output.lock() {
             out.note = Some(note);
         }

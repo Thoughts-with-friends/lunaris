@@ -31,57 +31,60 @@ impl MelonEgui {
 
     /// Start hosting (`host`) or joining a Remote Desktop session, without
     /// blocking the UI thread.
+    ///
+    /// Neither end gives up on its own: a host waits for a client and a client
+    /// keeps knocking until a host answers, whichever was started first. The
+    /// readiness line says which side is still missing, and Stop cancels.
     pub(crate) fn start_remote(&mut self, host: bool) {
         if self.remote_pending.is_some() {
-            self.post_warn("a Remote Desktop session is already being established");
-            return;
+            return self.post_warn(self.i18n().s(K::RdAlreadyPending));
         }
         if host && !self.is_loaded() {
-            self.post_warn("load a cart first — the host runs both consoles");
-            return;
+            return self.post_warn(self.i18n().s(K::RdLoadCartFirst));
         }
         let tuning = self.remote_tuning;
         // The host binds its box's address; the client dials the other box.
-        let (address, what) = if host {
-            (self.lan_bind_address.clone(), "waiting for a client on")
-        } else {
-            (self.lan_guest_address.clone(), "connecting to")
+        let address =
+            if host { self.lan_bind_address.clone() } else { self.lan_guest_address.clone() };
+        let Ok(addr) = parse_remote_address(&address, tuning.port) else {
+            return self.post_error(self.i18n().f(K::InvalidAddress, &[&address]));
         };
-        let job_address = address.clone();
+        // Translated here and moved in: the worker has no access to the strings.
+        let failed = self.i18n().s(if host { K::RdHostFailed } else { K::RdClientFailed });
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&cancel);
         let name = if host { "melon-egui-remote-host" } else { "melon-egui-remote-client" };
         let spawned = worker::spawn(name, move || {
-            let addr = parse_remote_address(&job_address, tuning.port)?;
-            if host {
-                crate::remote::RemoteHost::accept(addr, tuning)
+            let session = if host {
+                crate::remote::RemoteHost::accept(addr, tuning, &flag)
                     .map(|host| RemoteSession::Host(Box::new(host)))
-                    .map_err(|error| format!("Remote Desktop host failed: {error}"))
             } else {
                 // Any local port: the host answers wherever the hello came from.
                 let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
-                crate::remote::RemoteClient::connect(local, addr, tuning)
+                crate::remote::RemoteClient::connect(local, addr, tuning, &flag)
                     .map(|client| RemoteSession::Client(Box::new(client)))
-                    .map_err(|error| format!("Remote Desktop client failed: {error}"))
-            }
+            };
+            session.map_err(|error| crate::i18n::fill(&failed, &[&error]))
         });
         match spawned {
-            Ok(receiver) => self.remote_pending = Some(receiver),
-            Err(error) => {
-                return self.post_error(format!("cannot start a Remote Desktop session: {error}"));
+            Ok(receiver) => {
+                self.remote_pending = Some(receiver);
+                self.remote_cancel = Some(cancel);
+                self.remote_pending_host = host;
             }
+            Err(error) => return self.post_error(self.i18n().f(K::RdCannotStart, &[&error])),
         }
         // Saved on the attempt, so a retry does not mean typing it again.
         self.persist();
-        self.lan_room =
-            if host { "Remote Desktop: hosting" } else { "Remote Desktop: joining" }.to_owned();
+        self.lan_room = self.i18n().s(if host { K::RdRoomHosting } else { K::RdRoomJoining });
         // The port shown is the one actually used (see `parse_remote_address`).
-        let shown = parse_remote_address(&address, tuning.port)
-            .map_or_else(|error| error, |addr| addr.to_string());
-        self.lan_status = Notice::quiet(Severity::Info, format!("{what} {shown}"));
-        self.post(format!("{what} {shown}"));
+        let what = self.i18n().f(if host { K::RdWaitingOn } else { K::RdConnectingTo }, &[&addr]);
+        self.lan_status = Notice::quiet(Severity::Info, what.clone());
+        self.post(what);
     }
 
-    /// Sample the live session's numbers, and finish a session the worker
-    /// established.
+    /// Sample the live session's numbers, finish a session the worker
+    /// established, and refresh the readiness line.
     pub(crate) fn poll_remote(&mut self) {
         // Every repaint, so the pane and the menu read one consistent set.
         self.remote_stats = match (&self.remote_host, &self.remote_client) {
@@ -89,17 +92,69 @@ impl MelonEgui {
             (_, Some(client)) => Some(client.stats()),
             _ => None,
         };
+        self.update_probe();
+        self.remote_readiness = self.readiness();
 
         let Some(result) = worker::take(&mut self.remote_pending) else { return };
+        self.remote_cancel = None;
         match result {
-            None => self.post_error("the Remote Desktop worker stopped unexpectedly"),
+            None => self.post_error(self.i18n().s(K::RdWorkerStopped)),
             Some(Ok(RemoteSession::Host(host))) => self.become_remote_host(*host),
             Some(Ok(RemoteSession::Client(client))) => self.become_remote_client(*client),
             Some(Err(error)) => {
-                self.lan_room = "Remote Desktop: offline".to_owned();
+                self.lan_room = self.i18n().s(K::RdRoomOffline);
                 self.lan_status = Notice::quiet(Severity::Error, error.clone());
                 self.post_error(error);
             }
+        }
+    }
+
+    /// Point the prober at the Guest IP box, and let it ask only while this
+    /// machine could still *join* someone: not while hosting, and not inside a
+    /// session, whose own pings answer the question instead.
+    fn update_probe(&self) {
+        let Some(probe) = &self.remote_probe else { return };
+        let target = parse_remote_address(&self.lan_guest_address, self.remote_tuning.port);
+        probe.set_target(target.ok());
+        let in_session = self.remote_host.is_some() || self.remote_client.is_some();
+        let hosting = self.remote_pending.is_some() && self.remote_pending_host;
+        probe.set_active(!in_session && !hosting);
+    }
+
+    /// Is the other machine ready? Red when not, green when it is.
+    fn readiness(&self) -> Notice {
+        use crate::remote::Readiness;
+        let tr = self.i18n();
+        let ready = |text: String| Notice::quiet(Severity::Success, text);
+        let not_ready = |text: String| Notice::quiet(Severity::Error, text);
+
+        // In a session: the session's own pings, which both ends send.
+        if let Some(stats) = self.remote_stats {
+            return match stats.silent_ms {
+                _ if stats.peer_ready() => {
+                    ready(tr.f(K::PeerReady, &[&format!("{:.0}", stats.rtt_ms)]))
+                }
+                Some(ms) => not_ready(tr.f(K::PeerSilent, &[&format!("{:.0}", ms / 1000.0)])),
+                None => not_ready(tr.s(K::PeerNeverAnswered)),
+            };
+        }
+        // Hosting and nobody has joined. The host cannot ask anyone: it does
+        // not know who will come.
+        if self.remote_pending.is_some() && self.remote_pending_host {
+            return not_ready(tr.f(K::PeerHostWaiting, &[&self.remote_tuning.port]));
+        }
+        let Ok(target) = parse_remote_address(&self.lan_guest_address, self.remote_tuning.port)
+        else {
+            return not_ready(tr.s(K::ProbeBadAddress));
+        };
+        match self.remote_probe.as_ref().map(crate::remote::Prober::readiness) {
+            Some(Readiness::Ready { rtt_ms }) => {
+                ready(tr.f(K::ProbeReady, &[&target, &format!("{rtt_ms:.0}")]))
+            }
+            Some(Readiness::Busy) => not_ready(tr.f(K::ProbeBusy, &[&target])),
+            // Joining: the handshake itself is knocking.
+            _ if self.remote_pending.is_some() => not_ready(tr.f(K::PeerClientWaiting, &[&target])),
+            _ => not_ready(tr.f(K::ProbeSilent, &[&target])),
         }
     }
 
@@ -113,12 +168,10 @@ impl MelonEgui {
         // to is fixed when its thread starts.
         self.close_guest();
         self.launch_instance();
-        self.lan_room = "Remote Desktop: hosting".to_owned();
-        self.lan_status = Notice::quiet(
-            Severity::Success,
-            format!("Client {remote} connected; listening on {local}"),
-        );
-        self.post_ok(format!("Remote Desktop: {remote} is playing instance 2"));
+        self.lan_room = self.i18n().s(K::RdRoomHosting);
+        let status = self.i18n().f(K::RdClientConnected, &[&remote, &local]);
+        self.lan_status = Notice::quiet(Severity::Success, status);
+        self.post_ok(self.i18n().f(K::RdPlayingInstance2, &[&remote]));
     }
 
     /// Connected to a host: this window stops emulating and becomes a screen.
@@ -133,17 +186,26 @@ impl MelonEgui {
         self.remote_client = Some(client);
         self.mode = Mode::RemoteClient;
         self.paused = false;
-        self.lan_room = "Remote Desktop: connected".to_owned();
-        self.lan_status =
-            Notice::quiet(Severity::Success, format!("Watching {remote} from {local}"));
-        self.post_ok(format!("Remote Desktop: connected to {remote}"));
+        self.lan_room = self.i18n().s(K::RdRoomConnected);
+        let status = self.i18n().f(K::RdWatching, &[&remote, &local]);
+        self.lan_status = Notice::quiet(Severity::Success, status);
+        self.post_ok(self.i18n().f(K::RdConnectedTo, &[&remote]));
     }
 
-    /// End the session and go back to being an ordinary window.
+    /// End the session — or abandon one still being established — and go
+    /// back to being an ordinary window.
     pub(crate) fn stop_remote(&mut self) {
+        if let Some(cancel) = self.remote_cancel.take() {
+            // The worker notices within one read timeout, and its result goes
+            // nowhere: the receiver is dropped here.
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.remote_pending = None;
+            self.lan_room = self.i18n().s(K::RdRoomOffline);
+            self.lan_status = Notice::quiet(Severity::Info, self.i18n().s(K::RdNoSessionStatus));
+            return self.post(self.i18n().s(K::RdCancelled));
+        }
         if self.remote_host.is_none() && self.remote_client.is_none() {
-            self.post_warn("no Remote Desktop session is running");
-            return;
+            return self.post_warn(self.i18n().s(K::RdNoSession));
         }
         // The host's second console was the remote player's; it goes with them.
         self.close_guest();
@@ -152,9 +214,9 @@ impl MelonEgui {
         self.remote_stats = None;
         self.textures = None;
         self.mode = Mode::Local;
-        self.lan_room = "Remote Desktop: offline".to_owned();
-        self.lan_status = Notice::quiet(Severity::Info, "No Remote Desktop session");
-        self.post("Remote Desktop session ended");
+        self.lan_room = self.i18n().s(K::RdRoomOffline);
+        self.lan_status = Notice::quiet(Severity::Info, self.i18n().s(K::RdNoSessionStatus));
+        self.post(self.i18n().s(K::RdEnded));
     }
 
     /// What a client does each repaint instead of emulating.

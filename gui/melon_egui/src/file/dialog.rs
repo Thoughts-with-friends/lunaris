@@ -21,14 +21,14 @@ impl MelonEgui {
     /// a blocking call.
     pub(crate) fn ask(&mut self, purpose: DialogPurpose, request: crate::file::picker::Request) {
         if self.dialog.is_some() {
-            self.post_warn("a file dialog is already open");
+            self.post_warn(self.i18n().s(K::DialogAlreadyOpen));
             return;
         }
         match crate::file::picker::Pending::spawn(purpose, request) {
             Ok(pending) => self.dialog = Some(pending),
             // Reported rather than swallowed: from the user's side a dialog
             // that never appears is a menu entry that was ignored.
-            Err(error) => self.post_error(error),
+            Err(error) => self.post_error(self.i18n().f(K::CannotOpenDialog, &[&error])),
         }
     }
 
@@ -51,7 +51,9 @@ impl MelonEgui {
             DialogPurpose::ImportCheats => self.import_cheats(&path),
             DialogPurpose::GuestImportSave => match std::fs::read(&path) {
                 Ok(data) => self.command_guest(crate::guest::Command::ImportSave(data)),
-                Err(error) => self.post_error(format!("cannot read {}: {error}", path.display())),
+                Err(error) => {
+                    self.post_error(self.i18n().f(K::CannotRead, &[&path.display(), &error]));
+                }
             },
             DialogPurpose::GuestSaveState => {
                 self.command_guest(crate::guest::Command::SaveState(None, Some(path)));
@@ -81,7 +83,7 @@ impl MelonEgui {
     pub fn ask_for_directory(&mut self, setting: crate::ui::panes::PathSetting) {
         self.ask(
             DialogPurpose::Directory(setting),
-            crate::file::picker::Request::folder("Choose a directory")
+            crate::file::picker::Request::folder(self.i18n().s(K::PickDirectory))
                 .directory(Some(crate::file::settings::instances_dir())),
         );
     }

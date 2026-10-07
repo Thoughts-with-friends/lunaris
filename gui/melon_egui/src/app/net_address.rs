@@ -8,12 +8,14 @@
 /// port; honouring it here would silently point Remote Desktop at the LAN
 /// listener. One box on the pane deciding the port for this mode is easier to
 /// reason about than two fields that have to agree.
-pub(crate) fn parse_remote_address(text: &str, port: u16) -> Result<std::net::SocketAddr, String> {
+pub(crate) fn parse_remote_address(
+    text: &str,
+    port: u16,
+) -> Result<std::net::SocketAddr, std::net::AddrParseError> {
     let ip = text
         .parse::<std::net::SocketAddr>()
         .map(|addr| addr.ip())
-        .or_else(|_| text.parse::<std::net::IpAddr>())
-        .map_err(|error| format!("invalid Remote Desktop address {text}: {error}"))?;
+        .or_else(|_| text.parse::<std::net::IpAddr>())?;
     Ok(std::net::SocketAddr::new(ip, port))
 }
 

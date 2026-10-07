@@ -40,7 +40,7 @@ impl MelonEgui {
             .collect();
         let found = hits.len();
         self.ram_search.hits = hits;
-        self.post(format!("RAM search: {found} addresses hold {needle}"));
+        self.post(self.i18n().f(K::RamSearchFound, &[&found, &needle]));
     }
 
     /// Keep only the addresses that still hold the value.
@@ -52,6 +52,6 @@ impl MelonEgui {
         let before = self.ram_search.hits.len();
         self.ram_search.hits.retain(|&addr| read(emu, width, addr) == needle);
         let after = self.ram_search.hits.len();
-        self.post(format!("RAM search: narrowed {before} to {after}"));
+        self.post(self.i18n().f(K::RamSearchNarrowed, &[&before, &after]));
     }
 }

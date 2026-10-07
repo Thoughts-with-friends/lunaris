@@ -3,7 +3,10 @@
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use super::{
@@ -18,19 +21,21 @@ pub struct RemoteClient {
 }
 
 impl RemoteClient {
-    /// Bind `bind_addr`, announce to `host_addr`, and wait for its welcome.
+    /// Bind `bind_addr`, announce to `host_addr`, and wait for its welcome —
+    /// for as long as it takes, until `cancel` is set.
     ///
     /// # Errors
-    /// If the port cannot be bound, or no welcome arrives.
+    /// If the port cannot be bound, the socket fails, or `cancel` is set.
     pub fn connect(
         bind_addr: SocketAddr,
         host_addr: SocketAddr,
         mut tuning: Tuning,
+        cancel: &AtomicBool,
     ) -> io::Result<Self> {
         tuning.normalize();
         let socket = UdpSocket::bind(bind_addr)?;
-        session::exchange_hello(&socket, host_addr)?;
-        Ok(Self { session: Session::start(socket, host_addr, tuning, false)? })
+        session::exchange_hello(&socket, host_addr, cancel)?;
+        Ok(Self { session: Session::start(socket, host_addr, tuning)? })
     }
 
     /// Send this repaint's controls.
@@ -80,7 +85,7 @@ impl RemoteClient {
     /// What the session is doing, for the diagnostics pane.
     #[must_use]
     pub fn stats(&self) -> RemoteStats {
-        self.session.counters.snapshot(true)
+        self.session.stats()
     }
 }
 

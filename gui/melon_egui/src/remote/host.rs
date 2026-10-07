@@ -7,7 +7,10 @@
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
-    sync::{Arc, Mutex, atomic::Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use super::{
@@ -44,17 +47,22 @@ struct Video {
 }
 
 impl RemoteHost {
-    /// Bind `bind_addr` and wait for one client.
+    /// Bind `bind_addr` and wait for one client, until `cancel` is set.
     ///
     /// Blocks, so the caller runs it off the UI thread.
     ///
     /// # Errors
-    /// If the port cannot be bound, or the socket fails while waiting.
-    pub fn accept(bind_addr: SocketAddr, mut tuning: Tuning) -> io::Result<Self> {
+    /// If the port cannot be bound, the socket fails while waiting, or
+    /// `cancel` is set.
+    pub fn accept(
+        bind_addr: SocketAddr,
+        mut tuning: Tuning,
+        cancel: &AtomicBool,
+    ) -> io::Result<Self> {
         tuning.normalize();
         let socket = UdpSocket::bind(bind_addr)?;
-        let client = session::accept_hello(&socket)?;
-        let session = Session::start(socket, client, tuning, true)?;
+        let client = session::accept_hello(&socket, cancel)?;
+        let session = Session::start(socket, client, tuning)?;
         Ok(Self {
             session,
             video: Mutex::new(Video {
@@ -167,7 +175,7 @@ impl RemoteHost {
     /// What the session is doing, for the diagnostics pane.
     #[must_use]
     pub fn stats(&self) -> RemoteStats {
-        self.session.counters.snapshot(true)
+        self.session.stats()
     }
 }
 

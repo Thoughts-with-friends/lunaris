@@ -37,7 +37,7 @@ use std::{
 
 use melonds::{Cheat, SCREEN_HEIGHT, SCREEN_WIDTH};
 
-use crate::{emu::Emu, mp::Client, remote::RemoteHost};
+use crate::{emu::Emu, i18n::I18nKey as K, mp::Client, remote::RemoteHost};
 
 mod command;
 mod handle;
@@ -45,7 +45,7 @@ mod orders;
 mod run_loop;
 
 pub use command::Command;
-pub use handle::Guest;
 pub(crate) use handle::Shared;
+pub use handle::{Guest, Note};
 pub(crate) use orders::perform_commands;
 pub(crate) use run_loop::{Outcome, RunConfig, finish, run};

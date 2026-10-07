@@ -17,8 +17,11 @@ impl MelonEgui {
     pub(crate) fn import_savefile(&mut self) {
         self.ask(
             DialogPurpose::ImportSave,
-            crate::file::picker::Request::open("Import a save file")
-                .filter("save file", &["sav", "dsv", "bin", "dat", "duc", "sa1"])
+            crate::file::picker::Request::open(self.i18n().s(K::PickImportSave))
+                .filter(
+                    self.i18n().t(K::FilterSaveFile),
+                    &["sav", "dsv", "bin", "dat", "duc", "sa1"],
+                )
                 // A save carried over from another emulator has whatever name
                 // that emulator gave it, and one the dialog will not show is one
                 // that cannot be imported at all.
@@ -36,16 +39,14 @@ impl MelonEgui {
     /// that line and by nothing else.
     pub(crate) fn import_savefile_from(&mut self, path: &Path) {
         if self.emu.is_none() {
-            return self.post_error(
-                "import failed: no cart is running - open the ROM first, then import its save",
-            );
+            return self.post_error(self.i18n().s(K::ImportNoCart));
         }
         let data = match std::fs::read(path) {
             Ok(data) if data.is_empty() => {
-                return self.post_error(format!("import failed: {} is empty", path.display()));
+                return self.post_error(self.i18n().f(K::ImportEmpty, &[&path.display()]));
             }
             Ok(data) => data,
-            Err(e) => return self.post_error(format!("cannot read {}: {e}", path.display())),
+            Err(e) => return self.post_error(self.i18n().f(K::CannotRead, &[&path.display(), &e])),
         };
 
         // Foreign formats first: what is on disk is not always the raw image
@@ -61,7 +62,7 @@ impl MelonEgui {
             raw.len(),
         );
         if let Some(note) = note {
-            self.post_warn(note);
+            self.post_warn(self.i18n().s(note));
         }
 
         let Some(emu) = self.emu.as_mut() else { return };
@@ -70,13 +71,10 @@ impl MelonEgui {
             Ok(()) => {
                 self.undo_state = None;
                 self.frames_run = 0;
-                self.post_ok(format!(
-                    "imported {} ({}) - console restarted",
-                    path.display(),
-                    describe_fit(raw.len(), wanted),
-                ));
+                let fit = describe_fit(self.i18n(), raw.len(), wanted);
+                self.post_ok(self.i18n().f(K::Imported, &[&path.display(), &fit]));
             }
-            Err(e) => self.post_error(format!("import failed: {e}")),
+            Err(e) => self.post_error(self.i18n().f(K::ImportFailed, &[&e])),
         }
     }
 
@@ -94,8 +92,8 @@ impl MelonEgui {
             let directory = self.dialog_dir("states");
             return self.ask(
                 DialogPurpose::SaveState,
-                crate::file::picker::Request::save("Save state")
-                    .filter("savestate", &["ml1"])
+                crate::file::picker::Request::save(self.i18n().s(K::SaveState))
+                    .filter(self.i18n().t(K::FilterSavestate), &["ml1"])
                     .file_name(format!("{suggestion}.ml1"))
                     .directory(directory),
             );
@@ -109,9 +107,10 @@ impl MelonEgui {
         match emu.save_state_to(path) {
             Ok(bytes) => {
                 let mib = bytes as f64 / (1024.0 * 1024.0);
-                self.post_ok(format!("state saved to {} ({mib:.1} MiB)", path.display()));
+                let size = format!("{mib:.1}");
+                self.post_ok(self.i18n().f(K::StateSaved, &[&path.display(), &size]));
             }
-            Err(e) => self.post_error(format!("save state failed: {e}")),
+            Err(e) => self.post_error(self.i18n().f(K::StateSaveFailed, &[&e])),
         }
     }
 
@@ -121,8 +120,8 @@ impl MelonEgui {
         let Some(slot) = slot else {
             return self.ask(
                 DialogPurpose::LoadState,
-                crate::file::picker::Request::open("Load state")
-                    .filter("savestate", &["ml1"])
+                crate::file::picker::Request::open(self.i18n().s(K::LoadState))
+                    .filter(self.i18n().t(K::FilterSavestate), &["ml1"])
                     .directory(self.dialog_dir("states")),
             );
         };
@@ -136,9 +135,9 @@ impl MelonEgui {
         match emu.load_state_from(path) {
             Ok(before) => {
                 self.undo_state = before;
-                self.post_ok(format!("state loaded from {}", path.display()));
+                self.post_ok(self.i18n().f(K::StateLoaded, &[&path.display()]));
             }
-            Err(e) => self.post_error(format!("load state failed: {e}")),
+            Err(e) => self.post_error(self.i18n().f(K::StateLoadFailed, &[&e])),
         }
     }
 
@@ -148,8 +147,8 @@ impl MelonEgui {
             return;
         };
         match emu.nds.load_state(&before) {
-            Ok(()) => self.post_ok("state load undone"),
-            Err(e) => self.post_error(format!("undo failed: {e}")),
+            Ok(()) => self.post_ok(self.i18n().s(K::StateLoadUndone)),
+            Err(e) => self.post_error(self.i18n().f(K::UndoFailed, &[&e])),
         }
     }
 }
@@ -171,17 +170,17 @@ const DESMUME_SNIP: &[u8] =
 /// format that is *raw data plus a marked trailer*. Anything else -- a `.duc`'s
 /// header, a compressed state -- would be a converter rather than a trim, and
 /// guessing at one is how a save gets quietly corrupted.
-fn raw_save(data: &[u8]) -> (&[u8], Option<&'static str>) {
+fn raw_save(data: &[u8]) -> (&[u8], Option<K>) {
     if !data.ends_with(DESMUME_COOKIE) {
         return (data, None);
     }
     match find_last(data, DESMUME_SNIP) {
-        Some(at) => (&data[..at], Some("DeSmuME .dsv: its footer was trimmed off")),
+        Some(at) => (&data[..at], Some(K::DsvTrimmed)),
         // The cookie is there but the line above it is not, so this is a
         // version of the format this does not know. Left alone rather than cut
         // by a guessed length: a save cut in the wrong place is worse than one
         // that is visibly too long.
-        None => (data, Some("that looks like a DeSmuME save, but its footer is not one I know")),
+        None => (data, Some(K::DsvUnknownFooter)),
     }
 }
 
@@ -195,23 +194,15 @@ fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// How an imported image compares with the cart's own backup memory, for the
 /// message that says the import happened.
-fn describe_fit(imported: usize, cart: usize) -> String {
+fn describe_fit(tr: &crate::i18n::I18nMap, imported: usize, cart: usize) -> String {
     let kib = |bytes: usize| format!("{:.0} KiB", bytes as f64 / 1024.0);
     if cart == 0 {
-        return format!("{}; this cart reports no backup memory", kib(imported));
+        return tr.f(K::FitNoBackup, &[&kib(imported)]);
     }
     match imported.cmp(&cart) {
         std::cmp::Ordering::Equal => kib(imported),
-        std::cmp::Ordering::Less => {
-            format!("{} into {} - padded; the game may not recognise it", kib(imported), kib(cart))
-        }
-        std::cmp::Ordering::Greater => {
-            format!(
-                "{} into {} - truncated; check it is this cart's save",
-                kib(imported),
-                kib(cart)
-            )
-        }
+        std::cmp::Ordering::Less => tr.f(K::FitPadded, &[&kib(imported), &kib(cart)]),
+        std::cmp::Ordering::Greater => tr.f(K::FitTruncated, &[&kib(imported), &kib(cart)]),
     }
 }
 
@@ -266,8 +257,9 @@ mod tests {
 
     #[test]
     fn a_mismatched_size_is_described_rather_than_hidden() {
-        assert_eq!(describe_fit(524_288, 524_288), "512 KiB");
-        assert!(describe_fit(65_536, 524_288).contains("padded"));
-        assert!(describe_fit(1_048_576, 524_288).contains("truncated"));
+        let tr = crate::i18n::I18nMap::built_in(crate::i18n::Language::English);
+        assert_eq!(describe_fit(&tr, 524_288, 524_288), "512 KiB");
+        assert!(describe_fit(&tr, 65_536, 524_288).contains("padded"));
+        assert!(describe_fit(&tr, 1_048_576, 524_288).contains("truncated"));
     }
 }

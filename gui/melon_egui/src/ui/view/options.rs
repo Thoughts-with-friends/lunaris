@@ -1,5 +1,7 @@
 //! What the View menu offers, and what a window remembers of it.
 
+use crate::i18n::{I18nKey as K, I18nMap};
+
 /// Quarter turns clockwise applied to both screens.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Rotation {
@@ -50,13 +52,14 @@ pub enum ScreenLayout {
 impl ScreenLayout {
     pub const ALL: [Self; 4] = [Self::Natural, Self::Vertical, Self::Horizontal, Self::Hybrid];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Natural => "Natural",
-            Self::Vertical => "Vertical",
-            Self::Horizontal => "Horizontal",
-            Self::Hybrid => "Hybrid",
-        }
+    /// What the View menu calls it, in the UI's language.
+    pub fn label(self, tr: &I18nMap) -> &str {
+        tr.t(match self {
+            Self::Natural => K::LayoutNatural,
+            Self::Vertical => K::LayoutVertical,
+            Self::Horizontal => K::LayoutHorizontal,
+            Self::Hybrid => K::LayoutHybrid,
+        })
     }
 }
 
@@ -89,15 +92,16 @@ impl ScreenSizing {
         Self::BottomOnly,
     ];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Even => "Even",
-            Self::EmphasizeTop => "Emphasize top",
-            Self::EmphasizeBottom => "Emphasize bottom",
-            Self::Auto => "Auto",
-            Self::TopOnly => "Top only",
-            Self::BottomOnly => "Bottom only",
-        }
+    /// What the View menu calls it, in the UI's language.
+    pub fn label(self, tr: &I18nMap) -> &str {
+        tr.t(match self {
+            Self::Even => K::SizingEven,
+            Self::EmphasizeTop => K::SizingEmphasizeTop,
+            Self::EmphasizeBottom => K::SizingEmphasizeBottom,
+            Self::Auto => K::SizingAuto,
+            Self::TopOnly => K::SizingTopOnly,
+            Self::BottomOnly => K::SizingBottomOnly,
+        })
     }
 
     /// Whether only one screen is drawn.
@@ -144,13 +148,15 @@ impl AspectRatio {
     pub const ALL: [Self; 5] =
         [Self::Native, Self::Wide5x3, Self::Wide16x9, Self::Wide21x9, Self::Window];
 
-    pub const fn label(self) -> &'static str {
+    /// What the dialogs call it, in the UI's language. The plain ratios read
+    /// the same in every language and are not translation keys.
+    pub fn label(self, tr: &I18nMap) -> &str {
         match self {
-            Self::Native => "4:3 (native)",
+            Self::Native => tr.t(K::AspectNative),
             Self::Wide5x3 => "5:3 (3DS)",
             Self::Wide16x9 => "16:9",
             Self::Wide21x9 => "21:9",
-            Self::Window => "window",
+            Self::Window => tr.t(K::AspectWindow),
         }
     }
 

@@ -23,10 +23,16 @@ impl MelonEgui {
             }
         }
         if self.is_loaded() {
-            let paused = if self.paused { "  [paused]" } else { "" };
+            let tr = self.translations.get(self.language);
+            let mut readout = format!("{:.1} FPS", self.fps);
+            if self.paused {
+                readout = format!("{readout}  {}", tr.t(crate::i18n::I18nKey::OsdPaused));
+            }
             // Without this the window looks hung rather than deliberately still.
-            let frozen = if self.video.render { "" } else { "  [rendering off]" };
-            lines.insert(0, (Severity::Info, format!("{:.1} FPS{paused}{frozen}", self.fps)));
+            if !self.video.render {
+                readout = format!("{readout}  {}", tr.t(crate::i18n::I18nKey::OsdRenderingOff));
+            }
+            lines.insert(0, (Severity::Info, readout));
         }
 
         let painter = ui.painter();

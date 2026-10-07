@@ -51,7 +51,8 @@
 //! | [`audio`] | 48 kHz → transport rate, so sound is not most of the bandwidth |
 //! | [`wire`] | the datagram layouts |
 //! | [`stats`] | what a session is doing, for the pane |
-//! | [`session`] | the socket, the threads, and the shared state |
+//! | [`session`] | the socket, the threads, and the shared state; both ends ping |
+//! | [`probe`] | "is anyone hosting there, and are they free?" before a session |
 //! | [`host`] / [`client`] | the two ends |
 //! | [`tuning`] | the knobs, and their bounds |
 //!
@@ -94,6 +95,7 @@ pub mod colour;
 pub mod decoder;
 pub mod encoder;
 pub mod host;
+pub mod probe;
 pub mod session;
 pub mod stats;
 pub mod tile;
@@ -105,6 +107,7 @@ mod tests;
 
 pub use client::RemoteClient;
 pub use host::RemoteHost;
+pub use probe::{Prober, Readiness};
 pub use stats::RemoteStats;
 pub use tuning::Tuning;
 #[cfg(test)]

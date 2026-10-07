@@ -82,22 +82,19 @@ fn header(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let mut enabled = app.cheats_enabled;
         if ui
-            .checkbox(&mut enabled, "Enable cheats")
-            .on_hover_text(
-                "Off hands the console an empty list, so the codes cost nothing at all \
-                 rather than merely doing nothing.",
-            )
+            .checkbox(&mut enabled, app.i18n().t(K::EnableCheats))
+            .on_hover_text(app.i18n().t(K::EnableCheatsHint))
             .clicked()
         {
             app.cheats_enabled = enabled;
         }
-        if ui.button("Open .mch...").clicked() {
+        if ui.button(app.i18n().t(K::OpenMch)).clicked() {
             app.ask_for_cheat_file();
         }
     });
     match app.cheat_file() {
-        Some(path) => ui.label(format!("File: {}", path.display())),
-        None => ui.label("No cart running; codes load with one."),
+        Some(path) => ui.label(app.i18n().f(K::CheatFile, &[&path.display()])),
+        None => ui.label(app.i18n().t(K::CheatsNoCart)),
     };
 }
 
@@ -111,8 +108,8 @@ fn buttons(app: &mut MelonEgui, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .button("Add cheat")
-                .on_hover_text("Adds an empty, disabled code and opens it in the editor.")
+                .button(app.i18n().t(K::AddCheat))
+                .on_hover_text(app.i18n().t(K::AddCheatHint))
                 .clicked()
             {
                 app.add_cheat();
@@ -123,18 +120,16 @@ fn buttons(app: &mut MelonEgui, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let selected = app.cheat_selected.is_some();
             if ui
-                .add_enabled(selected, egui::Button::new("Delete"))
-                .on_hover_text("Removes the selected code, and writes the list to the cart's .mch.")
+                .add_enabled(selected, egui::Button::new(app.i18n().t(K::Delete)))
+                .on_hover_text(app.i18n().t(K::DeleteCheatHint))
                 .clicked()
             {
                 app.delete_selected_cheat();
             }
+            let can_save = selected && app.cheat_file().is_some();
             if ui
-                .add_enabled(selected && app.cheat_file().is_some(), egui::Button::new("Save"))
-                .on_hover_text(
-                    "Writes the editor back into the selected code, and the whole list to \
-                 the cart's .mch.",
-                )
+                .add_enabled(can_save, egui::Button::new(app.i18n().t(K::Save)))
+                .on_hover_text(app.i18n().t(K::SaveCheatHint))
                 .clicked()
             {
                 app.commit_cheat_editor();
@@ -167,7 +162,9 @@ fn buttons(app: &mut MelonEgui, ui: &mut egui::Ui) {
 /// The checkbox is outside all of this, so that enabling a code cannot start a
 /// drag and a drag cannot toggle one.
 fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
-    ui.label("Available cheats:");
+    // The one field: the rows below borrow `app.cheats` mutably beside it.
+    let tr = app.translations.get(app.language);
+    ui.label(tr.t(K::AvailableCheats));
 
     // Applied after the loop: both `select_cheat` and `move_cheat` take `app`,
     // which the rows below are still borrowing.
@@ -179,8 +176,8 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
         |ui| {
             egui::Grid::new("cheat-rows").striped(true).num_columns(3).show(ui, |ui| {
                 ui.label("");
-                ui.strong("Name");
-                ui.strong("Type");
+                ui.strong(tr.t(K::CheatName));
+                ui.strong(tr.t(K::CheatType));
                 ui.end_row();
 
                 for (i, cheat) in app.cheats.iter_mut().enumerate() {
@@ -202,7 +199,7 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
                         row = row.on_hover_text(&cheat.description);
                     }
                     if !cheat.is_well_formed() {
-                        row = row.on_hover_text("This code has an odd number of words.");
+                        row = row.on_hover_text(tr.t(K::CheatOddWords));
                     }
                     // Selected on the press rather than on the release, so a
                     // touch shows the code in the editor at once -- and so a
@@ -239,13 +236,11 @@ fn list(app: &mut MelonEgui, ui: &mut egui::Ui) {
     if let Some((from, to)) = reorder {
         app.move_cheat(from, to);
     }
+    let tr = app.i18n();
     if app.cheats.is_empty() {
-        ui.label("No codes. Add one, or read a melonDS .mch file.");
+        ui.label(tr.t(K::NoCheats));
     } else {
-        ui.label(
-            "Click a row to edit it. Hold it for a moment to pick it up, then drop it on \
-             another row to reorder — the new order is saved as it lands.",
-        );
+        ui.label(tr.t(K::CheatListHint));
     }
 }
 
@@ -319,25 +314,26 @@ fn insertion_marker(ui: &egui::Ui, row: egui::Rect, from: usize, to: usize) {
 /// The right half: the selected code's name, notes and words.
 fn editor(app: &mut MelonEgui, ui: &mut egui::Ui) {
     let enabled = app.cheat_selected.is_some();
+    let tr = app.translations.get(app.language);
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Name:");
+            ui.label(tr.t(K::CheatNameLabel));
             let width = ui.available_width();
             ui.add(egui::TextEdit::singleline(&mut app.cheat_editor.name).desired_width(width));
         });
         ui.add_space(4.0);
 
-        ui.label("Notes:");
+        ui.label(tr.t(K::CheatNotesLabel));
         let width = ui.available_width();
         ui.add(
             egui::TextEdit::multiline(&mut app.cheat_editor.notes)
                 .desired_rows(4)
                 .desired_width(width)
-                .hint_text("What this code does, and where it came from."),
+                .hint_text(tr.t(K::CheatNotesHint)),
         );
         ui.add_space(4.0);
 
-        ui.label("Code:");
+        ui.label(tr.t(K::CheatCodeLabel));
         ui.add(
             egui::TextEdit::multiline(&mut app.cheat_editor.code)
                 .desired_rows(6)
@@ -347,6 +343,6 @@ fn editor(app: &mut MelonEgui, ui: &mut egui::Ui) {
         );
     });
     if !enabled {
-        ui.label("Select a code on the left, or press Add cheat.");
+        ui.label(tr.t(K::SelectCheatHint));
     }
 }

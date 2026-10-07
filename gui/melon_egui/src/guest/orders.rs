@@ -25,7 +25,7 @@ pub(crate) fn perform_commands(
         match command {
             Command::Reset => {
                 emu.nds.boot();
-                shared.say("reset".to_owned());
+                shared.say(Note::new(K::ResetDone, &[]));
             }
             Command::FrameStep => *stepping += 1,
             Command::SaveState(slot, path) => {
@@ -33,12 +33,11 @@ pub(crate) fn perform_commands(
                     continue;
                 };
                 shared.say(match emu.save_state_to(&path) {
-                    Ok(bytes) => format!(
-                        "state saved to {} ({:.1} MiB)",
-                        path.display(),
-                        bytes as f64 / (1024.0 * 1024.0)
-                    ),
-                    Err(error) => format!("save state failed: {error}"),
+                    Ok(bytes) => {
+                        let mib = format!("{:.1}", bytes as f64 / (1024.0 * 1024.0));
+                        Note::new(K::StateSaved, &[&path.display(), &mib])
+                    }
+                    Err(error) => Note::new(K::StateSaveFailed, &[&error]),
                 });
             }
             Command::LoadState(slot, path) => {
@@ -48,25 +47,25 @@ pub(crate) fn perform_commands(
                 shared.say(match emu.load_state_from(&path) {
                     Ok(before) => {
                         *undo = before;
-                        format!("state loaded from {}", path.display())
+                        Note::new(K::StateLoaded, &[&path.display()])
                     }
-                    Err(error) => format!("load state failed: {error}"),
+                    Err(error) => Note::new(K::StateLoadFailed, &[&error]),
                 });
             }
             Command::UndoStateLoad => {
                 let Some(before) = undo.take() else {
-                    shared.say("nothing to undo".to_owned());
+                    shared.say(Note::new(K::NothingToUndo, &[]));
                     continue;
                 };
                 shared.say(match emu.nds.load_state(&before) {
-                    Ok(()) => "state load undone".to_owned(),
-                    Err(error) => format!("undo failed: {error}"),
+                    Ok(()) => Note::new(K::StateLoadUndone, &[]),
+                    Err(error) => Note::new(K::UndoFailed, &[&error]),
                 });
             }
             Command::ImportSave(data) => {
                 shared.say(match emu.import_save(&data) {
-                    Ok(()) => "save imported; console rebooted".to_owned(),
-                    Err(error) => format!("import failed: {error}"),
+                    Ok(()) => Note::new(K::GuestSaveImported, &[]),
+                    Err(error) => Note::new(K::ImportFailed, &[&error]),
                 });
             }
             Command::SetCheats(cheats) => emu.nds.set_cheats(cheats.as_slice()),
@@ -74,7 +73,7 @@ pub(crate) fn perform_commands(
             Command::SetClock(clock) => emu.set_clock(clock),
             Command::Stop => {
                 emu.flush_save();
-                finish(shared, "stopped".to_owned());
+                finish(shared, Note::new(K::GuestStoppedByUser, &[]));
                 return Outcome::Stopped;
             }
         }

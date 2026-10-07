@@ -29,6 +29,11 @@ pub enum Kind {
     Ping = 5,
     /// Latency probe echo, carrying the `Ping`'s value untouched.
     Pong = 6,
+    /// "Are you ready?" — sent outside any session by a machine that has not
+    /// joined yet, carrying its wall clock like a `Ping`. See [`super::probe`].
+    Probe = 7,
+    /// The answer to a `Probe`: its stamp, then one [`PeerState`] byte.
+    ProbeReply = 8,
 }
 
 impl Kind {
@@ -42,6 +47,8 @@ impl Kind {
             4 => Some(Self::Input),
             5 => Some(Self::Ping),
             6 => Some(Self::Pong),
+            7 => Some(Self::Probe),
+            8 => Some(Self::ProbeReply),
             _ => None,
         }
     }
@@ -202,6 +209,50 @@ pub fn read_pong(bytes: &[u8]) -> Option<u64> {
         .flatten()
 }
 
+/// What a host says about itself in a [`Kind::ProbeReply`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PeerState {
+    /// Hosting and waiting for a client: joining now will succeed.
+    Waiting = 0,
+    /// Hosting, but already streaming to someone else.
+    Busy = 1,
+}
+
+/// A `Probe` carrying the sender's wall clock.
+#[must_use]
+pub fn encode_probe(now_micros: u64) -> Vec<u8> {
+    let mut bytes = header(Kind::Probe);
+    bytes.extend_from_slice(&now_micros.to_le_bytes());
+    bytes
+}
+
+/// The `ProbeReply` that answers `probe` with `state`, echoing its stamp.
+#[must_use]
+pub fn answer_probe(probe: &[u8], state: PeerState) -> Vec<u8> {
+    let mut bytes = header(Kind::ProbeReply);
+    let mut stamp = [0u8; 8];
+    let carried = probe.get(PREFIX..probe.len().min(PREFIX + 8)).unwrap_or(&[]);
+    stamp[..carried.len()].copy_from_slice(carried);
+    bytes.extend_from_slice(&stamp);
+    bytes.push(state as u8);
+    bytes
+}
+
+/// The stamp and state a `ProbeReply` carries.
+#[must_use]
+pub fn read_probe_reply(bytes: &[u8]) -> Option<(u64, PeerState)> {
+    if bytes.len() < PREFIX + 9 || kind_of(bytes) != Some(Kind::ProbeReply) {
+        return None;
+    }
+    let stamp = u64::from_le_bytes(bytes[PREFIX..PREFIX + 8].try_into().ok()?);
+    let state = match bytes[PREFIX + 8] {
+        0 => PeerState::Waiting,
+        1 => PeerState::Busy,
+        _ => return None,
+    };
+    Some((stamp, state))
+}
+
 /// The sender's wall clock in microseconds, for the latency probe.
 ///
 /// Only ever differenced against another reading **on the same machine** — a
@@ -217,9 +268,20 @@ pub fn wall_clock_micros() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Input, Kind, decode_audio, decode_input, echo_ping, encode_audio, encode_input,
-        encode_ping, kind_of, read_pong, read_video_header,
+        Input, Kind, PeerState, answer_probe, decode_audio, decode_input, echo_ping, encode_audio,
+        encode_input, encode_ping, encode_probe, kind_of, read_pong, read_probe_reply,
+        read_video_header,
     };
+
+    #[test]
+    fn a_probe_reply_carries_the_stamp_and_the_state() {
+        let probe = encode_probe(0xDEAD_BEEF);
+        assert_eq!(kind_of(&probe), Some(Kind::Probe));
+        for state in [PeerState::Waiting, PeerState::Busy] {
+            assert_eq!(read_probe_reply(&answer_probe(&probe, state)), Some((0xDEAD_BEEF, state)));
+        }
+        assert_eq!(read_probe_reply(&encode_ping(1)), None, "a ping is not a reply");
+    }
 
     /// A lifted stylus that decoded as `Some((0, 0))` would drag the pointer to
     /// the corner of the screen every time the player let go.

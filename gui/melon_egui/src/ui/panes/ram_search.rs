@@ -10,41 +10,45 @@ use super::*;
 /// changes isolate the one that matters.
 pub(super) fn ram_search(app: &mut MelonEgui, ui: &mut egui::Ui) {
     if !app.is_loaded() {
-        ui.label("no cart loaded");
+        ui.label(app.i18n().t(K::NoCartLoaded));
         return;
     }
 
+    let tr = app.translations.get(app.language);
     ui.horizontal(|ui| {
-        ui.label("Value:");
+        ui.label(tr.t(K::SearchValue));
         ui.text_edit_singleline(&mut app.ram_search.needle);
         egui::ComboBox::from_id_salt("ram-width")
-            .selected_text(app.ram_search.width.label())
+            .selected_text(app.ram_search.width.label(tr))
             .show_ui(ui, |ui| {
                 for width in SearchWidth::ALL {
-                    ui.selectable_value(&mut app.ram_search.width, width, width.label());
+                    ui.selectable_value(&mut app.ram_search.width, width, width.label(tr));
                 }
             });
     });
 
     let parsed = app.ram_search.parse_needle();
+    // Copied out: the scans need all of `app`.
+    let (first, narrow, clear) = (tr.s(K::FirstScan), tr.s(K::Narrow), tr.s(K::Clear));
     ui.horizontal(|ui| {
-        if ui.add_enabled(parsed.is_some(), egui::Button::new("First scan")).clicked() {
+        if ui.add_enabled(parsed.is_some(), egui::Button::new(first)).clicked() {
             app.ram_first_scan();
         }
         let can_narrow = parsed.is_some() && !app.ram_search.hits.is_empty();
-        if ui.add_enabled(can_narrow, egui::Button::new("Narrow")).clicked() {
+        if ui.add_enabled(can_narrow, egui::Button::new(narrow)).clicked() {
             app.ram_narrow();
         }
-        if ui.button("Clear").clicked() {
+        if ui.button(clear).clicked() {
             app.ram_search.hits.clear();
         }
     });
+    let tr = app.translations.get(app.language);
     if parsed.is_none() && !app.ram_search.needle.is_empty() {
-        ui.colored_label(egui::Color32::from_rgb(0xE0, 0x80, 0x60), "not a number");
+        ui.colored_label(egui::Color32::from_rgb(0xE0, 0x80, 0x60), tr.t(K::NotANumber));
     }
 
     ui.separator();
-    ui.label(format!("{} matching addresses", app.ram_search.hits.len()));
+    ui.label(tr.f(K::MatchingAddresses, &[&app.ram_search.hits.len()]));
     // Only a window's worth is listed: a first scan can match millions, and
     // nobody reads past the first screenful anyway.
     let shown: Vec<_> = app.ram_search.hits.iter().take(200).copied().collect();
@@ -58,7 +62,7 @@ pub(super) fn ram_search(app: &mut MelonEgui, ui: &mut egui::Ui) {
         });
     });
     if app.ram_search.hits.len() > 200 {
-        ui.label("(first 200 shown — narrow the search to see fewer)");
+        ui.label(app.i18n().t(K::First200Shown));
     }
 }
 
@@ -74,12 +78,13 @@ pub enum SearchWidth {
 impl SearchWidth {
     pub const ALL: [Self; 3] = [Self::Byte, Self::Half, Self::Word];
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Byte => "8-bit",
-            Self::Half => "16-bit",
-            Self::Word => "32-bit",
-        }
+    /// What the width box calls it, in the UI's language.
+    pub fn label(self, tr: &crate::i18n::I18nMap) -> &str {
+        tr.t(match self {
+            Self::Byte => K::Bits8,
+            Self::Half => K::Bits16,
+            Self::Word => K::Bits32,
+        })
     }
 
     /// Bytes per value, which is also the scan's stride: a value is only looked

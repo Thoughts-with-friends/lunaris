@@ -20,6 +20,11 @@ use super::{
     tile::TILE_COUNT,
 };
 
+/// A cancel flag that is never set.
+fn never() -> AtomicBool {
+    AtomicBool::new(false)
+}
+
 /// One screen's worth of framebuffer pixels, in the core's `0x00RRGGBB`.
 fn screen(fill: impl Fn(usize, usize) -> u32) -> Vec<u32> {
     (0..SCREEN_WIDTH * SCREEN_HEIGHT).map(|at| fill(at % SCREEN_WIDTH, at / SCREEN_WIDTH)).collect()
@@ -260,10 +265,12 @@ fn a_session_survives_a_lossy_delayed_link() {
         min_video_fps: 60,
         ..Tuning::default()
     };
-    let accepting =
-        std::thread::spawn(move || RemoteHost::accept(host_addr, tuning).expect("the host"));
-    let client = RemoteClient::connect("127.0.0.1:0".parse().unwrap(), relay.addr, tuning)
-        .expect("the client connects");
+    let accepting = std::thread::spawn(move || {
+        RemoteHost::accept(host_addr, tuning, &never()).expect("the host")
+    });
+    let client =
+        RemoteClient::connect("127.0.0.1:0".parse().unwrap(), relay.addr, tuning, &never())
+            .expect("the client connects");
     let host = accepting.join().expect("the accept thread");
 
     let top = screen(|x, y| ((x as u32) << 16) | ((y as u32) << 8) | 0x55);
@@ -331,10 +338,12 @@ fn a_capped_frame_rate_sends_fewer_frames_and_still_converges() {
     let relay = Relay::start(host_addr, Duration::from_millis(5), Duration::from_millis(2), 0);
 
     let tuning = Tuning { max_video_fps: 20, min_video_fps: 20, ..Tuning::default() };
-    let accepting =
-        std::thread::spawn(move || RemoteHost::accept(host_addr, tuning).expect("the host"));
-    let client = RemoteClient::connect("127.0.0.1:0".parse().unwrap(), relay.addr, tuning)
-        .expect("the client connects");
+    let accepting = std::thread::spawn(move || {
+        RemoteHost::accept(host_addr, tuning, &never()).expect("the host")
+    });
+    let client =
+        RemoteClient::connect("127.0.0.1:0".parse().unwrap(), relay.addr, tuning, &never())
+            .expect("the client connects");
     let host = accepting.join().expect("the accept thread");
 
     let (top, bottom) = game_frame(7);
@@ -357,4 +366,118 @@ fn a_capped_frame_rate_sends_fewer_frames_and_still_converges() {
     let [got_top, got_bottom] = client.take_screens().expect("a picture");
     assert_eq!(got_top, quantised(&top), "skipping must not corrupt the picture");
     assert_eq!(got_bottom, quantised(&bottom));
+}
+
+/// A free UDP port on loopback, released for the code under test to bind.
+fn free_port() -> SocketAddr {
+    let probe = UdpSocket::bind("127.0.0.1:0").expect("a port");
+    probe.local_addr().expect("its address")
+}
+
+/// Poll `check` until it holds or `limit` passes.
+fn eventually(limit: Duration, mut check: impl FnMut() -> bool) -> bool {
+    let until = Instant::now() + limit;
+    while Instant::now() < until {
+        if check() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    check()
+}
+
+/// The readiness the status line shows, end to end: Join pressed before Host
+/// keeps trying and connects once the host is up; both ends then see each
+/// other as ready from their own pings; and when one end goes away the other
+/// notices within [`super::stats::READY_WITHIN`].
+#[test]
+fn both_ends_see_each_other_ready_and_notice_when_one_leaves() {
+    let host_addr = free_port();
+    let tuning = Tuning::default();
+
+    // The client first: nobody is hosting yet, so it must keep asking.
+    let joining = std::thread::spawn(move || {
+        RemoteClient::connect("127.0.0.1:0".parse().unwrap(), host_addr, tuning, &never())
+    });
+    std::thread::sleep(Duration::from_millis(1200));
+    assert!(!joining.is_finished(), "the client gave up while the host was not up yet");
+
+    let host = RemoteHost::accept(host_addr, tuning, &never()).expect("the host accepts");
+    let client = joining.join().expect("the join thread").expect("the client connects");
+
+    assert!(
+        eventually(Duration::from_secs(3), || host.stats().peer_ready()),
+        "host never saw the client"
+    );
+    assert!(
+        eventually(Duration::from_secs(3), || client.stats().peer_ready()),
+        "client never saw the host"
+    );
+
+    drop(host);
+    assert!(
+        eventually(super::stats::READY_WITHIN + Duration::from_secs(2), || !client
+            .stats()
+            .peer_ready()),
+        "the client still shows a host that has gone"
+    );
+}
+
+/// The prober's three answers: nothing hosting, hosting and free, hosting and
+/// taken.
+#[test]
+fn the_prober_tells_ready_from_busy_from_silent() {
+    let host_addr = free_port();
+    let tuning = Tuning::default();
+    let prober = super::Prober::start().expect("the prober");
+    prober.set_target(Some(host_addr));
+    prober.set_active(true);
+
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(prober.readiness(), super::Readiness::Silent, "nobody is hosting");
+
+    let accepting = std::thread::spawn(move || RemoteHost::accept(host_addr, tuning, &never()));
+    assert!(
+        eventually(Duration::from_secs(3), || matches!(
+            prober.readiness(),
+            super::Readiness::Ready { .. }
+        )),
+        "a waiting host was not reported ready"
+    );
+
+    let _client =
+        RemoteClient::connect("127.0.0.1:0".parse().unwrap(), host_addr, tuning, &never())
+            .expect("the client connects");
+    let _host = accepting.join().expect("the accept thread").expect("the host");
+    assert!(
+        eventually(Duration::from_secs(3), || prober.readiness() == super::Readiness::Busy),
+        "a host with a client was not reported busy"
+    );
+}
+
+/// Stop has to work while a session is still being set up, at either end.
+#[test]
+fn a_pending_handshake_can_be_cancelled() {
+    let host_addr = free_port();
+    let tuning = Tuning::default();
+    for host in [true, false] {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancel);
+        let pending = std::thread::spawn(move || {
+            if host {
+                RemoteHost::accept(host_addr, tuning, &flag).map(|_| ())
+            } else {
+                RemoteClient::connect("127.0.0.1:0".parse().unwrap(), host_addr, tuning, &flag)
+                    .map(|_| ())
+            }
+        });
+        std::thread::sleep(Duration::from_millis(300));
+        cancel.store(true, Ordering::Relaxed);
+        let result = pending.join().expect("the handshake thread");
+        assert_eq!(
+            result.map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::Interrupted),
+            "host={host}"
+        );
+    }
 }

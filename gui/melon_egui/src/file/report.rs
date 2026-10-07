@@ -98,7 +98,7 @@ impl MelonEgui {
         match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, &report)) {
             Ok(()) => {
                 log::info!("wrote {}", path.display());
-                self.post_ok(format!("stop report written to {}", path.display()));
+                self.post_ok(self.i18n().f(K::StopReportWritten, &[&path.display()]));
             }
             Err(e) => log::error!("could not write {}: {e}", path.display()),
         }

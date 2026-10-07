@@ -8,18 +8,19 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use super::{
-    MAX_DATAGRAM, Tuning,
+    MAX_DATAGRAM, RemoteStats, Tuning,
     decoder::Decoder,
     stats::Counters,
-    wire::{self, Input, Kind},
+    wire::{self, Input, Kind, PeerState},
 };
 
-/// How often the host probes the link, in wall time.
-const PING_INTERVAL: Duration = Duration::from_millis(500);
+/// How often each end pings the other, in wall time. Also the pace at which a
+/// joining client repeats its `HELLO` while the host is not up yet.
+pub(super) const PING_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Sound waiting to be played, and the rate it arrived at.
 #[derive(Default)]
@@ -43,6 +44,8 @@ pub struct Session {
     pub remote: SocketAddr,
     pub counters: Counters,
     pub shutdown: Arc<AtomicBool>,
+    /// When the session began; what [`Counters::last_pong_us`] counts from.
+    epoch: Instant,
     /// The newest controls the remote player sent — host side.
     input: Mutex<Input>,
     /// Sound waiting to be played — client side.
@@ -61,14 +64,10 @@ pub struct Session {
 impl Session {
     /// Bind the threads that keep `socket` serviced.
     ///
-    /// `ping` is set on the host: only one end needs to probe, and the other
-    /// answers.
-    pub fn start(
-        socket: UdpSocket,
-        remote: SocketAddr,
-        tuning: Tuning,
-        ping: bool,
-    ) -> io::Result<Arc<Self>> {
+    /// **Both** ends ping. Each one's readiness display is "has the other end
+    /// answered me lately", and only the end that sent a ping can time the
+    /// answer to it.
+    pub fn start(socket: UdpSocket, remote: SocketAddr, tuning: Tuning) -> io::Result<Arc<Self>> {
         // Short enough that shutdown is prompt, long enough that an idle link
         // is not a spin loop.
         socket.set_read_timeout(Some(Duration::from_millis(50)))?;
@@ -77,6 +76,7 @@ impl Session {
             remote,
             counters: Counters::default(),
             shutdown: Arc::new(AtomicBool::new(false)),
+            epoch: Instant::now(),
             input: Mutex::new(Input::default()),
             audio: Mutex::new(AudioQueue::default()),
             decoder: Mutex::new(Decoder::new()),
@@ -87,9 +87,7 @@ impl Session {
         session.counters.set(&session.counters.audio_rate, u64::from(tuning.audio_rate));
 
         spawn("melon_egui-remote-rx", &session, Session::receive_loop)?;
-        if ping {
-            spawn("melon_egui-remote-ping", &session, Session::probe_loop)?;
-        }
+        spawn("melon_egui-remote-ping", &session, Session::probe_loop)?;
         Ok(session)
     }
 
@@ -104,6 +102,12 @@ impl Session {
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.socket.local_addr()
+    }
+
+    /// What the session is doing, including whether the other end is still
+    /// answering.
+    pub fn stats(&self) -> RemoteStats {
+        self.counters.snapshot(self.epoch)
     }
 
     /// The remote player's current controls.
@@ -130,6 +134,14 @@ impl Session {
             let Ok((len, from)) = self.socket.recv_from(&mut buffer) else {
                 continue;
             };
+            // Someone else asking whether this host is free: it is not.
+            // Answered before the sender check, because the asker is by
+            // definition not the peer.
+            if from != self.remote && wire::kind_of(&buffer[..len]) == Some(Kind::Probe) {
+                let busy = wire::answer_probe(&buffer[..len], PeerState::Busy);
+                let _ = self.socket.send_to(&busy, from);
+                continue;
+            }
             if from != self.remote {
                 continue;
             }
@@ -166,8 +178,12 @@ impl Session {
                 {
                     counters.observe_rtt(Duration::from_micros(rtt));
                 }
+                counters.heard_from_peer(self.epoch);
             }
-            Kind::Hello | Kind::Welcome => {}
+            Kind::Probe => {
+                self.send(&wire::answer_probe(datagram, PeerState::Busy));
+            }
+            Kind::Hello | Kind::Welcome | Kind::ProbeReply => {}
         }
     }
 
@@ -237,11 +253,16 @@ fn spawn(name: &str, session: &Arc<Session>, body: fn(&Session)) -> io::Result<(
 
 /// Answer a client's `HELLO` on `socket`, returning where it came from.
 ///
-/// Blocks until one arrives, so the caller runs it off the UI thread.
-pub fn accept_hello(socket: &UdpSocket) -> io::Result<SocketAddr> {
+/// Blocks until one arrives or `cancel` is set, so the caller runs it off the
+/// UI thread. A `Probe` arriving meanwhile is answered "waiting", which is how
+/// a client that has not pressed Join yet learns that this host is ready.
+///
+/// # Errors
+/// [`io::ErrorKind::Interrupted`] when cancelled, or the socket's own error.
+pub fn accept_hello(socket: &UdpSocket, cancel: &AtomicBool) -> io::Result<SocketAddr> {
     socket.set_read_timeout(Some(Duration::from_millis(100)))?;
     let mut buffer = vec![0u8; MAX_DATAGRAM];
-    loop {
+    while !cancel.load(Ordering::Relaxed) {
         match socket.recv_from(&mut buffer) {
             Ok((len, client)) if wire::kind_of(&buffer[..len]) == Some(Kind::Hello) => {
                 let welcome = wire::header(Kind::Welcome);
@@ -252,22 +273,34 @@ pub fn accept_hello(socket: &UdpSocket) -> io::Result<SocketAddr> {
                 }
                 return Ok(client);
             }
+            Ok((len, from)) if wire::kind_of(&buffer[..len]) == Some(Kind::Probe) => {
+                // Best effort: a prober that has gone away is not an error.
+                let _ =
+                    socket.send_to(&wire::answer_probe(&buffer[..len], PeerState::Waiting), from);
+            }
             Ok(_) => continue,
             Err(ref error) if would_block(error) => continue,
             Err(error) => return Err(error),
         }
     }
+    Err(cancelled())
 }
 
-/// Announce to `host` on `socket` until it answers.
+/// Announce to `host` on `socket` until it answers or `cancel` is set.
 ///
-/// Retries, because on a VPN the first datagram after the tunnel comes up is
-/// the one most likely to be dropped.
-pub fn exchange_hello(socket: &UdpSocket, host: SocketAddr) -> io::Result<()> {
-    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+/// Never gives up on its own: someone may press Join before the other side has
+/// pressed Host, and should simply connect the moment they do. Until then the
+/// UI shows the host as not ready, and Stop sets `cancel`. Repeating the
+/// `HELLO` also covers a VPN dropping the first datagram after the tunnel
+/// comes up.
+///
+/// # Errors
+/// [`io::ErrorKind::Interrupted`] when cancelled, or the socket's own error.
+pub fn exchange_hello(socket: &UdpSocket, host: SocketAddr, cancel: &AtomicBool) -> io::Result<()> {
+    socket.set_read_timeout(Some(PING_INTERVAL))?;
     let hello = wire::header(Kind::Hello);
     let mut buffer = vec![0u8; MAX_DATAGRAM];
-    for _ in 0..10 {
+    while !cancel.load(Ordering::Relaxed) {
         socket.send_to(&hello, host)?;
         match socket.recv_from(&mut buffer) {
             Ok((len, from))
@@ -276,14 +309,30 @@ pub fn exchange_hello(socket: &UdpSocket, host: SocketAddr) -> io::Result<()> {
                 return Ok(());
             }
             Ok(_) => continue,
+            // Nothing listens there yet. A reset arrives at once rather than
+            // after the timeout, so the wait is paid here or this would spin.
+            Err(ref error) if error.kind() == io::ErrorKind::ConnectionReset => {
+                std::thread::sleep(PING_INTERVAL);
+            }
             Err(ref error) if would_block(error) => continue,
             Err(error) => return Err(error),
         }
     }
-    Err(io::Error::new(io::ErrorKind::TimedOut, format!("no answer from {host} after 10 attempts")))
+    Err(cancelled())
 }
 
-/// Whether a socket error is just the read timeout expiring.
-fn would_block(error: &io::Error) -> bool {
-    matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+/// The error a cancelled handshake returns.
+#[must_use]
+pub fn cancelled() -> io::Error {
+    io::Error::new(io::ErrorKind::Interrupted, "cancelled")
+}
+
+/// Whether a socket error only means "nothing yet": the read timeout expiring,
+/// or — on Windows, where an ICMP port-unreachable for an earlier send surfaces
+/// on the *next* receive — the other end not listening yet.
+pub(super) fn would_block(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::ConnectionReset
+    )
 }

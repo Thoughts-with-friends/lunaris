@@ -19,6 +19,7 @@ use egui::Context;
 use crate::{
     app::MelonEgui,
     file::settings as config,
+    i18n::I18nKey as K,
     mp::Kind,
     ui::{notice::Severity, view::AspectRatio},
     upscale,
@@ -49,7 +50,7 @@ use wireless::*;
 ///
 /// Serialisable so that whichever dialogs were open are reopened next run, the
 /// way a docked tool window would be.
-#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Pane {
     RomInfo,
     Power,
@@ -69,25 +70,31 @@ pub enum Pane {
 }
 
 impl Pane {
-    /// The window title, which is also its egui identity.
-    pub const fn title(self) -> &'static str {
+    /// The window title's key.
+    pub const fn title(self) -> K {
         match self {
-            Self::RomInfo => "ROM info",
-            Self::Power => "Power management",
-            Self::Cheats => "Cheat codes",
-            Self::Crash => "Why the console stopped",
-            Self::RamSearch => "RAM search",
-            Self::DateTime => "Date and time",
-            Self::Input => "Input and hotkeys",
-            Self::EmuSettings => "Emu settings",
-            Self::Preferences => "Preferences",
-            Self::VideoSettings => "Video settings",
-            Self::AudioSettings => "Audio settings",
-            Self::Wireless => "Wireless status",
-            Self::Interface => "Interface settings",
-            Self::Paths => "Path settings",
-            Self::About => "About melon_egui",
+            Self::RomInfo => K::RomInfo,
+            Self::Power => K::PowerManagement,
+            Self::Cheats => K::CheatCodesTitle,
+            Self::Crash => K::CrashTitle,
+            Self::RamSearch => K::RamSearch,
+            Self::DateTime => K::DateAndTime,
+            Self::Input => K::InputAndHotkeys,
+            Self::EmuSettings => K::EmuSettings,
+            Self::Preferences => K::PreferencesTitle,
+            Self::VideoSettings => K::VideoSettings,
+            Self::AudioSettings => K::AudioSettings,
+            Self::Wireless => K::WirelessStatus,
+            Self::Interface => K::InterfaceSettings,
+            Self::Paths => K::PathSettings,
+            Self::About => K::AboutTitle,
         }
+    }
+
+    /// The window's egui identity: the pane itself, never its title, so a
+    /// language switch keeps each window where it was and the same size.
+    pub fn id(self) -> egui::Id {
+        egui::Id::new(("melon_egui-pane", self))
     }
 }
 
@@ -95,7 +102,9 @@ impl Pane {
 pub fn show(app: &mut MelonEgui, ctx: &Context) {
     for pane in app.open_panes() {
         let mut open = true;
-        egui::Window::new(pane.title())
+        let title = app.i18n().s(pane.title());
+        egui::Window::new(title)
+            .id(pane.id())
             .open(&mut open)
             .resizable(matches!(
                 pane,
@@ -132,7 +141,7 @@ fn body(app: &mut MelonEgui, pane: Pane, ui: &mut egui::Ui) {
         Pane::Wireless => wireless(app, ui),
         Pane::Interface => interface(app, ui),
         Pane::Paths => paths(app, ui),
-        Pane::About => about(ui),
+        Pane::About => about(app, ui),
     }
 }
 

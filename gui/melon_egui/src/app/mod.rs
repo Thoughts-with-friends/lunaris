@@ -73,6 +73,8 @@ pub(crate) use gl_screen::FULL_CLIP;
 pub(crate) use lan_session::LanConnection;
 pub(crate) use net_address::{parse_lan_address, parse_remote_address};
 
+/// Every translatable string; `self.i18n().t(K::…)` turns one into text.
+pub(crate) use crate::i18n::I18nKey as K;
 pub(crate) use crate::ui::{
     layout::{guest_viewport_id, paint_screens, screen_panel, touch_coords, upload_screens},
     window::WindowConfig,
@@ -244,8 +246,10 @@ pub struct MelonEgui {
     /// [`Self::select_cheat`].
     pub cheat_selected: Option<usize>,
     /// Which system font is filling in for the characters egui's own fonts
-    /// cannot draw, for the Interface pane.
-    pub font_note: Notice,
+    /// cannot draw, or `None` if none was found. Kept as the path rather than
+    /// as a sentence, so the Interface pane says it in whatever language is
+    /// current — see [`Self::font_note`].
+    pub(crate) font_fallback: Option<PathBuf>,
     /// What the last stopped console left behind: the reason, the state of the
     /// airwaves, and the tail of the core's own log. Shown in a pane and
     /// written to a file, because a console that stops has to explain itself
@@ -303,6 +307,19 @@ pub struct MelonEgui {
     pub(crate) remote_client: Option<crate::remote::RemoteClient>,
     /// A Remote Desktop session being established off the UI thread.
     pub(crate) remote_pending: Option<Receiver<Result<RemoteSession, String>>>,
+    /// Set to abandon the pending handshake: Stop while a host is still
+    /// waiting, or a client still knocking. Present exactly while
+    /// `remote_pending` is.
+    pub(crate) remote_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Whether the pending handshake is this machine hosting (`true`) or
+    /// joining, for the readiness line.
+    pub(crate) remote_pending_host: bool,
+    /// Asks the Guest IP whether it is hosting, while this machine is not in a
+    /// session. `None` if its thread could not start.
+    pub(crate) remote_probe: Option<crate::remote::Prober>,
+    /// "Is the other machine ready?", recomputed every repaint from the
+    /// session's pings or the prober: red when not, green when it is.
+    pub remote_readiness: Notice,
     /// How Remote Desktop behaves, as the Wireless pane sets it.
     pub remote_tuning: crate::remote::Tuning,
     /// What the live Remote Desktop session is doing, sampled each repaint so

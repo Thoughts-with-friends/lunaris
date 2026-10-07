@@ -86,9 +86,18 @@ fn multiplayer_menu(app: &MelonEgui, ui: &mut Ui, m: &mut Picked) {
 fn remote_menu(app: &MelonEgui, ui: &mut Ui, m: &mut Picked) {
     ui.small(app.i18n().t(K::RemoteDesktopExplained));
     ui.separator();
+    // Whether the other machine is ready, red or green: the thing to look at
+    // before pressing either of the entries below.
+    ui.horizontal_wrapped(|ui| {
+        ui.strong(app.i18n().t(K::PartnerLabel));
+        app.remote_readiness.show(ui);
+    });
+    ui.separator();
     let (loaded, running) = (app.is_loaded(), app.remote_running());
     m.item(app, ui, loaded && !running, K::HostRemoteDesktop, Action::HostRemoteDesktop);
     m.item(app, ui, !running, K::JoinRemoteDesktop, Action::JoinRemoteDesktop);
+    // Also while one is still being set up: Stop is how a host gives up
+    // waiting, or a client gives up knocking.
     m.item(app, ui, running, K::StopRemoteDesktop, Action::StopRemoteDesktop);
     if let Some(stats) = app.remote_stats {
         ui.separator();

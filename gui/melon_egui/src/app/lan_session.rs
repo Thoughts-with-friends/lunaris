@@ -35,13 +35,17 @@ impl MelonEgui {
     /// Start hosting (`host`) or joining a LAN game, without blocking the UI.
     pub(crate) fn start_lan(&mut self, host: bool) {
         if self.lan_pending.is_some() {
-            self.post_warn("a LAN connection is already being established");
-            return;
+            return self.post_warn(self.i18n().s(K::LanAlreadyPending));
         }
         let Some(rom) = self.emu.as_ref().map(|emu| emu.rom_path.clone()) else {
-            self.post_warn("load a cart first");
-            return;
+            return self.post_warn(self.i18n().s(K::LoadCartFirst));
         };
+        // Checked here rather than only in the worker, so the complaint is in
+        // the UI's language and comes before the running cart is unloaded.
+        let typed = if host { &self.lan_bind_address } else { &self.lan_guest_address };
+        if parse_lan_address(typed, LAN_PORT).is_err() {
+            return self.post_error(self.i18n().f(K::InvalidAddress, &[typed]));
+        }
         self.unload_cart();
         self.lan_rom = Some(rom);
 
@@ -60,23 +64,18 @@ impl MelonEgui {
             Ok(receiver) => self.lan_pending = Some(receiver),
             Err(error) => {
                 self.lan_rom = None;
-                self.post_error(format!("cannot start LAN connection: {error}"));
-                return;
+                return self.post_error(self.i18n().f(K::LanCannotStart, &[&error]));
             }
         }
         // Saved on the attempt, so a retry does not mean typing it again.
         self.persist();
-        self.lan_room = if host { "Hosting LAN room" } else { "Joining LAN room" }.to_owned();
+        // The one field, not `self.i18n()`: `lan_room` is assigned below.
+        let tr = self.translations.get(self.language);
+        self.lan_room = tr.s(if host { K::LanRoomHosting } else { K::LanRoomJoining });
         let (status, message) = if host {
-            (
-                format!("Checking: waiting for guest on {bind}"),
-                format!("waiting for a LAN guest on {bind}"),
-            )
+            (tr.f(K::LanCheckingHost, &[&bind]), tr.f(K::LanWaitingGuest, &[&bind]))
         } else {
-            (
-                format!("Checking: connecting to {address}"),
-                format!("connecting to LAN host {address}"),
-            )
+            (tr.f(K::LanCheckingGuest, &[&address]), tr.f(K::LanConnectingHost, &[&address]))
         };
         self.lan_status = Notice::quiet(Severity::Info, status);
         self.post(message);
@@ -97,12 +96,10 @@ impl MelonEgui {
     pub(crate) fn poll_lan(&mut self) {
         let Some(result) = worker::take(&mut self.lan_pending) else { return };
         let Some(result) = result else {
-            self.post_error("LAN connection worker stopped unexpectedly");
-            return;
+            return self.post_error(self.i18n().s(K::LanWorkerStopped));
         };
         let Some(rom) = self.lan_rom.take() else {
-            self.post_warn("LAN connected, but no cart is loaded");
-            return;
+            return self.post_warn(self.i18n().s(K::LanNoCart));
         };
         let booted = result.and_then(|link| {
             let LanConnection { host, stats, pace, local_addr, remote_addr } = link;
@@ -116,19 +113,17 @@ impl MelonEgui {
                 self.lan_pace = Some(pace);
                 self.reload_cheats(&rom);
                 self.resume_fresh();
-                self.lan_status = Notice::quiet(
-                    Severity::Success,
-                    format!("Connected: local {local_addr}, remote {remote_addr}"),
-                );
-                self.lan_room = "LAN room connected".to_owned();
-                self.post_ok(format!("LAN game connected: {}", rom.display()));
+                let status = self.i18n().f(K::LanConnectedStatus, &[&local_addr, &remote_addr]);
+                self.lan_status = Notice::quiet(Severity::Success, status);
+                self.lan_room = self.i18n().s(K::LanRoomConnected);
+                self.post_ok(self.i18n().f(K::LanGameConnected, &[&rom.display()]));
             }
             Err(error) => {
                 self.drop_link();
-                self.lan_status =
-                    Notice::quiet(Severity::Error, format!("Connection check failed: {error}"));
-                self.lan_room = "LAN room offline".to_owned();
-                self.post_error(format!("LAN game failed: {error}"));
+                let status = self.i18n().f(K::LanCheckFailed, &[&error]);
+                self.lan_status = Notice::quiet(Severity::Error, status);
+                self.lan_room = self.i18n().s(K::LanRoomOffline);
+                self.post_error(self.i18n().f(K::LanGameFailed, &[&error]));
             }
         }
     }
@@ -159,7 +154,7 @@ fn lan_host(bind: &str, tuning: crate::lan::Tuning) -> Result<LanConnection, Str
                 host: Box::new(link),
             })
         })
-        .map_err(|e| format!("LAN host failed: {e}"))
+        .map_err(|e| e.to_string())
 }
 
 /// Worker body for the guest: say hello to the host until it answers. Blocks.
@@ -177,7 +172,7 @@ fn lan_guest(address: &str, tuning: crate::lan::Tuning) -> Result<LanConnection,
                 host: Box::new(link),
             })
         })
-        .map_err(|e| format!("LAN guest failed: {e}"))
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

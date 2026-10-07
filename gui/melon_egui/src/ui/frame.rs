@@ -55,6 +55,10 @@ impl eframe::App for MelonEgui {
             || self.guest.is_some()
         {
             ctx.request_repaint();
+        } else if self.remote_probe.is_some() {
+            // The partner's readiness changes with nobody touching the window:
+            // look again at the rate it is probed, so red turns green on its own.
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
     }
 

@@ -157,7 +157,7 @@ impl MelonEgui {
         self.collect_guest_notes();
         let stopped = stop_note.is_some();
         if let Some(note) = stop_note {
-            self.post_error(format!("console {note}"));
+            self.post_error(self.i18n().f(K::ConsoleNote, &[&note]));
             self.write_crash_report("console 0", &note);
         }
         (ran, stopped)
@@ -168,9 +168,10 @@ impl MelonEgui {
     fn collect_guest_notes(&mut self) {
         let finished = |app: &Self| app.guest.as_ref().is_some_and(crate::guest::Guest::finished);
         if let Some(note) = self.guest.as_ref().and_then(crate::guest::Guest::take_note) {
-            self.post_warn(format!("second instance {note}"));
+            self.post_warn(self.i18n().f(K::SecondConsoleNote, &[&note.render(self.i18n())]));
             if finished(self) {
-                self.write_crash_report("second instance", &note);
+                // The report is a diagnostic file, kept in English.
+                self.write_crash_report("second instance", &note.english());
             }
         }
         if finished(self) {
@@ -193,7 +194,7 @@ impl MelonEgui {
         self.frames_run += u64::from(ran);
         if stopped {
             self.paused = true;
-            self.post_error("core stopped");
+            self.post_error(self.i18n().s(K::CoreStopped));
         }
         if ran > 0 {
             self.upload(ctx, frame);
@@ -258,24 +259,19 @@ impl MelonEgui {
             // The CPU textures stop being refreshed under OpenGL.
             self.textures = None;
         }
+        let tr = self.i18n();
         if installed == self.video.renderer {
             self.post(match installed {
-                Renderer::Software => format!(
-                    "renderer: software{}",
-                    if self.video.threaded_software { ", threaded" } else { "" }
-                ),
-                _ => format!(
-                    "renderer: {} at {}x internal resolution",
-                    installed.label(),
-                    self.video.scale()
-                ),
+                Renderer::Software if self.video.threaded_software => {
+                    tr.s(K::RendererNowSoftwareThreaded)
+                }
+                Renderer::Software => tr.s(K::RendererNowSoftware),
+                _ => tr.f(K::RendererNowGl, &[&installed.label(tr), &self.video.scale()]),
             });
         } else {
-            self.post_warn(format!(
-                "could not create the {} renderer; on {} instead",
-                self.video.renderer.label(),
-                installed.label()
-            ));
+            self.post_warn(
+                tr.f(K::RendererFellBack, &[&self.video.renderer.label(tr), &installed.label(tr)]),
+            );
             self.video.renderer = installed;
             self.applied_renderer = Some(self.video.to_core());
         }
@@ -333,12 +329,9 @@ impl MelonEgui {
         // Debt earned at the old rate would lurch at the new one.
         self.frame_debt = 0.0;
         if self.speed_locked() {
-            self.post_warn(format!(
-                "speed {} (not applied: a second console is running)",
-                crate::speed::label(self.speed)
-            ));
+            self.post_warn(self.i18n().f(K::SpeedLocked, &[&crate::speed::label(self.speed)]));
         } else {
-            self.post(format!("speed {}", crate::speed::label(self.speed)));
+            self.post(self.i18n().f(K::SpeedNow, &[&crate::speed::label(self.speed)]));
         }
     }
 

@@ -41,7 +41,7 @@ jobs:
       - name: Test
         # `melon_egui` is excluded for the same reason as `lunaris`: see the note
         # in lint.yaml — its default feature builds the melonDS C++ core.
-        run: cargo nextest run --workspace --target ${{ matrix.job.target }} --exclude lunaris --exclude melon_egui
+        run: cargo nextest run --workspace --target ${{ matrix.job.target }} --exclude lunaris --exclude melon_egui --no-fail-fast
 
   # miri:
   #   runs-on: ubuntu-latest

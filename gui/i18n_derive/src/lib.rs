@@ -11,7 +11,8 @@ use quote::quote;
 /// # Rules
 ///
 /// - Each variant must have a `///` doc comment.
-/// - Multi-line docs are joined with `\n`.
+/// - Multi-line docs are joined with `\n`, except that a line ending in `\`
+///   continues on the next with a single space.
 /// - Only supports field-less enums.
 ///
 /// # Example
@@ -131,7 +132,20 @@ pub fn derive_i18n(input: TokenStream) -> TokenStream {
             panic!("missing doc comment for variant `{ident}`");
         }
 
-        let joined = docs.join("\n");
+        // A line ending in `\` continues on the next, as in a Rust string
+        // literal, so long English text can wrap in source without wrapping on
+        // screen; any other line break is kept.
+        let mut joined = String::new();
+        for line in &docs {
+            match joined.strip_suffix('\\') {
+                Some(head) => joined = format!("{} {line}", head.trim_end()),
+                None if joined.is_empty() => joined.push_str(line),
+                None => {
+                    joined.push('\n');
+                    joined.push_str(line);
+                }
+            }
+        }
 
         match_arms.push(quote! {
             Self::#ident => #joined

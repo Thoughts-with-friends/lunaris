@@ -55,7 +55,7 @@ impl MelonEgui {
             cheat_editor: CheatEditor::default(),
             cheat_selected: None,
             crash_report: None,
-            font_note: Notice::default(),
+            font_fallback: None,
             pads: crate::pad::Pads::new(),
             // Opened here rather than lazily: `CreationContext` already runs
             // after winit has taken the UI thread, and `Audio::spawn` puts the
@@ -89,6 +89,12 @@ impl MelonEgui {
             remote_host: None,
             remote_client: None,
             remote_pending: None,
+            remote_cancel: None,
+            remote_pending_host: false,
+            remote_probe: crate::remote::Prober::start()
+                .inspect_err(|e| log::warn!("no Remote Desktop prober: {e}"))
+                .ok(),
+            remote_readiness: Notice::default(),
             remote_tuning: settings.remote,
             remote_stats: None,
             bindings: settings.bindings.clone(),
@@ -100,8 +106,9 @@ impl MelonEgui {
             lan_guest_address: std::env::var("MELON_EGUI_LAN_ADDR")
                 .unwrap_or_else(|_| settings.lan_host_address.clone()),
             lan_bind_address: settings.lan_bind_address.clone(),
-            lan_status: Notice::quiet(Severity::Info, "LAN room is offline"),
-            lan_room: "No LAN room".to_owned(),
+            // Filled in below, once the strings can be looked up.
+            lan_status: Notice::default(),
+            lan_room: String::new(),
             instance2_settings,
             instance2_saved: String::new(),
             guest_textures: None,
@@ -132,20 +139,24 @@ impl MelonEgui {
             app.init_gl(gl);
         }
 
+        app.lan_status = Notice::quiet(Severity::Info, app.i18n().s(K::LanStatusOffline));
+        app.lan_room = app.i18n().s(K::LanNoRoom);
         // Logged at startup because a missing sound card is otherwise only
         // visible if the user opens Config > Audio settings.
         log::info!("{}", app.audio_status().text);
         // Before the theme, so the first frame drawn already has it: a ROM
         // title in kana is otherwise a row of boxes until something else
         // rebuilds the font atlas.
-        app.font_note = install_fonts(&cc.egui_ctx);
+        app.font_fallback = crate::fonts::install(&cc.egui_ctx);
+        let note = app.font_note();
+        log::log!(note.severity.level(), "{}", note.text);
         app.set_theme(&cc.egui_ctx, app.dark_theme);
         if settings.ui_scale > 0.0 {
             cc.egui_ctx.set_zoom_factor(settings.ui_scale);
         }
         match rom {
             Some(rom) => app.load(&rom),
-            None => app.post("no cart loaded — File ▸ Open ROM..."),
+            None => app.post(app.i18n().s(K::NoCartHint)),
         }
         // `--mp`, which only means anything once a cart is loaded.
         if launch_second && app.is_loaded() {
@@ -262,6 +273,32 @@ impl MelonEgui {
         self.language = language;
     }
 
+    /// Re-say the status lines that were stored as text, after the user picked
+    /// a new language.
+    ///
+    /// Only the idle wording: a line describing a live or pending connection
+    /// names addresses this cannot reconstruct, and is replaced by the next
+    /// event on that connection anyway. Not done in [`Self::set_language`],
+    /// which runs twice per repaint while the second window is open.
+    pub fn retranslate_idle_status(&mut self) {
+        let busy = self.lan_pending.is_some() || self.lan_stats.is_some() || self.remote_running();
+        if !busy {
+            self.lan_status = Notice::quiet(Severity::Info, self.i18n().s(K::LanStatusOffline));
+            self.lan_room = self.i18n().s(K::LanNoRoom);
+        }
+    }
+
+    /// Which font fills in for CJK text, said in the current language.
+    #[must_use]
+    pub fn font_note(&self) -> Notice {
+        match &self.font_fallback {
+            Some(path) => {
+                Notice::quiet(Severity::Success, self.i18n().f(K::CjkFallback, &[&path.display()]))
+            }
+            None => Notice::quiet(Severity::Warn, self.i18n().s(K::NoCjkFont)),
+        }
+    }
+
     /// The strings for the language currently in force.
     #[must_use]
     pub fn i18n(&self) -> &crate::i18n::I18nMap {
@@ -271,14 +308,5 @@ impl MelonEgui {
     /// Write the settings out, for a pane that changed one.
     pub fn save_settings(&self) {
         self.persist();
-    }
-}
-
-/// Install the CJK font fallback before the first frame (otherwise a ROM title
-/// in kana is a row of boxes), and say which font was used.
-fn install_fonts(ctx: &egui::Context) -> Notice {
-    match crate::fonts::install(ctx) {
-        Some(path) => Notice::new(Severity::Success, format!("CJK fallback: {}", path.display())),
-        None => Notice::new(Severity::Warn, "No CJK font found; Japanese text will show as boxes."),
     }
 }

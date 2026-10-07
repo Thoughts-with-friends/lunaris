@@ -57,7 +57,7 @@ impl MelonEgui {
     /// ask for.
     pub fn add_cheat(&mut self) {
         self.cheats.push(Cheat {
-            name: "New cheat".to_owned(),
+            name: self.i18n().s(K::NewCheat),
             enabled: false,
             ..Cheat::default()
         });
@@ -73,31 +73,32 @@ impl MelonEgui {
     /// character typed.
     pub fn commit_cheat_editor(&mut self) {
         let Some(index) = self.cheat_selected else {
-            self.post_error("no code selected");
+            self.post_error(self.i18n().s(K::CheatNoneSelected));
             return;
         };
         let editor = self.cheat_editor.clone();
         let code = match mch::parse_code(&editor.code) {
             Ok(code) => code,
             Err(token) => {
-                self.post_error(format!("not a 32-bit hex word: {token}"));
+                self.post_error(self.i18n().f(K::CheatBadWord, &[&token]));
                 return;
             }
         };
         let odd = !code.len().is_multiple_of(2);
         let empty = code.is_empty();
+        let unnamed = self.i18n().s(K::UnnamedCheat);
         let Some(cheat) = self.cheats.get_mut(index) else {
-            self.post_error("that code is no longer in the list");
+            self.post_error(self.i18n().s(K::CheatGone));
             return;
         };
-        cheat.name = if editor.name.trim().is_empty() { "Unnamed".to_owned() } else { editor.name };
+        cheat.name = if editor.name.trim().is_empty() { unnamed } else { editor.name };
         cheat.description = editor.notes;
         cheat.code = code;
         self.save_cheats();
         if empty {
-            self.post_warn("saved, but that code has no words in it");
+            self.post_warn(self.i18n().s(K::CheatSavedEmpty));
         } else if odd {
-            self.post_warn("saved, but that code has an odd number of words");
+            self.post_warn(self.i18n().s(K::CheatSavedOdd));
         }
     }
 
@@ -137,14 +138,14 @@ impl MelonEgui {
         // selected code, and deleting the last one leaves nothing to select --
         // so a deletion that waited for it could never be persisted at all.
         self.save_cheats();
-        self.post_ok(format!("removed {}", removed.name));
+        self.post_ok(self.i18n().f(K::CheatRemoved, &[&removed.name]));
     }
 
     /// Write the current list back to the cart's `.mch`.
     pub fn save_cheats(&mut self) {
         let Some(path) = self.cheat_file() else { return };
         match mch::save(&path, &self.cheats) {
-            Ok(()) => self.post_ok(format!("cheats written to {}", path.display())),
+            Ok(()) => self.post_ok(self.i18n().f(K::CheatsWritten, &[&path.display()])),
             Err(e) => self.post_error(e),
         }
     }
@@ -157,7 +158,7 @@ impl MelonEgui {
                 self.cheats = list;
                 // The list the selection indexed into is gone.
                 self.select_cheat(None);
-                self.post_ok(format!("{count} codes read from {}", path.display()));
+                self.post_ok(self.i18n().f(K::CheatsRead, &[&count, &path.display()]));
             }
             Err(e) => self.post_error(e),
         }
@@ -196,8 +197,8 @@ impl MelonEgui {
     pub fn ask_for_cheat_file(&mut self) {
         self.ask(
             DialogPurpose::ImportCheats,
-            crate::file::picker::Request::open("Open melonDS cheats")
-                .filter("melonDS cheats", &["mch"])
+            crate::file::picker::Request::open(self.i18n().s(K::PickOpenCheats))
+                .filter(self.i18n().t(K::FilterCheats), &["mch"])
                 .directory(self.dialog_dir("cheats")),
         );
     }
