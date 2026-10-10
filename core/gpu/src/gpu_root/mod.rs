@@ -5,6 +5,7 @@
 // Graphics Processing Unit (GPU) implementation for Nintendo DS
 /// Handles 2D and 3D rendering, VRAM management, and display output
 pub(crate) mod arm_rw;
+pub(crate) mod compose;
 pub(crate) mod draw_scanline;
 pub(crate) mod draw_scanline_3d;
 pub(crate) mod draw_sprite;
@@ -19,11 +20,8 @@ pub(crate) mod writer;
 
 use crate::gpu_2d::Gpu2DEngine;
 use crate::gpu_3d::structs::Gpu3D;
-use crate::gpu_root::register::{DispStatReg, PowerCtrlReg, VramBankCfg};
-use lunaris_ds_mem_const::{
-    VRAM_A_SIZE, VRAM_B_SIZE, VRAM_C_SIZE, VRAM_D_SIZE, VRAM_E_SIZE, VRAM_F_SIZE, VRAM_G_SIZE,
-    VRAM_H_SIZE, VRAM_I_SIZE,
-};
+use crate::gpu_root::register::{DispStatReg, PowerCtrlReg};
+use crate::vram::Vram;
 
 /// Graphics Processing Unit
 /// Manages 2D and 3D rendering for both screens
@@ -44,16 +42,8 @@ pub struct Gpu {
     /// Cycle counter
     cycles: u64,
 
-    /// VRAM Banks A-I (9 separate memory banks)
-    vram_a: Vec<u8>,
-    vram_b: Vec<u8>,
-    vram_c: Vec<u8>,
-    vram_d: Vec<u8>,
-    vram_e: Vec<u8>,
-    vram_f: Vec<u8>,
-    vram_g: Vec<u8>,
-    vram_h: Vec<u8>,
-    vram_i: Vec<u8>,
+    /// VRAM banks A-I and their mapping
+    pub vram: Vram,
 
     /// Palette memory for engine A (1024 bytes)
     palette_upper: Vec<u8>,
@@ -70,17 +60,6 @@ pub struct Gpu {
 
     /// Current vertical line counter
     pub vertical_count: u16,
-
-    /// VRAM bank configuration A-I
-    vramcnt_a: VramBankCfg,
-    vramcnt_b: VramBankCfg,
-    vramcnt_c: VramBankCfg,
-    vramcnt_d: VramBankCfg,
-    vramcnt_e: VramBankCfg,
-    vramcnt_f: VramBankCfg,
-    vramcnt_g: VramBankCfg,
-    vramcnt_h: VramBankCfg,
-    vramcnt_i: VramBankCfg,
 
     /// Power control register
     power_control_reg: PowerCtrlReg,
@@ -105,15 +84,7 @@ impl Gpu {
 
             cycles: 0,
 
-            vram_a: vec![0u8; VRAM_A_SIZE as usize],
-            vram_b: vec![0u8; VRAM_B_SIZE as usize],
-            vram_c: vec![0u8; VRAM_C_SIZE as usize],
-            vram_d: vec![0u8; VRAM_D_SIZE as usize],
-            vram_e: vec![0u8; VRAM_E_SIZE as usize],
-            vram_f: vec![0u8; VRAM_F_SIZE as usize],
-            vram_g: vec![0u8; VRAM_G_SIZE as usize],
-            vram_h: vec![0u8; VRAM_H_SIZE as usize],
-            vram_i: vec![0u8; VRAM_I_SIZE as usize],
+            vram: Vram::new(),
 
             palette_upper: vec![0u8; 1024],
             palette_lower: vec![0u8; 1024],
@@ -124,16 +95,6 @@ impl Gpu {
             display_status_arm9: DispStatReg::new(),
 
             vertical_count: 0,
-
-            vramcnt_a: VramBankCfg::new(),
-            vramcnt_b: VramBankCfg::new(),
-            vramcnt_c: VramBankCfg::new(),
-            vramcnt_d: VramBankCfg::new(),
-            vramcnt_e: VramBankCfg::new(),
-            vramcnt_f: VramBankCfg::new(),
-            vramcnt_g: VramBankCfg::new(),
-            vramcnt_h: VramBankCfg::new(),
-            vramcnt_i: VramBankCfg::new(),
 
             power_control_reg: PowerCtrlReg::new(),
         }
@@ -198,18 +159,10 @@ impl Gpu {
             self.set_bgvofs_b(0, i);
         }
 
-        // `Vec::clear` sets length to 0 rather than zeroing the fixed-size
-        // banks allocated in `Gpu::new`, which left every bank permanently
-        // empty (and any VRAM read/write out of range) after power-on.
-        self.vram_a.fill(0);
-        self.vram_b.fill(0);
-        self.vram_c.fill(0);
-        self.vram_d.fill(0);
-        self.vram_e.fill(0);
-        self.vram_f.fill(0);
-        self.vram_g.fill(0);
-        self.vram_h.fill(0);
-        self.vram_i.fill(0);
+        self.vram.reset();
+        self.palette_upper.fill(0);
+        self.palette_lower.fill(0);
+        self.oam.fill(0);
     }
 
     // moved struct Emulator;
@@ -217,28 +170,24 @@ impl Gpu {
 
     /// Get upper screen framebuffer data.
     ///
-    /// Engine A (`engine_upper`) drives the physical top screen by default;
-    /// `swap_display` (POWCNT1 bit) swaps the two engines' screen assignment.
-    /// The arms here were previously inverted, which routed Engine B's
-    /// (never rendered when only Engine A was active) buffer to the top
-    /// screen and made it appear permanently black. See CorgiDS
-    /// `GPU::get_upper_frame()`.
+    /// POWCNT1 bit 15 (`swap_display`) selects which engine drives which
+    /// screen: set = engine A on the upper screen (the usual configuration,
+    /// 0x820F after boot), clear = engine A on the lower screen.
     #[inline]
     pub fn get_upper_frame(&self, buffer: &mut [u32]) {
         let engine = match self.power_control_reg.swap_display {
-            true => &self.engine_lower,
-            false => &self.engine_upper,
+            true => &self.engine_upper,
+            false => &self.engine_lower,
         };
         engine.get_framebuffer(buffer);
     }
 
-    /// Get lower screen framebuffer data. See `get_upper_frame` for the
-    /// engine/screen mapping this mirrors.
+    /// Get lower screen framebuffer data. See `get_upper_frame`.
     #[inline]
     pub fn get_lower_frame(&self, buffer: &mut [u32]) {
         let engine = match self.power_control_reg.swap_display {
-            true => &self.engine_upper,
-            false => &self.engine_lower,
+            true => &self.engine_lower,
+            false => &self.engine_upper,
         };
         engine.get_framebuffer(buffer);
     }
@@ -267,16 +216,9 @@ impl Gpu {
         self.power_control_reg.swap_display
     }
 
-    /// Read from palette A
+    /// Read from palette A (`address` may be absolute; only bits 0-9 count).
     pub fn read_palette_a(&self, address: u32) -> u16 {
-        let address = address as usize;
-        if address + 1 < self.palette_upper.len() {
-            let lo = self.palette_upper[address] as u16;
-            let hi = self.palette_upper[address + 1] as u16;
-            lo | (hi << 8)
-        } else {
-            0
-        }
+        read_palette_value(&self.palette_upper, address & 0x3FE)
     }
 
     // moved vram_reader.rs
@@ -285,16 +227,9 @@ impl Gpu {
     // pub fn read_extpal_objb(&self, address: u32) -> u16
     // pub fn read_extpal_bgb(&self, address: u32) -> u16
 
-    /// Read from palette B
+    /// Read from palette B (`address` may be absolute; only bits 0-9 count).
     pub fn read_palette_b(&self, address: u32) -> u16 {
-        let address = address as usize;
-        if address + 1 < self.palette_lower.len() {
-            let lo = self.palette_lower[address] as u16;
-            let hi = self.palette_lower[address + 1] as u16;
-            lo | (hi << 8)
-        } else {
-            0
-        }
+        read_palette_value(&self.palette_lower, address & 0x3FE)
     }
 
     // moved arm_rw.rs

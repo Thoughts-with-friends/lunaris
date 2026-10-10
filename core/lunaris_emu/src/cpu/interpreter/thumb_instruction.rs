@@ -13,7 +13,7 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction = emu.get_cpu_mut(cpu_type).get_current_instr() & 0xFFFF;
     let cpu_id = emu.get_cpu(cpu_type).get_id();
 
-    if cpu_id > 0 {
+    if cpu_id > 0 && emu.config.test {
         #[cfg(feature = "tracing")]
         {
             if !cpu_id > 0 {
@@ -75,7 +75,7 @@ pub fn thumb_interpret(emu: &mut Emulator, cpu_type: CpuType) {
         }
     }
 
-    if cpu_id > 0 {
+    if cpu_id > 0 && emu.config.test {
         #[cfg(feature = "tracing")]
         tracing::error!("");
     }
@@ -345,7 +345,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             //     // println!("LSL {{{}}}, {{{}}}", destination, source);
             // }
             let mut reg = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
-            let shift = emu.get_cpu_mut(cpu_type).get_register(source as i32) as i32;
+            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32;
             reg = emu.get_cpu_mut(cpu_type).lsl(reg, shift, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
@@ -356,7 +356,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             //     // println!("LSR {{{}}}, {{{}}}", destination, source);
             // }
             let mut reg = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
-            let shift = emu.get_cpu_mut(cpu_type).get_register(source as i32) as i32;
+            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32;
             reg = emu.get_cpu_mut(cpu_type).lsr(reg, shift, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
@@ -367,7 +367,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
             //     // println!("ASR {{{}}}, {{{}}}", destination, source);
             // }
             let mut reg = emu.get_cpu_mut(cpu_type).get_register(destination as i32);
-            let shift = emu.get_cpu_mut(cpu_type).get_register(source as i32) as i32;
+            let shift = (emu.get_cpu_mut(cpu_type).get_register(source as i32) & 0xFF) as i32;
             reg = emu.get_cpu_mut(cpu_type).asr(reg, shift, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
@@ -398,7 +398,7 @@ pub fn thumb_alu_op(emu: &mut Emulator, cpu_type: CpuType) {
                 // println!("ROR {{{}}}, {{{}}}", destination, source);
             }
             let mut reg = emu.get_cpu(cpu_type).get_register(destination as i32);
-            let c = emu.get_cpu(cpu_type).get_register(source as i32);
+            let c = emu.get_cpu(cpu_type).get_register(source as i32) & 0xFF;
             reg = emu.get_cpu_mut(cpu_type).rotr32(reg, c, true);
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination as i32, reg);
@@ -565,9 +565,6 @@ pub fn thumb_hi_reg_op(emu: &mut Emulator, cpu_type: CpuType) {
                 // }
                 let value = emu.get_cpu(cpu_type).get_pc().wrapping_sub(1);
                 emu.get_cpu_mut(cpu_type).set_register(REG_LR as i32, value);
-            } else if emu.get_cpu(cpu_type).get_id() > 0 {
-                #[cfg(feature = "tracing")]
-                tracing::error!("BX {{{source}}}");
             }
             let new_addr = emu.get_cpu(cpu_type).get_register(source as i32);
             emu.get_cpu_mut(cpu_type).jp(new_addr, true);
@@ -664,8 +661,8 @@ pub fn thumb_load_reg_offset(emu: &mut Emulator, cpu_type: CpuType) {
     }
 }
 
-/// Thumb instruction: Load halfword
-pub fn thumb_load_halfword(emu: &mut Emulator, cpu_type: CpuType) {
+/// Thumb instruction: Store halfword (STRH Rd, [Rb, #imm])
+pub fn thumb_store_halfword(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu_mut(cpu_type).get_current_instr() as u16;
 
     let offset: u32 = (((instruction >> 6) & 0x1F) << 1) as u32;
@@ -686,8 +683,8 @@ pub fn thumb_load_halfword(emu: &mut Emulator, cpu_type: CpuType) {
     emu.write_halfword(address, value, cpu_type);
 }
 
-/// Thumb instruction: Store halfword
-pub fn thumb_store_halfword(emu: &mut Emulator, cpu_type: CpuType) {
+/// Thumb instruction: Load halfword (LDRH Rd, [Rb, #imm])
+pub fn thumb_load_halfword(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
     let offset: u32 = (((instruction >> 6) & 0x1F) << 1) as u32;
@@ -817,7 +814,7 @@ pub fn thumb_load_store_sign_halfword(emu: &mut Emulator, cpu_type: CpuType) {
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("LDSB {{{}}}, [{{{}}}, {{{}}}]", destination, base, offset);
             }
-            let extended_byte: u32 = emu.read_byte(address, cpu_type).into();
+            let extended_byte = emu.read_byte(address, cpu_type) as i8 as i32 as u32;
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination, extended_byte);
             emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
@@ -841,7 +838,7 @@ pub fn thumb_load_store_sign_halfword(emu: &mut Emulator, cpu_type: CpuType) {
             if emu.get_cpu(cpu_type).get_id() > 0 {
                 // println!("LDSH {{{}}}, [{{{}}}, {{{}}}]", destination, base, offset);
             }
-            let extended_halfword = emu.read_halfword(address, cpu_type) as u32;
+            let extended_halfword = emu.read_halfword(address, cpu_type) as i16 as i32 as u32;
             emu.get_cpu_mut(cpu_type)
                 .set_register(destination, extended_halfword);
             emu.get_cpu_mut(cpu_type).add_internal_cycles(1);

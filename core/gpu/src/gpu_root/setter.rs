@@ -217,56 +217,47 @@ impl Gpu {
 
     /// Set VRAM bank configuration A
     pub fn set_vramcnt_a(&mut self, value: u8) {
-        self.vramcnt_a.mst = (value & 0x7) as u32;
-        self.vramcnt_a.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(0, value);
     }
 
     /// Set VRAM bank configuration B
     pub fn set_vramcnt_b(&mut self, value: u8) {
-        self.vramcnt_b.mst = (value & 0x7) as u32;
-        self.vramcnt_b.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(1, value);
     }
 
     /// Set VRAM bank configuration C
     pub fn set_vramcnt_c(&mut self, value: u8) {
-        self.vramcnt_c.mst = (value & 0x7) as u32;
-        self.vramcnt_c.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(2, value);
     }
 
     /// Set VRAM bank configuration D
     pub fn set_vramcnt_d(&mut self, value: u8) {
-        self.vramcnt_d.mst = (value & 0x7) as u32;
-        self.vramcnt_d.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(3, value);
     }
 
     /// Set VRAM bank configuration E
     pub fn set_vramcnt_e(&mut self, value: u8) {
-        self.vramcnt_e.mst = (value & 0x7) as u32;
-        self.vramcnt_e.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(4, value);
     }
 
     /// Set VRAM bank configuration F
     pub fn set_vramcnt_f(&mut self, value: u8) {
-        self.vramcnt_f.mst = (value & 0x7) as u32;
-        self.vramcnt_f.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(5, value);
     }
 
     /// Set VRAM bank configuration G
     pub fn set_vramcnt_g(&mut self, value: u8) {
-        self.vramcnt_g.mst = (value & 0x7) as u32;
-        self.vramcnt_g.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(6, value);
     }
 
     /// Set VRAM bank configuration H
     pub fn set_vramcnt_h(&mut self, value: u8) {
-        self.vramcnt_h.mst = (value & 0x7) as u32;
-        self.vramcnt_h.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(7, value);
     }
 
     /// Set VRAM bank configuration I
     pub fn set_vramcnt_i(&mut self, value: u8) {
-        self.vramcnt_i.mst = (value & 0x7) as u32;
-        self.vramcnt_i.enabled = (value & 0x80) != 0;
+        self.vram.set_cnt(8, value);
     }
 
     /// Set POWCNT1 register value

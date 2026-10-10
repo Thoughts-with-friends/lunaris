@@ -5,6 +5,9 @@ impl Gpu {
     /// NOTE: 3D engine method
     pub fn render_scanline(&mut self, is_engine_a: bool, bg0_priority: u8) {
         let line = self.get_vcount() as usize;
+        if line >= self.engine_3d.z_buffer.len() {
+            return;
+        }
 
         // Rear plane
         let rear_z = (self.engine_3d.clear_depth * 0x200)

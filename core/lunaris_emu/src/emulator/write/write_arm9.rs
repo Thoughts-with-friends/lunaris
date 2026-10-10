@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
-use lunaris_ds_interrupts::Interrupt;
+use lunaris_ds_ipc::Side;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
@@ -14,7 +14,6 @@ impl Emulator {
     /// - DMA registers
     /// - IPC, FIFO
     /// - Cartridge AUX SPI registers
-    #[expect(clippy::match_same_arms)]
     pub fn arm9_write_word(&mut self, address: u32, word: u32) {
         // GPU / DMA / IPC / cartridge / I/O registers
         match address {
@@ -79,18 +78,17 @@ impl Emulator {
                 self.dma_fill[i] = word;
             }
             0x0400_0180 => {
-                self.ipc_sync_nds9.write(word as u16);
-                self.ipc_sync_nds7.receive_input(word as u16);
-                if word & (1 << 13) != 0 && self.ipc_sync_nds7.irq_enable {
-                    self.request_interrupt7(Interrupt::IpcSync);
+                let irq = self.ipc.write_sync(Side::Arm9, word as u16, 0xFFFF);
+                self.raise_ipc(irq);
+            }
+            0x0400_0184 => {
+                for irq in self.ipc.write_cnt(Side::Arm9, word as u16) {
+                    self.raise_ipc(irq);
                 }
             }
             0x0400_0188 => {
-                self.fifo7.write_queue(word);
-                if self.fifo7.request_nempty_irq {
-                    self.request_interrupt7(Interrupt::IpcFifoNempty);
-                    self.fifo7.request_nempty_irq = false;
-                }
+                let irq = self.ipc.send(Side::Arm9, word);
+                self.raise_ipc(irq);
             }
             0x0400_01A0 => {
                 self.cart.set_auxspicnt((word & 0xFFFF) as u16);
@@ -121,8 +119,16 @@ impl Emulator {
                 self.gpu.set_vramcnt_c(((word >> 16) & 0xFF) as u8);
                 self.gpu.set_vramcnt_d((word >> 24) as u8);
             }
-            0x0400_0290..=0x0400_029C => { /* Division registers, implement start_division */ }
-            0x0400_02B8..=0x0400_02BC => { /* Square root registers, implement start_sqrt */ }
+            0x0400_0280 => {
+                self.divcnt = (self.divcnt & 0xC000) | (word as u16 & 0x3);
+                self.start_division();
+            }
+            0x0400_0290..=0x0400_029C => self.write_div_operand(address, word),
+            0x0400_02B0 => {
+                self.sqrtcnt = word as u16 & 0x1;
+                self.start_sqrt();
+            }
+            0x0400_02B8..=0x0400_02BC => self.write_sqrt_param(address, word),
             0x0400_0304 => self.gpu.set_powcnt1((word & 0xFFFF) as u16),
             0x0400_0350 => self.gpu.set_clear_color(word),
             0x0400_0600 => self.set_gxstat(word), // self.gpu.set_gxstat(word) for Gpu3D
@@ -145,31 +151,8 @@ impl Emulator {
                     self.gpu.write_palette_b(address + 2, (word >> 16) as u16);
                 }
             }
-            VRAM_BGA_START..VRAM_BGB_START => {
-                self.gpu.write_bga(address, (word & 0xFFFF) as u16);
-                self.gpu.write_bga(address + 2, (word >> 16) as u16);
-            }
-            VRAM_BGB_START..VRAM_OBJA_START => {
-                self.gpu.write_bgb(address, (word & 0xFFFF) as u16);
-                self.gpu.write_bgb(address + 2, (word >> 16) as u16);
-            }
-            VRAM_OBJA_START..VRAM_OBJB_START => {
-                self.gpu.write_obja(address, (word & 0xFFFF) as u16);
-                self.gpu.write_obja(address + 2, (word >> 16) as u16);
-            }
-
-            VRAM_OBJB_START..VRAM_LCDC_A => {
-                self.gpu.write_objb(address, (word & 0xFFFF) as u16);
-                self.gpu.write_objb(address + 2, (word >> 16) as u16);
-            }
-
-            // LCDC-mapped VRAM (0x06800000-0x06FFFFFF). This range had no
-            // word arm at all, so word stores fell through to the `_ =>`
-            // warning and were lost, even though the halfword dispatch
-            // already handles it via `write_lcdc`.
-            VRAM_LCDC_A..OAM_START => {
-                self.gpu.write_lcdc(address, (word & 0xFFFF) as u16);
-                self.gpu.write_lcdc(address + 2, (word >> 16) as u16);
+            VRAM_BGA_START..OAM_START => {
+                self.gpu.write_vram_arm9(address & !3, &word.to_le_bytes());
             }
 
             OAM_START..GBA_ROM_START => {
@@ -212,29 +195,9 @@ impl Emulator {
             },
 
             // LCDC VRAM
-            VRAM_LCDC_A..OAM_START => {
-                self.gpu.write_lcdc(address, halfword);
-            }
-
-            // Background VRAM A
-            VRAM_BGA_START..VRAM_BGB_START => {
-                self.gpu.write_bga(address, halfword);
-            }
-
-            // Background VRAM B
-            VRAM_BGB_START..VRAM_OBJA_START => {
-                self.gpu.write_bgb(address, halfword);
-            }
-
-            // Object VRAM A
-            VRAM_OBJA_START..VRAM_OBJB_START => {
-                self.gpu.write_obja(address, halfword);
-            }
-
-            // Object VRAM B
-            VRAM_OBJB_START..VRAM_LCDC_A => {
-                self.gpu.write_objb(address, halfword);
-            }
+            VRAM_BGA_START..OAM_START => self
+                .gpu
+                .write_vram_arm9(address & !1, &halfword.to_le_bytes()),
 
             // OAM
             OAM_START..GBA_ROM_START => {
@@ -288,11 +251,17 @@ impl Emulator {
             0x04000048 => self.gpu.set_winin_a(halfword),
             0x0400004A => self.gpu.set_winout_a(halfword),
             0x0400004C => self.gpu.set_mosaic_a(halfword),
-            0x04000050 => self.gpu.set_bldcnt_a(halfword),
+            0x04000050 => {
+                self.gpu.set_bldcnt_a(halfword);
+            }
             0x04000052 => self.gpu.set_bldalpha_a(halfword),
-            0x04000054 => self.gpu.set_bldy_a(halfword as u8),
+            0x04000054 => {
+                self.gpu.set_bldy_a(halfword as u8);
+            }
             0x04000060 => self.gpu.set_disp3dcnt(halfword),
-            0x0400006C => self.gpu.set_master_bright_a(halfword),
+            0x0400006C => {
+                self.gpu.set_master_bright_a(halfword);
+            }
             // DMA0-3 SAD/DAD/CNT halfword sub-writes. Previously only the
             // control halfword (and DMA2's length) were wired here, so
             // source/destination addresses set via halfword stores (STRH)
@@ -333,21 +302,12 @@ impl Emulator {
             0x0400010C => self.nds_timing.write_lo(halfword, 7),
             0x0400010E => self.nds_timing.write_hi(halfword, 7),
             0x04000180 => {
-                self.ipc_sync_nds9.write(halfword);
-                self.ipc_sync_nds7.receive_input(halfword);
-                if (halfword & (1 << 13) != 0) && self.ipc_sync_nds7.irq_enable {
-                    self.request_interrupt7(Interrupt::IpcSync);
-                }
+                let irq = self.ipc.write_sync(Side::Arm9, halfword, 0xFFFF);
+                self.raise_ipc(irq);
             }
             0x04000184 => {
-                self.fifo9.write_cnt(halfword);
-                if self.fifo9.request_empty_irq {
-                    self.request_interrupt9(Interrupt::IpcFifoEmpty);
-                    self.fifo9.request_empty_irq = false;
-                }
-                if self.fifo9.request_nempty_irq {
-                    self.request_interrupt9(Interrupt::IpcFifoNempty);
-                    self.fifo9.request_nempty_irq = false;
+                for irq in self.ipc.write_cnt(Side::Arm9, halfword) {
+                    self.raise_ipc(irq);
                 }
             }
             0x040001A0 => self.cart.set_auxspicnt(halfword),
@@ -358,12 +318,27 @@ impl Emulator {
                 self.gpu.set_vramcnt_i((halfword >> 8) as u8);
             }
             0x04000280 => {
-                self.divcnt = halfword;
+                self.divcnt = (self.divcnt & 0xC000) | (halfword & 0x3);
                 self.start_division();
             }
+            0x04000290..=0x0400029E => {
+                // Halfword write into one operand word: merge with the other half.
+                let word_addr = address & !3;
+                let shift = (address & 2) * 8;
+                let current = self.arm9_read_word(word_addr);
+                let word = (current & !(0xFFFF << shift)) | (u32::from(halfword) << shift);
+                self.write_div_operand(word_addr, word);
+            }
             0x040002B0 => {
-                self.sqrtcnt = halfword;
+                self.sqrtcnt = halfword & 0x1;
                 self.start_sqrt();
+            }
+            0x040002B8..=0x040002BE => {
+                let word_addr = address & !3;
+                let shift = (address & 2) * 8;
+                let current = self.arm9_read_word(word_addr);
+                let word = (current & !(0xFFFF << shift)) | (u32::from(halfword) << shift);
+                self.write_sqrt_param(word_addr, word);
             }
             0x04000300 => self.postflg9 = (halfword & 0x1) as u8,
             0x04000304 => self.gpu.set_powcnt1(halfword),
@@ -399,9 +374,13 @@ impl Emulator {
             0x04001048 => self.gpu.set_winin_b(halfword),
             0x0400104A => self.gpu.set_winout_b(halfword),
             0x0400104C => self.gpu.set_mosaic_b(halfword),
-            0x04001050 => self.gpu.set_bldcnt_b(halfword),
+            0x04001050 => {
+                self.gpu.set_bldcnt_b(halfword);
+            }
             0x04001052 => self.gpu.set_bldalpha_b(halfword),
-            0x04001054 => self.gpu.set_bldy_b(halfword as u8),
+            0x04001054 => {
+                self.gpu.set_bldy_b(halfword as u8);
+            }
             0x0400106C => self.gpu.set_master_bright_b(halfword),
             0x04000330..0x04000340 => {} // EDGE_COLOR region (0x04000330 - 0x04000340)
             0x04000380..0x040003C0 => {
@@ -434,6 +413,13 @@ impl Emulator {
     pub fn arm9_write_byte(&mut self, address: u32, byte: u8) {
         // IO registers / special addresses
         match address {
+            0x04000181 => {
+                let irq = self
+                    .ipc
+                    .write_sync(Side::Arm9, u16::from(byte) << 8, 0xFF00);
+                self.raise_ipc(irq);
+            }
+            0x04000180 => {} // IPCSYNC low byte is read-only
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let idx = (address & MAIN_RAM_MASK) as usize;
@@ -471,10 +457,9 @@ impl Emulator {
             }
             // 0x0500_0000..0x0800_0000
             // PALETTE_START..GBA_ROM_START => {
-            VRAM_BGA_START..GBA_ROM_START => {
-                #[cfg(feature = "tracing")]
-                tracing::warn!("\nWarning: 8-bit write to VRAM ${address:08X}");
-            }
+            // 8-bit writes reach VRAM on the DS; OAM ignores them (GBATEK).
+            VRAM_BGA_START..OAM_START => self.gpu.write_vram_arm9(address, &[byte]),
+            OAM_START..GBA_ROM_START => {}
             _ => {
                 // Unrecognized byte write
                 #[cfg(feature = "tracing")]

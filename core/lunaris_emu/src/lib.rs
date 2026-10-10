@@ -9,4 +9,5 @@ mod error;
 mod firmware;
 mod spi;
 
+pub use cpu::arm_cpu::CpuType;
 pub use emulator::{Emulator, emu_config::Config};

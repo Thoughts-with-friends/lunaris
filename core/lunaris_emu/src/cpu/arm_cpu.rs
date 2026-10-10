@@ -15,11 +15,6 @@ pub const fn carry_add(a: u32, b: u32) -> bool {
 }
 
 #[inline]
-pub const fn carry_sub(a: u32, b: u32) -> bool {
-    a >= b
-}
-
-#[inline]
 pub const fn add_overflow(a: u32, b: u32, result: u32) -> bool {
     (((a ^ b) & 0x8000_0000) == 0) && (((a ^ result) & 0x8000_0000) != 0)
 }
@@ -204,6 +199,13 @@ pub struct ArmCpu {
     /// Currently executing instruction
     pub current_instr: u32,
 
+    /// Ring buffer of recent branch targets (debugging aid; see
+    /// [`Self::recent_pcs`]).
+    pc_history: [u32; PC_HISTORY_LEN],
+    pc_history_pos: usize,
+    /// Address of the most recently executed instruction.
+    pub last_pc: u32,
+
     /// Code waitstates [region][n32/s32/n16/s16]
     ///
     /// Organized by memory region and access type
@@ -219,7 +221,27 @@ pub struct ArmCpu {
     data_waitstates: [[i32; 4]; 16],
 }
 
+/// Number of branch targets kept in [`ArmCpu`]'s PC history.
+pub const PC_HISTORY_LEN: usize = 32;
+
 impl ArmCpu {
+    /// Records the address of the instruction about to execute; only
+    /// non-sequential addresses (branch targets) enter the history.
+    #[inline]
+    pub const fn record_pc(&mut self, pc: u32) {
+        if pc.wrapping_sub(self.last_pc) > 4 {
+            self.pc_history[self.pc_history_pos] = pc;
+            self.pc_history_pos = (self.pc_history_pos + 1) % PC_HISTORY_LEN;
+        }
+        self.last_pc = pc;
+    }
+
+    /// Recent branch targets, oldest first.
+    pub fn recent_pcs(&self) -> impl Iterator<Item = u32> + '_ {
+        let (newer, older) = self.pc_history.split_at(self.pc_history_pos);
+        older.iter().chain(newer).copied()
+    }
+
     /// Create a new ARM CPU
     pub fn new(cpu_id: i32, cpu_type: CpuType) -> Self {
         let mut code_waitstates: [[i32; 4]; 16] = [[0; 4]; 16];
@@ -326,7 +348,8 @@ impl ArmCpu {
             code_waitstates,
             cpu_id,
             data_waitstates,
-            exception_base: if cpu_id <= 0 { 0 } else { 0xFFFF0000 },
+            // ARM9 (id 0) boots with high vectors; ARM7 vectors are always at 0.
+            exception_base: if cpu_id == 0 { 0xFFFF_0000 } else { 0 },
             cpu_type,
             ..Default::default()
         }
@@ -346,10 +369,21 @@ impl ArmCpu {
     }
 
     /// Boot directly to an entry point
+    ///
+    /// Register values match what the DS BIOS leaves behind before jumping to
+    /// the cartridge (melonDS `NDS::SetupDirectBoot`).
     pub fn direct_boot(&mut self, entry_point: u32) {
         self.jp(entry_point, true);
         self.regs[12] = entry_point;
-        self.regs[13] = entry_point;
+        self.regs[14] = entry_point;
+        let (sp, sp_irq, sp_svc) = if self.cpu_id == 0 {
+            (0x0300_2F7C, 0x0300_3F80, 0x0300_3FC0)
+        } else {
+            (0x0380_FD80, 0x0380_FF80, 0x0380_FFC0)
+        };
+        self.regs[13] = sp;
+        self.sp_irq = sp_irq;
+        self.sp_svc = sp_svc;
         self.cpsr.mode = PsrMode::System;
     }
 
@@ -398,6 +432,11 @@ impl ArmCpu {
         self.cpsr.mode = PsrMode::Irq;
         self.cpsr.irq_disabled = true;
         self.jp(self.exception_base + 0x18, true);
+    }
+
+    /// Moves the exception vectors (ARM9 CP15 control bit 13).
+    pub const fn set_high_vectors(&mut self, high: bool) {
+        self.exception_base = if high { 0xFFFF_0000 } else { 0 };
     }
 
     /// Halt execution
@@ -666,87 +705,84 @@ impl ArmCpu {
     }
 
     // All data manipulation methods here
-    pub const fn andd(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
+    /// Writes an ALU result to `dst` and reports whether N/Z/C/V should
+    /// then be updated.
+    ///
+    /// For `dst == PC` the S bit means "exception return": CPSR is restored
+    /// from SPSR (register bank and Thumb state included) and the flags come
+    /// from the SPSR rather than from the result. Without S it is a plain
+    /// branch; ALU writes to PC never interwork, so the current state is
+    /// kept.
+    fn alu_writeback(&mut self, dst: u32, result: u32, set_flags: bool) -> bool {
+        if dst == REG_PC {
+            if set_flags {
+                self.spsr_to_cpsr();
+            }
+            self.jp(result, false);
+            false
+        } else {
+            self.set_register(dst as i32, result);
+            set_flags
+        }
+    }
+
+    pub fn andd(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
         let result = (src & operand) as u32;
-        self.set_register(dst, result);
-
-        if set_condition_codes {
+        if self.alu_writeback(dst as u32, result, set_condition_codes) {
             self.set_zero_neg_flags(result);
         }
     }
-    pub const fn orr(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
+
+    pub fn orr(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
         let result = (src | operand) as u32;
-        self.set_register(dst, result);
-
-        if set_condition_codes {
+        if self.alu_writeback(dst as u32, result, set_condition_codes) {
             self.set_zero_neg_flags(result);
         }
     }
+
     /// XOR
-    pub const fn eor(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
+    pub fn eor(&mut self, dst: i32, src: i32, operand: i32, set_condition_codes: bool) {
         let result = (src ^ operand) as u32;
-        self.set_register(dst, result);
-
-        if set_condition_codes {
+        if self.alu_writeback(dst as u32, result, set_condition_codes) {
             self.set_zero_neg_flags(result);
         }
     }
+
     pub fn add(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let unsigned_result: u64 = src.wrapping_add(operand) as u64; // FIXME?: It overflowed, but for now we'll just go along with how Cogi behaves
-
-        if dst == REG_PC {
-            if set_condition_codes {
-                #[cfg(feature = "tracing")]
-                tracing::error!("PC: dst and set_condition_codes is unsupported.");
-            } else {
-                self.jp((unsigned_result & 0xFFFFFFFF) as u32, true);
-            }
-        } else {
-            self.set_register(dst as i32, (unsigned_result & 0xFFFFFFFF) as u32);
-            if set_condition_codes {
-                self.cmp(src, operand);
-            }
+        let result = src.wrapping_add(operand);
+        if self.alu_writeback(dst, result, set_condition_codes) {
+            self.set_zero_neg_flags(result);
+            self.set_cv_add_flags(src, operand, result);
         }
     }
+
     pub fn sub(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let unsigned_result: u64 = src.wrapping_sub(operand) as u64; // FIXME?: It overflowed, but for now we'll just go along with how Cogi behaves
-
-        if dst == REG_PC {
-            if set_condition_codes {
-                let index = self.cpsr.mode as usize;
-                self.update_reg_mode(self.spsr[index].mode);
-                self.cpsr.set(self.spsr[index].get());
-                self.jp((unsigned_result & 0xFFFFFFFF) as u32, false);
-            } else {
-                self.jp((unsigned_result & 0xFFFFFFFF) as u32, true);
-            }
-        } else {
-            self.set_register(dst as i32, (unsigned_result & 0xFFFFFFFF) as u32);
-            if set_condition_codes {
-                self.cmp(src, operand);
-            }
+        let result = src.wrapping_sub(operand);
+        if self.alu_writeback(dst, result, set_condition_codes) {
+            self.set_zero_neg_flags(result);
+            self.set_cv_sub_flags(src, operand, result);
         }
     }
+
+    /// Add with carry: `src + operand + C`.
     pub fn adc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let carry = if self.cpsr.carry { 1 } else { 0 };
-        self.add(dst, src + carry, operand, set_condition_codes);
-
-        if set_condition_codes {
-            let temp = src + operand;
-            let res = temp + carry;
-            self.cpsr.carry = carry_add(src, operand) | carry_add(temp, carry);
-            self.cpsr.overflow = add_overflow(src, operand, temp) | add_overflow(temp, carry, res);
+        let wide = src as u64 + operand as u64 + self.cpsr.carry as u64;
+        let result = wide as u32;
+        if self.alu_writeback(dst, result, set_condition_codes) {
+            self.set_zero_neg_flags(result);
+            self.cpsr.carry = wide > 0xFFFF_FFFF;
+            self.cpsr.overflow = add_overflow(src, operand, result);
         }
     }
-    pub fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let borrow = if self.cpsr.carry { 0 } else { 1 };
-        self.add(dst, src + borrow, operand, set_condition_codes);
 
-        if set_condition_codes {
-            let temp = src + operand;
-            let res = temp - borrow;
-            self.cpsr.carry = carry_sub(src, operand) | carry_sub(temp, borrow);
-            self.cpsr.overflow = sub_overflow(src, operand, temp) | sub_overflow(temp, borrow, res);
+    /// Subtract with carry: `src - operand - !C`.
+    pub fn sbc(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
+        let borrow = !self.cpsr.carry as u32;
+        let result = src.wrapping_sub(operand).wrapping_sub(borrow);
+        if self.alu_writeback(dst, result, set_condition_codes) {
+            self.set_zero_neg_flags(result);
+            self.cpsr.carry = src as u64 >= operand as u64 + borrow as u64;
+            self.cpsr.overflow = sub_overflow(src, operand, result);
         }
     }
 
@@ -756,7 +792,7 @@ impl ArmCpu {
         self.set_cv_sub_flags(x, y, result);
     }
     pub const fn cmn(&mut self, x: u32, y: u32) {
-        let result = x + y;
+        let result = x.wrapping_add(y);
         self.set_zero_neg_flags(result);
         self.set_cv_add_flags(x, y, result);
     }
@@ -767,49 +803,31 @@ impl ArmCpu {
         self.set_zero_neg_flags(x ^ y);
     }
 
-    /// Executes `MOV Rd, operand`.
-    ///
-    /// Previously this only handled `MOV PC, ...` with the S-bit set (the
-    /// exception-return form); every ordinary `MOV Rd, #imm` / `MOV Rd, Rm`
-    /// fell through and silently discarded the operand, leaving `Rd`
-    /// unchanged. `Rd` must always receive `operand`, mirroring [`Self::mvn`].
+    /// Executes `MOV Rd, operand` (`MOVS PC, LR` is an exception return).
     pub fn mov(&mut self, dst: u32, operand: u32, alter_flags: bool) {
-        if dst == REG_PC {
-            if alter_flags {
-                let index = self.cpsr.mode;
-                self.update_reg_mode(self.spsr[index as usize].mode);
-                self.cpsr.set(self.spsr[index as usize].get());
-            }
-            self.jp(operand, true);
-        } else {
-            self.set_register(dst as i32, operand);
-            if alter_flags {
-                self.set_zero_neg_flags(operand);
-            }
+        if self.alu_writeback(dst, operand, alter_flags) {
+            self.set_zero_neg_flags(operand);
         }
     }
 
     pub const fn mul(&mut self, dst: u32, src: u32, operand: u32, set_condition_codes: bool) {
-        let result = (src * operand) as u64;
-        let truncated = (result & 0xFFFFFFFF) as u32;
-        self.set_register(dst as i32, truncated);
+        let result = src.wrapping_mul(operand);
+        self.set_register(dst as i32, result);
 
         if set_condition_codes {
-            self.set_zero_neg_flags(truncated);
-        }
-    }
-
-    pub const fn bic(&mut self, dst: u32, src: u32, operand: u32, alter_flags: bool) {
-        let result = src & !operand;
-        self.set_register(dst as i32, result);
-        if alter_flags {
             self.set_zero_neg_flags(result);
         }
     }
 
-    pub const fn mvn(&mut self, dst: u32, operand: u32, alter_flags: bool) {
-        self.set_register(dst as i32, !operand);
-        if alter_flags {
+    pub fn bic(&mut self, dst: u32, src: u32, operand: u32, alter_flags: bool) {
+        let result = src & !operand;
+        if self.alu_writeback(dst, result, alter_flags) {
+            self.set_zero_neg_flags(result);
+        }
+    }
+
+    pub fn mvn(&mut self, dst: u32, operand: u32, alter_flags: bool) {
+        if self.alu_writeback(dst, !operand, alter_flags) {
             self.set_zero_neg_flags(!operand);
         }
     }
@@ -897,7 +915,7 @@ impl ArmCpu {
     }
 
     pub const fn set_cv_add_flags(&mut self, a: u32, b: u32, result: u32) {
-        self.cpsr.carry = (0xFFFFFFFF - a) < b;
+        self.cpsr.carry = carry_add(a, b);
         self.cpsr.overflow = add_overflow(a, b, result);
     }
 
@@ -918,88 +936,68 @@ impl ArmCpu {
         }
     }
 
-    /// Shifts and rotates
+    /// Applies barrel-shifter flags: N/Z from `result`, C from `carry` when
+    /// the shift produced a carry-out (`None` leaves C unchanged).
+    const fn shift_flags(&mut self, result: u32, carry: Option<bool>, alter_flags: bool) {
+        if alter_flags {
+            self.set_zero_neg_flags(result);
+            if let Some(carry) = carry {
+                self.cpsr.carry = carry;
+            }
+        }
+    }
+
+    /// Logical shift left. `shift` is the effective amount (0 = no shift,
+    /// carry unchanged; 32 = result 0, carry = bit 0; >32 = 0, carry 0).
     pub const fn lsl(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
-        if shift == 0 {
-            if alter_flags {
-                self.set_zero_neg_flags(value);
-            }
-            return value;
-        }
-
-        if shift > 31 {
-            if alter_flags {
-                self.set_zero_neg_flags(0);
-                self.cpsr.carry = (value & (1 << 0)) != 0;
-            }
-            return 0;
-        }
-
-        let result = value << shift;
-        if alter_flags {
-            self.set_zero_neg_flags(result);
-            self.cpsr.carry = (value & (1 << (32 - shift))) != 0;
-        }
-
-        value << shift
-    }
-    /// Logical shift left by 32 or more bits.
-    ///
-    /// Unreachable in practice: `lsl()` already inlines this case for
-    /// `shift > 31`, and CorgiDS never defines its own `lsl_32` either (it is
-    /// declared in `cpu.hpp` but has no body and no callers). Implemented
-    /// here to mirror the sibling `lsr_32`/`asr_32` helpers instead of
-    /// panicking if anything comes to call it.
-    pub const fn lsl_32(&mut self, value: u32, alter_flags: bool) -> u32 {
-        if alter_flags {
-            self.set_zero_neg_flags(0);
-            self.cpsr.carry = (value & 1) != 0;
-        }
-        0
-    }
-
-    pub const fn lsr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
-        if shift > 31 {
-            return self.lsr_32(value, alter_flags);
-        }
-        let result = value >> shift;
-        if alter_flags {
-            self.set_zero_neg_flags(result);
-            if shift > 0 {
-                self.cpsr.carry = (value & (1 << (shift - 1))) != 0;
-            }
-        }
+        let (result, carry) = match shift as u32 {
+            0 => (value, None),
+            s @ 1..=31 => (value << s, Some((value >> (32 - s)) & 1 != 0)),
+            32 => (0, Some(value & 1 != 0)),
+            _ => (0, Some(false)),
+        };
+        self.shift_flags(result, carry, alter_flags);
         result
     }
-    pub const fn lsr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
-        if alter_flags {
-            self.set_zero_neg_flags(0);
-            self.cpsr.carry = (value & (1 << 31)) != 0;
-        }
-        0
+
+    /// Logical shift left by 32 bits.
+    pub const fn lsl_32(&mut self, value: u32, alter_flags: bool) -> u32 {
+        self.lsl(value, 32, alter_flags)
     }
 
+    /// Logical shift right. Callers translate the immediate encoding
+    /// `LSR #0` (meaning 32) themselves; `shift == 0` here means no shift.
+    pub const fn lsr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
+        let (result, carry) = match shift as u32 {
+            0 => (value, None),
+            s @ 1..=31 => (value >> s, Some((value >> (s - 1)) & 1 != 0)),
+            32 => (0, Some(value >> 31 != 0)),
+            _ => (0, Some(false)),
+        };
+        self.shift_flags(result, carry, alter_flags);
+        result
+    }
+
+    pub const fn lsr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
+        self.lsr(value, 32, alter_flags)
+    }
+
+    /// Arithmetic (sign-filling) shift right; amounts >= 32 fill with bit 31.
     pub const fn asr(&mut self, value: u32, shift: i32, alter_flags: bool) -> u32 {
-        if shift > 31 {
-            return self.asr_32(value, alter_flags);
-        }
-        let result = value >> shift;
-        if alter_flags {
-            self.set_zero_neg_flags(result);
-            if shift > 0 {
-                self.cpsr.carry = (value & (1 << (shift - 1))) != 0;
-            }
-        }
+        let (result, carry) = match shift as u32 {
+            0 => (value, None),
+            s @ 1..=31 => (
+                ((value as i32) >> s) as u32,
+                Some((value >> (s - 1)) & 1 != 0),
+            ),
+            _ => (((value as i32) >> 31) as u32, Some(value >> 31 != 0)),
+        };
+        self.shift_flags(result, carry, alter_flags);
         result
     }
 
     pub const fn asr_32(&mut self, value: u32, alter_flags: bool) -> u32 {
-        let result = value >> 31;
-        if alter_flags {
-            self.set_zero_neg_flags(result);
-            self.cpsr.carry = (value & (1 << 31)) != 0;
-        }
-        result
+        self.asr(value, 32, alter_flags)
     }
 
     pub const fn rrx(&mut self, value: u32, alter_flags: bool) -> u32 {
@@ -1018,21 +1016,16 @@ impl ArmCpu {
         result
     }
 
-    pub const fn rotr32(&mut self, n: u32, mut c: u32, alter_flags: bool) -> u32 {
-        const MASK: u32 = 0x1F;
-
-        if alter_flags && (c > 0) {
-            self.cpsr.carry = (n & (1 << (c - 1))) != 0;
-        };
-        c &= MASK;
-
-        let neg_c = -(c as i32);
-        let result = (n >> c) | (n << (neg_c & MASK as i32));
-
-        if alter_flags {
-            self.set_zero_neg_flags(result);
+    /// Rotate right. `c == 0` leaves the value and carry unchanged; any other
+    /// amount rotates by `c % 32` with carry = bit 31 of the result (so a
+    /// multiple of 32 yields the value unchanged and carry = bit 31).
+    pub const fn rotr32(&mut self, n: u32, c: u32, alter_flags: bool) -> u32 {
+        if c == 0 {
+            self.shift_flags(n, None, alter_flags);
+            return n;
         }
-
+        let result = n.rotate_right(c & 0x1F);
+        self.shift_flags(result, Some(result >> 31 != 0), alter_flags);
         result
     }
 }

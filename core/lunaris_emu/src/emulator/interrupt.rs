@@ -4,8 +4,25 @@
 //!
 use crate::emulator::Emulator;
 use lunaris_ds_interrupts::Interrupt;
+use lunaris_ds_ipc::{IpcIrq, IrqRequest, Side};
 
 impl Emulator {
+    /// Raises an IRQ produced as a side effect of an IPC register access.
+    pub fn raise_ipc(&mut self, request: Option<IrqRequest>) {
+        let Some((side, irq)) = request else {
+            return;
+        };
+        let id = match irq {
+            IpcIrq::Sync => Interrupt::IpcSync,
+            IpcIrq::SendEmpty => Interrupt::IpcFifoEmpty,
+            IpcIrq::RecvNotEmpty => Interrupt::IpcFifoNempty,
+        };
+        match side {
+            Side::Arm9 => self.request_interrupt9(id),
+            Side::Arm7 => self.request_interrupt7(id),
+        }
+    }
+
     /// Request an interrupt for ARM7.
     pub fn request_interrupt7(&mut self, id: Interrupt) {
         self.int7_reg.irq_flags |= 1 << (id as u32);

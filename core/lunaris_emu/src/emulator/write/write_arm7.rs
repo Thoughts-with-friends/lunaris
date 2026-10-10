@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
 use lunaris_ds_interrupts::Interrupt;
+use lunaris_ds_ipc::Side;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
@@ -20,23 +21,15 @@ impl Emulator {
                 self.main_ram[off..off + 4].copy_from_slice(&word.to_le_bytes());
             }
 
-            // Shared WRAM
-            SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wram_cnt {
-                    0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
-                    1 => address & 0x3FFF,            // First half
-                    2 => (address & 0x3FFF) + 0x4000, // Second half
-                    3 => address & 0x7FFF,            // Entire 32 KB
-                    _ => return,
-                } as usize;
-
-                self.arm7_wram[off..off + 4].copy_from_slice(&word.to_le_bytes());
-            }
-
-            // ARM7 WRAM
-            ARM7_WRAM_START..IO_REGS_START => {
-                let off = (address & ARM7_WRAM_MASK) as usize;
-                self.arm7_wram[off..off + 4].copy_from_slice(&word.to_le_bytes());
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &mut self.arm7_wram
+                } else {
+                    &mut self.shared_wram
+                };
+                mem[off..off + 4].copy_from_slice(&word.to_le_bytes());
             }
 
             // Direct IO write (word)
@@ -77,21 +70,18 @@ impl Emulator {
             0x04000120 | 0x04000128 => {} // SIODATA32 ignored | write ignored
 
             0x04000180 => {
-                self.ipc_sync_nds7.write(word as u16);
-                self.ipc_sync_nds9.receive_input(word as u16);
-
-                // IPCSYNC interrupt
-                if (word & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
-                    self.request_interrupt9(Interrupt::IpcSync);
-                }
+                let irq = self.ipc.write_sync(Side::Arm7, word as u16, 0xFFFF);
+                self.raise_ipc(irq);
             }
 
-            0x04000188 => {
-                self.fifo9.write_queue(word);
-                if self.fifo9.request_nempty_irq {
-                    self.request_interrupt9(Interrupt::IpcFifoNempty);
-                    self.fifo9.request_nempty_irq = false;
+            0x04000184 => {
+                for irq in self.ipc.write_cnt(Side::Arm7, word as u16) {
+                    self.raise_ipc(irq);
                 }
+            }
+            0x04000188 => {
+                let irq = self.ipc.send(Side::Arm7, word);
+                self.raise_ipc(irq);
             }
 
             0x040001A4 => self.cart.set_romctrl(word),
@@ -130,29 +120,22 @@ impl Emulator {
     #[expect(clippy::match_same_arms)]
     pub fn arm7_write_halfword(&mut self, address: u32, halfword: u16) {
         match address {
+            0x06000000..0x07000000 => self.gpu.write_arm7_u16(address, halfword),
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let off = (address & MAIN_RAM_MASK) as usize;
                 self.main_ram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
             }
 
-            // Shared WRAM
-            SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wram_cnt {
-                    0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
-                    1 => address & 0x3FFF,            // First half
-                    2 => (address & 0x3FFF) + 0x4000, // Second half
-                    3 => address & 0x7FFF,            // Entire 32 KB
-                    _ => return,
-                } as usize;
-
-                self.arm7_wram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
-            }
-
-            // ARM7 WRAM
-            ARM7_WRAM_START..IO_REGS_START => {
-                let off = (address & ARM7_WRAM_MASK) as usize;
-                self.arm7_wram[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &mut self.arm7_wram
+                } else {
+                    &mut self.shared_wram
+                };
+                mem[off..off + 2].copy_from_slice(&halfword.to_le_bytes());
             }
 
             // IO register halfword writes
@@ -205,28 +188,13 @@ impl Emulator {
             0x04000138 => self.rtc.write(halfword, false),
 
             0x04000180 => {
-                self.ipc_sync_nds7.write(halfword);
-                self.ipc_sync_nds9.receive_input(halfword);
-
-                // Trigger IPCSYNC interrupt if enabled
-                if (halfword & (1 << 13)) != 0 && self.ipc_sync_nds9.irq_enable {
-                    self.request_interrupt9(Interrupt::IpcSync);
-                }
+                let irq = self.ipc.write_sync(Side::Arm7, halfword, 0xFFFF);
+                self.raise_ipc(irq);
             }
 
             0x04000184 => {
-                self.fifo7.write_cnt(halfword);
-
-                // FIFO empty IRQ
-                if self.fifo7.request_empty_irq {
-                    self.request_interrupt7(Interrupt::IpcFifoEmpty);
-                    self.fifo7.request_empty_irq = false;
-                }
-
-                // FIFO non-empty IRQ
-                if self.fifo7.request_nempty_irq {
-                    self.request_interrupt7(Interrupt::IpcFifoNempty);
-                    self.fifo7.request_nempty_irq = false;
+                for irq in self.ipc.write_cnt(Side::Arm7, halfword) {
+                    self.raise_ipc(irq);
                 }
             }
 
@@ -244,7 +212,7 @@ impl Emulator {
             0x040001C0 => self.spi.set_spicnt(halfword),
             0x040001C2 => {
                 if self.spi.write_spidata((halfword & 0xFF) as u8) {
-                    self.requesting_interrupt(7);
+                    self.request_interrupt7(Interrupt::Spi);
                 }
             }
 
@@ -297,27 +265,27 @@ impl Emulator {
 
     pub fn arm7_write_byte(&mut self, address: u32, byte: u8) {
         match address {
+            0x04000181 => {
+                let irq = self
+                    .ipc
+                    .write_sync(Side::Arm7, u16::from(byte) << 8, 0xFF00);
+                self.raise_ipc(irq);
+            }
+            0x04000180 => {} // IPCSYNC low byte is read-only
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 self.main_ram[(address & MAIN_RAM_MASK) as usize] = byte;
             }
 
-            // ARM7 WRAM
-            ARM7_WRAM_START..IO_REGS_START => {
-                self.arm7_wram[(address & ARM7_WRAM_MASK) as usize] = byte;
-            }
-
-            // Shared WRAM
-            SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wram_cnt {
-                    0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
-                    1 => address & 0x3FFF,            // First half
-                    2 => (address & 0x3FFF) + 0x4000, // Second half
-                    3 => address & 0x7FFF,            // Entire 32 KB
-                    _ => return,
-                } as usize;
-
-                self.shared_wram[off] = byte;
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &mut self.arm7_wram
+                } else {
+                    &mut self.shared_wram
+                };
+                mem[off] = byte;
             }
 
             // IO register byte writes
@@ -332,7 +300,7 @@ impl Emulator {
 
             0x040001C2 => {
                 if self.spi.write_spidata(byte) {
-                    self.requesting_interrupt(7);
+                    self.request_interrupt7(Interrupt::Spi);
                 }
             }
 

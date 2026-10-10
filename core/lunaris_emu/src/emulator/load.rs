@@ -63,6 +63,14 @@ impl Emulator {
     {
         let rom_path = rom_path.as_ref();
         self.cartridge_load_rom(rom_path)?;
+        if !self.spi.firmware.is_loaded() {
+            // Falls back to the bundled firmware image when no (or an
+            // unreadable) firmware path is configured.
+            if let Err(_err) = self.spi.init(&self.config.firmware_path) {
+                #[cfg(feature = "tracing")]
+                tracing::error!("Failed to load firmware: {_err}");
+            }
+        }
         #[cfg(feature = "tracing")]
         tracing::error!("self.cart.rom bytes: {:08X}", self.cart.rom.len());
         self.power_on();

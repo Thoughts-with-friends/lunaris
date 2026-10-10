@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: (C) 2017 PSISP
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::Emulator;
-use lunaris_ds_interrupts::Interrupt;
+use lunaris_ds_ipc::Side;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
@@ -56,7 +56,8 @@ impl Emulator {
             0x040000E4 => self.dma_fill[1],
             0x040000E8 => self.dma_fill[2],
             0x040000EC => self.dma_fill[3],
-            0x04000180 => self.ipc_sync_nds9.read().into(),
+            0x04000180 => self.ipc.read_sync(Side::Arm9).into(),
+            0x04000184 => self.ipc.read_cnt(Side::Arm9).into(),
             0x040001A4 => self.cart.get_romctrl(),
             0x04000208 => self.int9_reg.ime,
             0x04000210 => self.int9_reg.irq_enable,
@@ -92,11 +93,8 @@ impl Emulator {
             }
             0x04004000 | 0x04004008 => 0,
             0x04100000 => {
-                let word = self.fifo7.read_queue();
-                if self.fifo7.request_empty_irq {
-                    self.request_interrupt7(Interrupt::IpcFifoEmpty);
-                    self.fifo7.request_empty_irq = false;
-                }
+                let (word, irq) = self.ipc.receive(Side::Arm9);
+                self.raise_ipc(irq);
                 word
             }
             0x04100010 => self.cart.get_output(),
@@ -114,9 +112,7 @@ impl Emulator {
             0x04000640..0x04000680 => self.gpu.read_clip_mtx(address),
             0x04000680..0x040006A4 => self.gpu.read_vec_mtx(address),
 
-            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga_u32(address),
-            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb_u32(address),
-            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc_u32(address),
+            VRAM_BGA_START..OAM_START => u32::from_le_bytes(self.gpu.read_vram_arm9(address & !3)),
             OAM_START..GBA_ROM_START => self.gpu.read_oam_u32(address),
 
             _ => {
@@ -176,9 +172,8 @@ impl Emulator {
                     self.gpu.read_palette_b(address)
                 }
             }
-            VRAM_OBJA_START..VRAM_OBJB_START => self.gpu.read_obja_u16(address), // VRAM OBJ A/B
-            VRAM_OBJB_START..VRAM_LCDC_A => self.gpu.read_objb_u16(address),
-            VRAM_LCDC_A..VRAM_LCDC_END => self.gpu.read_lcdc_u16(address), // VRAM LCDC
+            VRAM_BGA_START..OAM_START => u16::from_le_bytes(self.gpu.read_vram_arm9(address & !1)),
+            OAM_START..GBA_ROM_START => self.gpu.read_oam_u16(address & !1),
             0x0400_0000 => self.gpu.get_dispcnt_a() as u16,
             0x0400_0004 => self.gpu.get_dispstat9(),
             0x0400_0006 => self.gpu.get_vcount(),
@@ -207,8 +202,8 @@ impl Emulator {
             0x0400_0108 => self.nds_timing.read_lo(6),
             0x0400_010C => self.nds_timing.read_lo(7),
             0x0400_0130 => self.key_input.get_value(),
-            0x0400_0180 => self.ipc_sync_nds9.read(),
-            0x0400_0184 => self.fifo9.read_cnt(),
+            0x0400_0180 => self.ipc.read_sync(Side::Arm9),
+            0x0400_0184 => self.ipc.read_cnt(Side::Arm9),
             0x0400_01A0 => self.cart.get_auxspicnt(),
             0x0400_0204 => self.ex_mem_cnt,
             0x0400_0208 => self.int9_reg.ime as u16,
@@ -232,11 +227,7 @@ impl Emulator {
             0x0400_106c => self.gpu.get_master_bright_b(),
             0x0400_0630..0x0400_0636 => self.gpu.read_vec_test(address),
             _ => {
-                if (VRAM_BGA_START..VRAM_BGB_START).contains(&address) {
-                    self.gpu.read_bga_u16(address)
-                } else if (VRAM_BGB_START..VRAM_OBJA_START).contains(&address) {
-                    self.gpu.read_bgb_u16(address)
-                } else if address >= GBA_ROM_START {
+                if address >= GBA_ROM_START {
                     0xFFFF
                 } else {
                     #[cfg(feature = "tracing")]
@@ -259,6 +250,10 @@ impl Emulator {
     pub fn arm9_read_byte(&self, address: u32) -> u8 {
         // I/O registers
         match address {
+            0x04000180 => self.ipc.read_sync(Side::Arm9) as u8,
+            0x04000181 => (self.ipc.read_sync(Side::Arm9) >> 8) as u8,
+            0x04000184 => self.ipc.read_cnt(Side::Arm9) as u8,
+            0x04000185 => (self.ipc.read_cnt(Side::Arm9) >> 8) as u8,
             MAIN_RAM_START..SHARED_WRAM_START => self.main_ram[(address & MAIN_RAM_MASK) as usize], // Main RAM
             SHARED_WRAM_START..IO_REGS_START => {
                 // Shared WRAM
@@ -286,11 +281,9 @@ impl Emulator {
                     (self.gpu.read_palette_b(address) & 0xFF) as u8
                 }
             }
-            VRAM_BGA_START..VRAM_BGB_START => self.gpu.read_bga_u8(address),
-            VRAM_BGB_START..VRAM_OBJA_START => self.gpu.read_bgb_u8(address),
-            VRAM_LCDC_A..OAM_START => self.gpu.read_lcdc_u8(address), // VRAM LCDC
+            VRAM_BGA_START..OAM_START => self.gpu.read_vram_arm9::<1>(address)[0],
             OAM_START..GBA_ROM_START => self.gpu.read_oam_u8(address), // OAM
-            GBA_ROM_START.. => 0xFF,                                  // GBA ROM
+            GBA_ROM_START.. => 0xFF,                                   // GBA ROM
             _ => {
                 // Palette memory
                 #[cfg(feature = "tracing")]

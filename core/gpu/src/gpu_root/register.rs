@@ -131,7 +131,7 @@ pub struct PowerCtrlReg {
     pub geometry_3d: bool,
     /// Engine B power (2D lower screen)
     pub engine_lower: bool,
-    /// Swap upper/lower display screens
+    /// POWCNT1 bit 15: 1 = engine A drives the upper screen, 0 = lower.
     pub swap_display: bool,
 }
 
@@ -164,10 +164,10 @@ impl PowerCtrlReg {
             value |= 8;
         }
         if self.engine_lower {
-            value |= 16;
+            value |= 1 << 9;
         }
         if self.swap_display {
-            value |= 32;
+            value |= 1 << 15;
         }
         value
     }
@@ -178,8 +178,10 @@ impl PowerCtrlReg {
         self.engine_upper = (value & 2) != 0;
         self.rendering_3d = (value & 4) != 0;
         self.geometry_3d = (value & 8) != 0;
-        self.engine_lower = (value & 16) != 0;
-        self.swap_display = (value & 32) != 0;
+        // GBATEK "DS Power Control": bit 9 = 2D engine B, bit 15 = display
+        // swap (1 = engine A on the upper screen).
+        self.engine_lower = (value & (1 << 9)) != 0;
+        self.swap_display = (value & (1 << 15)) != 0;
     }
 }
 

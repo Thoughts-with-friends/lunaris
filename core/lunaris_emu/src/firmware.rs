@@ -5,31 +5,7 @@ use std::{fs::File, io::Read as _};
 use crate::error::{EmuError, FailedReadFileSnafu};
 use snafu::ResultExt as _;
 
-/// Firmware commands
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum FirmwareCommand {
-    /// No command
-    #[default]
-    None = 0,
-    /// Read status register
-    ReadStatusReg = 1,
-    /// Read data stream
-    ReadStream = 2,
-}
-
-impl FirmwareCommand {
-    /// Convert numeric value to FirmwareCommand
-    pub fn from_value(val: u32) -> Self {
-        match val {
-            1 => Self::ReadStatusReg,
-            2 => Self::ReadStream,
-            _ => Self::None,
-        }
-    }
-}
-
-/// Nintendo DS Firmware
-/// Stores firmware data and manages SPI communication
+/// SPI flash holding the DS firmware / user settings.
 #[derive(Debug)]
 pub struct Firmware {
     /// Firmware data (262 KB)
@@ -39,12 +15,14 @@ pub struct Firmware {
     /// User data section
     pub(crate) user_data: i32,
 
-    /// Current command
-    command_id: FirmwareCommand,
+    /// Current SPI flash command byte (valid while `selected`).
+    command: u8,
+    /// Chip select is held: the next byte continues `command`.
+    selected: bool,
+    /// Bytes received for the current command, including the command byte.
+    data_pos: u32,
     /// Current address
     address: u32,
-    /// Total arguments for command
-    total_args: i32,
 }
 
 impl Firmware {
@@ -57,9 +35,10 @@ impl Firmware {
             raw_firmware: vec![0_u8; Self::SIZE],
             status_reg: 0,
             user_data: 0,
-            command_id: FirmwareCommand::None,
+            command: 0,
+            selected: false,
+            data_pos: 0,
             address: 0,
-            total_args: 0,
         }
     }
 
@@ -158,7 +137,7 @@ impl Firmware {
         }
 
         // Reset command and status registers
-        self.command_id = FirmwareCommand::None;
+        self.release();
         self.status_reg = 0;
 
         // Always return 0 in C++ version; here we return loaded size
@@ -246,39 +225,83 @@ impl Firmware {
     /// Transfer data byte via SPI
     /// Input: byte to send to firmware
     /// Returns: byte received from firmware
+    /// Clocks one byte through the SPI flash (melonDS `FirmwareMem::Write`).
+    ///
+    /// The first byte after chip select is the command; for READ (0x03) /
+    /// FAST READ (0x0B) the next three bytes are a big-endian address and
+    /// every following byte streams data out. Returns the byte shifted out.
     pub fn transfer_data(&mut self, input: u8) -> u8 {
-        match self.command_id {
-            FirmwareCommand::None => {
-                // Parse command byte
-                self.command_id = FirmwareCommand::from_value(input as u32);
-                self.total_args = 0;
-                self.address = 0;
-                0x00
-            }
-            FirmwareCommand::ReadStatusReg => {
-                // Return status register
-                self.command_id = FirmwareCommand::None;
-                self.status_reg
-            }
-            FirmwareCommand::ReadStream => {
-                // Return firmware data byte
-                if (self.address as usize) < self.raw_firmware.len() {
-                    let byte = self.raw_firmware[self.address as usize];
+        if !self.selected {
+            self.selected = true;
+            self.command = input;
+            self.data_pos = 1;
+            self.address = 0;
+            return 0;
+        }
+
+        let pos = self.data_pos;
+        self.data_pos = self.data_pos.saturating_add(1);
+        match self.command {
+            // READ / FAST READ (FAST READ has one extra dummy byte)
+            0x03 | 0x0B => {
+                let data_start = if self.command == 0x0B { 5 } else { 4 };
+                if pos < 4 {
+                    self.address = (self.address << 8) | u32::from(input);
+                    0
+                } else if pos < data_start {
+                    0
+                } else {
+                    let len = self.raw_firmware.len() as u32;
+                    let byte = self.raw_firmware[(self.address % len) as usize];
                     self.address = self.address.wrapping_add(1);
                     byte
-                } else {
-                    0x00
                 }
             }
+            0x04 => {
+                self.status_reg &= !0x02; // WRDI
+                0
+            }
+            0x05 => self.status_reg, // RDSR
+            0x06 => {
+                self.status_reg |= 0x02; // WREN
+                0
+            }
+            // PAGE WRITE / PAGE PROGRAM
+            0x0A | 0x02 => {
+                if pos < 4 {
+                    self.address = (self.address << 8) | u32::from(input);
+                } else if self.status_reg & 0x02 != 0 {
+                    let len = self.raw_firmware.len() as u32;
+                    self.raw_firmware[(self.address % len) as usize] = input;
+                    self.address = self.address.wrapping_add(1);
+                }
+                0
+            }
+            // RDID: manufacturer / device ID
+            0x9F => match pos {
+                1 => 0x20,
+                2 => 0x40,
+                3 => 0x12,
+                _ => 0,
+            },
+            _ => 0xFF,
         }
     }
 
-    /// Deselect firmware (end SPI transfer)
-    #[expect(unused)]
-    pub fn deselect(&mut self) {
-        self.command_id = FirmwareCommand::None;
-        self.address = 0;
-        self.total_args = 0;
+    /// Chip select released (SPICNT bit 11 clear after a transfer): the next
+    /// byte starts a new command. Write commands also drop the write latch.
+    pub fn release(&mut self) {
+        if self.selected && matches!(self.command, 0x0A | 0x02) {
+            self.status_reg &= !0x02;
+        }
+        self.selected = false;
+        self.command = 0;
+        self.data_pos = 0;
+    }
+
+    /// Whether a firmware image has been loaded (user settings located).
+    pub const fn is_loaded(&self) -> bool {
+        self.user_data != 0
     }
 }
 

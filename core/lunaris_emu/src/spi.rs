@@ -129,30 +129,42 @@ impl SPIBus {
         self.touchscreen.press_event(x, y);
     }
 
-    /// Read from SPI data register
+    /// Read from SPI data register (0 while the bus is disabled).
     pub fn read_spidata(&self) -> u8 {
-        if self.spicnt.enabled { 0 } else { self.output }
+        if self.spicnt.enabled { self.output } else { 0 }
     }
 
-    /// Write to SPI data register
+    /// Write to SPI data register: clocks one byte through the selected
+    /// device. When SPICNT bit 11 (chip select hold) is clear the device is
+    /// released afterwards, ending the current command.
     ///
-    /// true => must call `emulator.requesting_interrupt(7);`
+    /// Returns `true` if the SPI transfer-complete IRQ must be raised.
     pub fn write_spidata(&mut self, data: u8) -> bool {
-        if self.spicnt.enabled {
-            self.spicnt.busy = false;
-
-            // Process transfer based on device selection
-            self.output = match self.spicnt.device {
-                1 => self.firmware.transfer_data(data),    // Firmware device
-                2 => self.touchscreen.transfer_data(data), // Touchscreen device
-                _ => 0,                                    // Power management or unknown device
-            };
-
-            if self.spicnt.irq_after_transfer {
-                return true;
-            }
+        if !self.spicnt.enabled {
+            return false;
         }
-        false
+        self.spicnt.busy = false;
+
+        let hold = self.spicnt.chipselect_hold;
+        self.output = match self.spicnt.device {
+            1 => {
+                let out = self.firmware.transfer_data(data);
+                if !hold {
+                    self.firmware.release();
+                }
+                out
+            }
+            2 => {
+                let out = self.touchscreen.transfer_data(data);
+                if !hold {
+                    self.touchscreen.deselect();
+                }
+                out
+            }
+            _ => 0, // power management: not emulated
+        };
+
+        self.spicnt.irq_after_transfer
     }
 
     /// Get SPI control register

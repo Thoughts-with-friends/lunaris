@@ -4,9 +4,10 @@
 //! gpu3d.hpp
 
 use crate::Emulator;
-use lunaris_ds_gpu::gpu_3d::consts::{CMD_PARAM_AMOUNTS, SCANLINES};
+use lunaris_ds_gpu::gpu_3d::consts::CMD_PARAM_AMOUNTS;
 use lunaris_ds_gpu::gpu_3d::structs::GxCommand;
 use lunaris_ds_interrupts::Interrupt;
+use lunaris_ds_mem_const::SCANLINES;
 
 impl Emulator {
     /// - Instead of

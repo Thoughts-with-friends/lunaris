@@ -13,10 +13,15 @@ use std::{path::PathBuf, time::Instant};
 
 /// Swaps the R and B channels of 0xAARRGGBB pixels in place, converting them
 /// to the 0xAABBGGRR byte layout that `ColorImage::from_rgba_unmultiplied`
-/// reads as little-endian RGBA.
+/// reads as little-endian RGBA. The DS screen is always opaque, so alpha is
+/// forced to 0xFF (a powered-off engine leaves zeroed, fully transparent
+/// pixels in its framebuffer).
 fn swap_red_blue(buffer: &mut [u32]) {
     for px in buffer {
-        *px = (*px & 0xFF00_FF00) | ((*px & 0x00FF_0000) >> 16) | ((*px & 0x0000_00FF) << 16);
+        *px = 0xFF00_0000
+            | (*px & 0x0000_FF00)
+            | ((*px & 0x00FF_0000) >> 16)
+            | ((*px & 0x0000_00FF) << 16);
     }
 }
 
@@ -230,6 +235,7 @@ impl App {
         let mut upper_buffer = vec![0_u32; PIXEL];
         let mut lower_buffer = vec![0_u32; PIXEL];
 
+        Self::apply_keys(ctx, emu);
         emu.run();
         emu.get_upper_frame(&mut upper_buffer);
         emu.get_lower_frame(&mut lower_buffer);
@@ -261,8 +267,48 @@ impl App {
             ui.add_space(8.0);
 
             if let Some(tex) = lower_tex.as_ref() {
-                ui.add(egui::Image::new(tex).fit_to_exact_size(tex.size_vec2() * scale));
+                let resp = ui.add(
+                    egui::Image::new(tex)
+                        .fit_to_exact_size(tex.size_vec2() * scale)
+                        .sense(egui::Sense::click_and_drag()),
+                );
+                // Stylus: map the pointer inside the lower screen to DS pixels.
+                let touch = resp
+                    .interact_pointer_pos()
+                    .filter(|_| resp.is_pointer_button_down_on())
+                    .map(|pos| {
+                        let rel = (pos - resp.rect.min) / resp.rect.size();
+                        (
+                            (rel.x * PIXELS_PER_LINE as f32).clamp(0.0, 255.0) as i32,
+                            (rel.y * SCANLINES as f32).clamp(0.0, 191.0) as i32,
+                        )
+                    });
+                match touch {
+                    Some((x, y)) => emu.touchscreen_press(x, y),
+                    None => emu.touchscreen_press(0, 0xFFF),
+                }
             }
+        });
+    }
+
+    /// Keyboard -> DS buttons. Arrows = D-pad, X = A, Z = B, S = X, A = Y,
+    /// Q = L, W = R, Enter = START, Backspace = SELECT.
+    fn apply_keys(ctx: &egui::Context, emu: &mut Emulator) {
+        use egui::Key;
+        ctx.input(|i| {
+            let k = &mut emu.key_input;
+            k.up = i.key_down(Key::ArrowUp);
+            k.down = i.key_down(Key::ArrowDown);
+            k.left = i.key_down(Key::ArrowLeft);
+            k.right = i.key_down(Key::ArrowRight);
+            k.button_a = i.key_down(Key::X);
+            k.button_b = i.key_down(Key::Z);
+            k.button_l = i.key_down(Key::Q);
+            k.button_r = i.key_down(Key::W);
+            k.start = i.key_down(Key::Enter);
+            k.select = i.key_down(Key::Backspace);
+            emu.ext_key_in.button_x = i.key_down(Key::S);
+            emu.ext_key_in.button_y = i.key_down(Key::A);
         });
     }
 

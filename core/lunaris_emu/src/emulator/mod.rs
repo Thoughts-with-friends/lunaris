@@ -21,7 +21,6 @@ use crate::cpu::coprocessor_15::Cp15;
 use lunaris_ds_audio::SPU;
 use lunaris_ds_gpu::gpu_root::{Gpu, register::SchedulerEvent};
 use lunaris_ds_mem_const::*;
-use std::collections::VecDeque;
 
 use crate::cpu::arm_cpu::CpuType;
 use crate::dma::NDSDma;
@@ -29,7 +28,7 @@ use crate::spi::SPIBus;
 use emu_config::{BiosMem, Config, ExtKeyInReg, KeyInputReg, PowCnt2Reg};
 use lunaris_ds_cartridge::NDSCart;
 use lunaris_ds_interrupts::InterruptRegs;
-use lunaris_ds_ipc::{IpcFifo, IpcSync};
+use lunaris_ds_ipc::Ipc;
 use lunaris_ds_rtc::RealTimeClock;
 use lunaris_ds_timers::NDSTiming;
 use lunaris_ds_wifi::WiFi;
@@ -70,14 +69,8 @@ pub struct Emulator {
     pub gpu_event: SchedulerEvent,
     pub dma_event: SchedulerEvent,
 
-    /// IPC and FIFO
-    pub ipc_sync_nds9: IpcSync,
-    pub ipc_sync_nds7: IpcSync,
-    pub fifo7: IpcFifo,
-    pub fifo9: IpcFifo,
-
-    pub fifo7_queue: VecDeque<u32>, // std::queue<uint32_t>
-    pub fifo9_queue: VecDeque<u32>, // std::queue<uint32_t>
+    /// IPCSYNC / IPCFIFO registers and queues for both CPUs
+    pub ipc: Ipc,
     pub aux_spi_cnt: u16,
 
     pub int7_reg: InterruptRegs,
@@ -171,12 +164,7 @@ impl Emulator {
             next_event_time: Default::default(),
             gpu_event: Default::default(),
             dma_event: Default::default(),
-            ipc_sync_nds9: Default::default(),
-            ipc_sync_nds7: Default::default(),
-            fifo7: Default::default(),
-            fifo9: Default::default(),
-            fifo7_queue: Default::default(),
-            fifo9_queue: Default::default(),
+            ipc: Default::default(),
             aux_spi_cnt: Default::default(),
             int7_reg: Default::default(),
             int9_reg: Default::default(),
@@ -239,27 +227,107 @@ impl Emulator {
         unimplemented!("It is not used in C++ and has no definition.");
     }
 
-    /// Start hardware division unit.
-    /// Start division operation
-    pub const fn start_division(&mut self) {
-        if let Some(div_result) = self.div_numer.checked_div(self.div_denom) {
-            self.div_result = div_result;
-            self.div_remresult = self.div_numer % self.div_denom;
+    /// Runs the hardware divider (DIVCNT 0x04000280) on the current operands.
+    ///
+    /// Results are available immediately, so the busy bit never shows.
+    /// Follows GBATEK "DS Maths" and melonDS `NDS::DivDone`: signed
+    /// 32/32, 64/32 (mode 1 and 3) or 64/64 division; division by zero
+    /// yields quotient = -1 (or +1 for a negative numerator) and remainder =
+    /// numerator, and bit 14 flags a zero 64-bit denominator.
+    pub fn start_division(&mut self) {
+        let mode = self.divcnt & 0x3;
+        let num64 = self.div_numer as i64;
+        let den64 = self.div_denom as i64;
+
+        let (quot, rem): (i64, i64) = if mode == 0 {
+            let num = num64 as i32;
+            let den = den64 as i32;
+
+            if den == 0 {
+                (if num < 0 { 1 } else { -1 }, i64::from(num))
+            } else if num == i32::MIN && den == -1 {
+                // Overflow: the 32-bit result is sign-extended oddly.
+                (0x8000_0000, 0)
+            } else {
+                (i64::from(num / den), i64::from(num % den))
+            }
+        } else {
+            let den = if mode == 2 {
+                den64
+            } else {
+                i64::from(den64 as i32)
+            };
+
+            if den == 0 {
+                (if num64 < 0 { 1 } else { -1 }, num64)
+            } else if num64 == i64::MIN && den == -1 {
+                (i64::MIN, 0)
+            } else {
+                (num64 / den, num64 % den)
+            }
+        };
+
+        // In 32-bit mode a zero numerator/denominator produces -1 in the low
+        // word only; the upper word still follows the sign.
+        let quot = if mode == 0 && (self.div_denom as u32) == 0 {
+            let lo = quot as u32;
+            let hi: u32 = if (num64 as i32) < 0 { 0xFFFF_FFFF } else { 0 };
+            (u64::from(hi) << 32 | u64::from(lo)) as i64
+        } else {
+            quot
+        };
+
+        self.div_result = quot as u64;
+        self.div_remresult = rem as u64;
+        if self.div_denom == 0 {
+            self.divcnt |= 1 << 14;
+        } else {
+            self.divcnt &= !(1 << 14);
         }
     }
 
-    /// Start hardware square root unit.
+    /// Writes one 32-bit half of a divider operand and restarts the division.
+    pub fn write_div_operand(&mut self, address: u32, word: u32) {
+        let (field, high) = match address & 0xC {
+            0x0 => (&mut self.div_numer, false),
+            0x4 => (&mut self.div_numer, true),
+            0x8 => (&mut self.div_denom, false),
+            _ => (&mut self.div_denom, true),
+        };
+        *field = if high {
+            (*field & 0xFFFF_FFFF) | (u64::from(word) << 32)
+        } else {
+            (*field & !0xFFFF_FFFF) | u64::from(word)
+        };
+        self.start_division();
+    }
+
+    /// Runs the square root unit (SQRTCNT 0x040002B0): floor(sqrt(param)),
+    /// with a 32-bit (bit 0 clear) or 64-bit (bit 0 set) input.
     pub fn start_sqrt(&mut self) {
-        self.sqrt_result = (self.sqrt_param as f64).sqrt() as u32;
+        let param = if self.sqrtcnt & 1 != 0 {
+            self.sqrt_param
+        } else {
+            self.sqrt_param & 0xFFFF_FFFF
+        };
+        self.sqrt_result = param.isqrt() as u32;
+    }
+
+    /// Writes one 32-bit half of the square root input and restarts it.
+    pub fn write_sqrt_param(&mut self, address: u32, word: u32) {
+        self.sqrt_param = if address & 4 != 0 {
+            (self.sqrt_param & 0xFFFF_FFFF) | (u64::from(word) << 32)
+        } else {
+            (self.sqrt_param & !0xFFFF_FFFF) | u64::from(word)
+        };
+        self.start_sqrt();
     }
 
     /* ===== power and run (public) ===== */
 
     /// Power on the system.
     pub fn power_on(&mut self) {
-        for bg in &mut self.config.bg_enable {
-            *bg = true;
-        }
+        let _ = &mut self.config.bg_enable.fill(true);
         self.cycle_count = 0;
         self.arm9.power_on();
         self.arm7.power_on();
@@ -310,14 +378,7 @@ impl Emulator {
         self.ext_key_in.pen_down = false;
         self.ext_key_in.hinge_closed = false;
 
-        self.ipc_sync_nds7.input = 0;
-        self.ipc_sync_nds9.input = 0;
-        self.fifo7.write_cnt(0);
-        self.fifo7.error = false;
-        self.fifo9.write_cnt(0);
-        self.fifo9.error = false;
-        self.fifo7.recent_word = 0;
-        self.fifo9.recent_word = 0;
+        self.ipc.reset();
 
         // self.main_ram.clear();
         // self.shared_wram.clear();
@@ -374,6 +435,8 @@ impl Emulator {
         // Initialize CPUs and regs to after-boot values
         self.arm9.direct_boot(boot_info[1]);
         self.arm7.direct_boot(boot_info[5]);
+        self.arm9_cp15.direct_boot();
+        self.arm9.set_high_vectors(self.arm9_cp15.high_vectors());
 
         // Write the ROM chip-id into main RAM
         self.arm7_write_word(0x027FF800, 0x00003FC2);
@@ -477,6 +540,15 @@ impl Emulator {
                 self.int7_reg.irq_enable,
                 self.int7_reg.irq_flags
             );
+        }
+    }
+
+    /// Whether any enabled interrupt is requested (IE & IF), ignoring IME.
+    /// This is what releases a halted CPU.
+    pub const fn irq_line_raised(&self, cpu_id: i32) -> bool {
+        match cpu_id {
+            0 => (self.int9_reg.irq_enable & self.int9_reg.irq_flags) != 0,
+            _ => (self.int7_reg.irq_enable & self.int7_reg.irq_flags) != 0,
         }
     }
 
@@ -604,11 +676,17 @@ impl Emulator {
         // NOTE: It appears that next_event_time < system_timestamp is in accordance with CorgiDS specifications.
         // (This is counterintuitive and the reason is unclear.)
 
+        // Advance the scheduler to the next event, but at most
+        // `SLICE_CYCLES` bus cycles so that CPU interleaving (IPC, IRQ
+        // latency) stays fine-grained. A larger slice = fewer loop
+        // iterations = faster emulation (CorgiDS used 20).
+        // const SLICE_CYCLES: i32 = 64;
+        const SLICE_CYCLES: i32 = 64;
         let cycles = self.next_event_time.wrapping_sub(self.system_timestamp) as i32;
-        match cycles {
-            1..=20 => self.system_timestamp += cycles as u64,
-            _ => self.system_timestamp += 20,
-        }
+        self.system_timestamp += match cycles {
+            1..=SLICE_CYCLES => cycles as u64,
+            _ => SLICE_CYCLES as u64,
+        };
     }
 
     /* ===== touchscreen (public) ===== */

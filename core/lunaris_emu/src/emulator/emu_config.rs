@@ -37,6 +37,10 @@ pub struct Config {
 
     /// Test mode
     pub test: bool,
+
+    /// Debugging aid: print every executed instruction of the selected CPU
+    /// (bit 0 = ARM9, bit 1 = ARM7) to stderr.
+    pub trace_cpus: u8,
 }
 
 impl Default for Config {
@@ -60,6 +64,7 @@ impl Config {
             enable_framelimiter: Default::default(),
             hle_bios: true,
             test: Default::default(),
+            trace_cpus: 0,
         }
     }
 }

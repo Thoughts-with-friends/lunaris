@@ -33,122 +33,16 @@ impl Gpu {
     fn draw_scanline_for_engine(&mut self, is_engine_a: bool) {
         let line_start = self.get_vcount() as usize * PIXELS_PER_LINE;
 
-        // Clear scanline
-        for i in 0..PIXELS_PER_LINE {
+        // Layers, windows and color effects -> `framebuffer` row.
+        self.compose_scanline(is_engine_a);
+
+        let display_mode = {
             let engine = match is_engine_a {
-                true => &mut self.engine_upper,
-                false => &mut self.engine_lower,
+                true => &self.engine_upper,
+                false => &self.engine_lower,
             };
-
-            // safe access
-            if (line_start + i) < PIXELS_PER_LINE * SCANLINES {
-                engine.framebuffer[line_start + i] = 0xFF000000;
-                engine.front_framebuffer[line_start + i] = 0xFF000000;
-            }
-        }
-
-        {
-            // Reset BG priority
-            let engine = match is_engine_a {
-                true => &mut self.engine_upper,
-                false => &mut self.engine_lower,
-            };
-            engine.final_bg_priority.fill(0xFF);
-        }
-
-        // Draw backdrop
-        self.draw_backdrop(is_engine_a);
-
-        let window_masked = {
-            let engine = match is_engine_a {
-                true => &mut self.engine_upper,
-                false => &mut self.engine_lower,
-            };
-            engine.dispcnt.display_win0
-                || engine.dispcnt.display_win1
-                || engine.dispcnt.obj_win_display
+            engine.dispcnt.display_mode
         };
-
-        // Window mask
-        if window_masked {
-            self.get_window_mask(is_engine_a);
-        } else {
-            let engine = match is_engine_a {
-                true => &mut self.engine_upper,
-                false => &mut self.engine_lower,
-            };
-            engine.window_mask.fill(0xFF);
-        }
-
-        // Draw BG layers by priority
-        for priority in (0..=3).rev() {
-            let bg_enable = {
-                let engine = match is_engine_a {
-                    true => &mut self.engine_upper,
-                    false => &mut self.engine_lower,
-                };
-                engine.bgcnt
-            };
-            for (bg_index, bg_enable_value) in bg_enable.iter().enumerate() {
-                if *bg_enable_value == 0 {
-                    continue;
-                }
-                let engine = match is_engine_a {
-                    true => &mut self.engine_upper,
-                    false => &mut self.engine_lower,
-                };
-                if (engine.bgcnt[bg_index] & 0x3) as u8 != priority {
-                    continue;
-                }
-
-                if !match bg_index {
-                    0 => engine.dispcnt.display_bg0, // => bool
-                    1 => engine.dispcnt.display_bg1,
-                    2 => engine.dispcnt.display_bg2,
-                    3 => engine.dispcnt.display_bg3,
-                    _ => unreachable!(),
-                } {
-                    continue;
-                }
-
-                match bg_index {
-                    0 => {
-                        if is_engine_a && engine.dispcnt.bg_3d {
-                            self.draw_3d_scanline(is_engine_a, priority);
-                        } else {
-                            self.draw_bg_txt(0, is_engine_a);
-                        }
-                    }
-                    1 => self.draw_bg_txt(1, is_engine_a),
-                    2 => match engine.dispcnt.bg_mode {
-                        0 | 1 | 3 => self.draw_bg_txt(2, is_engine_a),
-                        5 => self.draw_bg_ext(2, is_engine_a),
-                        _ => {}
-                    },
-                    3 => match engine.dispcnt.bg_mode {
-                        0 | 3 | 4 | 5 => self.draw_bg_ext(3, is_engine_a),
-                        _ => {}
-                    },
-                    _ => {}
-                }
-            }
-        }
-
-        let (display_obj, display_mode) = {
-            let engine = match is_engine_a {
-                true => &mut self.engine_upper,
-                false => &mut self.engine_lower,
-            };
-            (engine.dispcnt.display_obj, engine.dispcnt.display_mode)
-        };
-
-        // Draw sprites
-        if display_obj {
-            self.draw_sprites(is_engine_a);
-        }
-
-        // Handle blending effects
-        self.handle_bldcnt_effects();
 
         // Display mode handling
         match display_mode {
@@ -336,9 +230,9 @@ impl Gpu {
                     let mut g = ((engine.front_framebuffer[idx] >> 8) & 0xFF) as f32;
                     let mut b = (engine.front_framebuffer[idx] & 0xFF) as f32;
 
-                    r += (63.0 * 4.0 - r) * (bright_factor / 16.0);
-                    g += (63.0 * 4.0 - g) * (bright_factor / 16.0);
-                    b += (63.0 * 4.0 - b) * (bright_factor / 16.0);
+                    r += (255.0 - r) * (bright_factor / 16.0);
+                    g += (255.0 - g) * (bright_factor / 16.0);
+                    b += (255.0 - b) * (bright_factor / 16.0);
 
                     engine.front_framebuffer[idx] =
                         0xFF000000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);

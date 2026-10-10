@@ -36,7 +36,7 @@ impl Emulator {
 
             if count_up {
                 if self.nds_timing.timers[index + 1].counter == 0xFFFF {
-                    self.overflow(index + 1); // recursion baby
+                    self.overflow(index + 1);
                 } else {
                     self.nds_timing.timers[index + 1].counter += 1;
                 }
@@ -44,10 +44,12 @@ impl Emulator {
         }
     }
 
-    /// Run ARM9 timers for specified cycles
+    /// Run ARM9 timers for specified cycles (bus clock).
+    ///
+    /// Timer slots 0-3 belong to the ARM7 and 4-7 to the ARM9, matching the
+    /// register handlers and the IRQ routing in [`Self::overflow`].
     pub fn run_timers9(&mut self, cycles: i32) {
-        // Run timers 0-3 (ARM9)
-        for i in 0..4 {
+        for i in 4..8 {
             if self.nds_timing.timers[i].enabled {
                 self.run_timer(cycles, i);
             }
@@ -56,28 +58,31 @@ impl Emulator {
 
     /// Run ARM7 timers for specified cycles
     pub fn run_timers7(&mut self, cycles: i32) {
-        // Run timers 4-7 (ARM7)
-        for i in 4..8 {
+        for i in 0..4 {
             if self.nds_timing.timers[i].enabled {
                 self.run_timer(cycles, i);
             }
         }
     }
 
-    /// Run individual timer
+    /// Run individual timer. Every elapsed prescaler period increments the
+    /// counter; incrementing past 0xFFFF reloads it and raises the overflow
+    /// (which may happen several times within one call).
     pub fn run_timer(&mut self, cycles: i32, index: usize) {
-        if !self.nds_timing.timers[index].count_up_timing {
-            self.nds_timing.timers[index].cycles_left -= cycles;
-            let old_timer = self.nds_timing.timers[index].counter;
+        if self.nds_timing.timers[index].count_up_timing && !index.is_multiple_of(4) {
+            return; // driven by the previous timer's overflow
+        }
 
-            while self.nds_timing.timers[index].cycles_left <= 0 {
-                self.nds_timing.timers[index].counter += 1;
-                self.nds_timing.timers[index].cycles_left += self.nds_timing.timer_clock_divs
-                    [self.nds_timing.timers[index].clock_div as usize];
-            }
-
-            if self.nds_timing.timers[index].counter < old_timer {
+        let div =
+            self.nds_timing.timer_clock_divs[self.nds_timing.timers[index].clock_div as usize];
+        self.nds_timing.timers[index].cycles_left -= cycles;
+        while self.nds_timing.timers[index].cycles_left <= 0 {
+            self.nds_timing.timers[index].cycles_left += div;
+            let timer = &mut self.nds_timing.timers[index];
+            if timer.counter == 0xFFFF {
                 self.overflow(index);
+            } else {
+                timer.counter += 1;
             }
         }
     }

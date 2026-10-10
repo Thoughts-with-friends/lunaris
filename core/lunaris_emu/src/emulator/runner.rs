@@ -11,7 +11,9 @@ impl Emulator {
 
         while !self.gpu.is_frame_complete() {
             // Handle self.ARM9
+            let before = self.system_timestamp;
             self.calculate_system_timestamp();
+            let slice = (self.system_timestamp - before) as i32;
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
                 self.execute(CpuType::Arm9);
                 self.run_timers9((self.arm9.cycles_ran() >> 1) as i32);
@@ -28,24 +30,12 @@ impl Emulator {
                 self.gpu_handle_event();
             }
 
-            let dma_event_ready = self.system_timestamp >= self.dma_event.activation_time
-                && self.dma_event.processing;
-            tracing::debug!(
-                "Event Flag: {}, Handling DMA event {} at timestamp {}, \
-            activation {}, processing {}",
-                dma_event_ready,
-                self.dma_event.id,
-                self.system_timestamp,
-                self.dma_event.activation_time,
-                self.dma_event.processing
-            );
-
             if self.system_timestamp >= self.dma_event.activation_time && self.dma_event.processing
             {
                 self.dma_handle_event(); // DMA Method
             }
 
-            self.cartridge_run(8);
+            self.cartridge_run(slice);
         }
 
         if let Err(err) = self.cart.save_check() {
@@ -73,16 +63,20 @@ impl Emulator {
             if halted || is_dma_active {
                 let timestamp = self.get_timestamp() << (1 - cpu_id);
 
-                // Wait until next event
-                let is_interrupt = self.requesting_interrupt(cpu_id);
+                // Wait until next event. HALT is released by any enabled
+                // and requested IRQ (IE & IF) even while IME is 0 (GBATEK
+                // "DS Interrupts"); the exception itself is only taken when
+                // IME is set and CPSR.I is clear.
+                let wake = self.irq_line_raised(cpu_id);
+                let take_irq = self.requesting_interrupt(cpu_id);
                 let arm = self.get_cpu_mut(cpu_type);
                 arm.timestamp = timestamp;
 
-                if is_interrupt {
+                if wake && halted {
                     arm.halted = false;
-                    if !arm.cpsr.irq_disabled && !is_dma_active {
-                        arm.handle_irq();
-                    }
+                }
+                if take_irq && !arm.halted && !arm.cpsr.irq_disabled && !is_dma_active {
+                    arm.handle_irq();
                 }
                 return;
             }
@@ -92,12 +86,17 @@ impl Emulator {
         let thumb_on = self.get_cpu_mut(cpu_type).cpsr.thumb_on;
         let pc = self.get_cpu(cpu_type).get_pc();
 
+        if self.config.trace_cpus & (1 << cpu_id) != 0 {
+            self.trace_instruction(cpu_type, thumb_on, pc);
+        }
+
         if thumb_on {
             {
                 let value = self.read_halfword(pc - 2, cpu_type) as u32;
                 let arm = self.get_cpu_mut(cpu_type);
 
                 arm.current_instr = value;
+                arm.record_pc(pc - 2);
                 arm.add_s16_code(pc - 2, 1);
                 arm.regs[15] = pc.wrapping_add(2);
             }
@@ -109,6 +108,7 @@ impl Emulator {
                 let arm = self.get_cpu_mut(cpu_type);
 
                 arm.current_instr = value;
+                arm.record_pc(addr);
                 arm.add_s32_code(addr, 1);
                 arm.regs[15] = pc.wrapping_add(4);
             }
@@ -121,5 +121,32 @@ impl Emulator {
         if is_interrupt && !irq_disabled {
             self.get_cpu_mut(cpu_type).handle_irq();
         }
+    }
+
+    /// Prints the instruction about to execute (see `Config::trace_cpus`).
+    #[cold]
+    fn trace_instruction(&mut self, cpu_type: CpuType, thumb_on: bool, pc: u32) {
+        let addr = pc.wrapping_sub(if thumb_on { 2 } else { 4 });
+        let op = if thumb_on {
+            u32::from(self.read_halfword(addr, cpu_type))
+        } else {
+            self.read_word(addr, cpu_type)
+        };
+        let cpu = self.get_cpu(cpu_type);
+        let r = &cpu.regs;
+        eprintln!(
+            "{}{} {addr:08X} {op:08X} cpsr={:08X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r4={:08X} r12={:08X} sp={:08X} lr={:08X}",
+            if cpu.cpu_id == 0 { 9 } else { 7 },
+            if thumb_on { 'T' } else { 'A' },
+            cpu.cpsr.get(),
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            r[4],
+            r[12],
+            r[13],
+            r[14]
+        );
     }
 }

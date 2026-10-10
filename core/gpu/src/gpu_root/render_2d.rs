@@ -7,6 +7,7 @@
 //! CorgiDS was calling GPU methods in Engine2D, but this caused a circular reference.
 //! To avoid this, we've implemented the method in the parent here.
 use crate::gpu_root::{Gpu, bytes_to_palette, read_palette_value};
+use crate::vram::Region;
 use lunaris_ds_mem_const::*;
 
 impl Gpu {
@@ -276,259 +277,147 @@ impl Gpu {
         }
     }
 
-    /// Draws a text background layer.
+    /// Draws a text background layer for the current scanline.
     ///
-    /// `index` must be 0..=3.
+    /// `index` must be 0..=3. Follows GBATEK "DS Video BG Modes / Control":
+    /// the map is made of 32x32-tile screen blocks of 0x800 bytes (a 512-wide
+    /// map has its right half in the next block; a 512-tall one has its lower
+    /// half one block (256x512) or two blocks (512x512) further), tiles are
+    /// 4bpp (16 palettes of 16 colors) or 8bpp (one 256-color palette, or the
+    /// extended palette slot of this BG when DISPCNT bit 30 is set).
     pub fn draw_bg_txt(&mut self, index: usize, is_engine_a: bool) {
-        let palette = bytes_to_palette(match is_engine_a {
-            true => &self.palette_upper,
-            false => &self.palette_lower,
-        });
-
-        let v_count = self.get_vcount();
-
-        let mut x_offset: u16;
-        let y_offset: u16;
-        let one_palette_mode: bool;
-        let mut screen_base: u32;
-        let mut char_base: u32;
-        let wide_x: u16;
-        let scanline = v_count as usize * PIXELS_PER_LINE;
-
-        {
-            let engine = match is_engine_a {
-                true => &mut self.engine_upper,
-                false => &mut self.engine_lower,
-            };
-
-            x_offset = engine.bghofs[index];
-            y_offset = engine.bgvofs[index].wrapping_add(v_count);
-
-            one_palette_mode = (engine.bgcnt[index] & (1 << 7)) != 0;
-
-            screen_base = match is_engine_a {
-                true => VRAM_BGA_START + (engine.dispcnt.screen_base as u32 * 1024 * 64),
-                false => VRAM_BGB_C,
-            };
-            char_base = match is_engine_a {
-                true => VRAM_BGA_START + (engine.dispcnt.char_base as u32 * 1024 * 64),
-                false => VRAM_BGB_C,
-            };
-
-            screen_base += ((engine.bgcnt[index] >> 8) & 0x1F) as u32 * 1024 * 2;
-
-            if (engine.bgcnt[index] & 0x8000) != 0 {
-                screen_base += ((y_offset & 0x1F8) as u32) * 8;
-                if (engine.bgcnt[index] & 0x4000) != 0 {
-                    screen_base += ((y_offset & 0x100) as u32) * 8;
-                }
-            } else {
-                screen_base += ((y_offset & 0xF8) as u32) * 8;
-            }
-
-            char_base += ((engine.bgcnt[index] >> 2) & 0xF) as u32 * 1024 * 16;
-
-            wide_x = match (engine.bgcnt[index] & (1 << 14)) != 0 {
-                true => 0x100,
-                false => 0,
-            };
+        let region = if is_engine_a {
+            Region::BgA
+        } else {
+            Region::BgB
+        };
+        let line = self.get_vcount() as usize;
+        if line >= SCANLINES {
+            return;
         }
 
-        if !one_palette_mode {
-            // 16-color tiles
-            let mut data: u32 = 0;
-            let mut palette_id = 0;
-            let mut x_flip: bool = false;
-
-            if (x_offset & 0x7) != 0 {
-                let addr = screen_base
-                    + (((x_offset & 0xF8) as u32) >> 2)
-                    + (((x_offset & wide_x) as u32) << 3);
-
-                let tile = match is_engine_a {
-                    true => self.read_bga_u16(addr),
-                    false => self.read_bgb_u16(addr),
-                };
-
-                let tile_num = tile & 0x3FF;
-                x_flip = (tile & (1 << 10)) != 0;
-                let y_flip = (tile & (1 << 11)) != 0;
-                palette_id = tile >> 12;
-
-                let pixel_base = char_base
-                    + (tile_num as u32 * 32)
-                    + if y_flip {
-                        (7 - (y_offset & 0x7)) as u32 * 4
-                    } else {
-                        (y_offset & 0x7) as u32 * 4
-                    };
-
-                data = match is_engine_a {
-                    true => self.read_bga_u32(addr),
-                    false => self.read_bgb_u32(pixel_base),
-                };
-            }
-
-            let addr = screen_base
-                + (((x_offset & 0xF8) as u32) >> 2)
-                + (((x_offset & wide_x) as u32) << 3);
-            let tile = match is_engine_a {
-                true => self.read_bga_u16(addr),
-                false => self.read_bgb_u16(addr),
-            };
-
-            if (x_offset & 0x7) == 0 {
-                let tile_num = tile & 0x3FF;
-                x_flip = (tile & (1 << 10)) != 0;
-                let y_flip = (tile & (1 << 11)) != 0;
-                palette_id = tile >> 12;
-
-                let pixel_base = char_base
-                    + (tile_num as u32 * 32)
-                    + if y_flip {
-                        (7 - (y_offset & 0x7)) as u32 * 4
-                    } else {
-                        (y_offset & 0x7) as u32 * 4
-                    };
-                data = match is_engine_a {
-                    true => self.read_bga_u32(addr),
-                    false => self.read_bgb_u32(pixel_base),
-                };
-            }
-
-            let tile_x = match x_flip {
-                true => 7 - (x_offset & 0x7),
-                false => x_offset & 0x7,
-            };
-            let color = ((data >> (tile_x * 4)) & 0xF) as u16;
-
-            for pixel in 0..PIXELS_PER_LINE {
-                let engine = match is_engine_a {
-                    true => &mut self.engine_upper,
-                    false => &mut self.engine_lower,
-                };
-
-                if color != 0 && (engine.window_mask[pixel] & (1 << index)) != 0 {
-                    let pal_color = palette[(palette_id as usize * 16) + color as usize];
-
-                    let r = ((pal_color & 0x1F) << 3) as u32;
-                    let g = (((pal_color >> 5) & 0x1F) << 3) as u32;
-                    let b = (((pal_color >> 10) & 0x1F) << 3) as u32;
-
-                    engine.framebuffer[pixel + scanline] = 0xFF000000 | (r << 16) | (g << 8) | b;
-                    engine.final_bg_priority[pixel] = (engine.bgcnt[index] & 0x3) as u8;
-                }
-
-                x_offset = x_offset.wrapping_add(1);
-            }
+        let engine = if is_engine_a {
+            &self.engine_upper
         } else {
-            // 256-color tiles
-            let mut data: u64 = 0;
-            let mut palette_id: u16 = 0;
-            let mut x_flip: bool = false;
+            &self.engine_lower
+        };
+        let bgcnt = engine.bgcnt[index];
+        let priority = (bgcnt & 0x3) as u8;
+        let hofs = u32::from(engine.bghofs[index]);
+        let vofs = u32::from(engine.bgvofs[index]);
+        let (char_base, screen_base) = if is_engine_a {
+            (
+                engine.dispcnt.char_base as u32 * 0x1_0000,
+                engine.dispcnt.screen_base as u32 * 0x1_0000,
+            )
+        } else {
+            (0, 0)
+        };
+        let char_base = char_base + u32::from((bgcnt >> 2) & 0xF) * 0x4000;
+        let screen_base = screen_base + u32::from((bgcnt >> 8) & 0x1F) * 0x800;
+        let color_256 = bgcnt & (1 << 7) != 0;
+        let size = (bgcnt >> 14) & 0x3;
+        let ext_palette = color_256 && engine.dispcnt.bg_extended_palette;
+        // BG0/BG1 may use extended palette slot 2/3 instead (BGCNT bit 13).
+        let ext_slot = if index < 2 && bgcnt & (1 << 13) != 0 {
+            index + 2
+        } else {
+            index
+        } as u32;
 
-            if (x_offset & 0x7) != 0 {
-                let addr = screen_base
-                    + (((x_offset & 0xF8) as u32) >> 2)
-                    + (((x_offset & wide_x) as u32) << 3);
+        let width_mask = if size & 1 != 0 { 511 } else { 255 };
+        let height_mask = if size & 2 != 0 { 511 } else { 255 };
+        let y = (vofs + line as u32) & height_mask;
+        let fine_y = y & 7;
+        let mut row_base = screen_base + ((y >> 3) & 31) * 64;
+        if y >= 256 {
+            row_base += if size == 3 { 0x1000 } else { 0x800 };
+        }
 
-                let tile = match is_engine_a {
-                    true => self.read_bga_u16(addr),
-                    false => self.read_bgb_u16(addr),
-                };
+        let palette = if is_engine_a {
+            &self.palette_upper
+        } else {
+            &self.palette_lower
+        };
+        let scanline = line * PIXELS_PER_LINE;
 
-                let tile_num = tile & 0x3FF;
-                x_flip = (tile & (1 << 10)) != 0;
-                let y_flip = (tile & (1 << 11)) != 0;
-                palette_id = tile >> 12;
+        // Tile state, refetched whenever the map column changes.
+        let mut cached_column = u32::MAX;
+        let mut entry = 0u16;
 
-                let pixel_base = char_base
-                    + (tile_num as u32 * 64)
-                    + if y_flip {
-                        (7 - (y_offset & 0x7)) as u32 * 8
-                    } else {
-                        (y_offset & 0x7) as u32 * 8
-                    };
-
-                data = match is_engine_a {
-                    true => self.read_bga_u64(addr),
-                    false => self.read_bgb_u64(pixel_base),
-                };
+        for px in 0..PIXELS_PER_LINE {
+            let engine = if is_engine_a {
+                &self.engine_upper
+            } else {
+                &self.engine_lower
+            };
+            if engine.window_mask[px] & (1 << index) == 0 {
+                continue;
             }
 
-            for pixel in 0..PIXELS_PER_LINE {
-                if (x_offset & 0x7) == 0 {
-                    let addr = screen_base
-                        + (((x_offset & 0xF8) as u32) >> 2)
-                        + (((x_offset & wide_x) as u32) << 3);
+            let x = (hofs + px as u32) & width_mask;
+            let column = x >> 3;
+            if column != cached_column {
+                cached_column = column;
+                let block = if x >= 256 { 0x800 } else { 0 };
+                entry = self
+                    .vram
+                    .read_u16(region, row_base + block + (column & 31) * 2);
+            }
 
-                    let tile = self.read_bga_u16(addr);
+            let tile = u32::from(entry & 0x3FF);
+            let tx = if entry & (1 << 10) != 0 {
+                7 - (x & 7)
+            } else {
+                x & 7
+            };
+            let ty = if entry & (1 << 11) != 0 {
+                7 - fine_y
+            } else {
+                fine_y
+            };
+            let pal_bank = u32::from(entry >> 12);
 
-                    let tile_num = tile & 0x3FF;
-                    x_flip = (tile & (1 << 10)) != 0;
-                    let y_flip = (tile & (1 << 11)) != 0;
-                    palette_id = tile >> 12;
-
-                    let pixel_base = char_base
-                        + (tile_num as u32 * 64)
-                        + if y_flip {
-                            (7 - (y_offset & 0x7)) as u32 * 8
-                        } else {
-                            (y_offset & 0x7) as u32 * 8
-                        };
-
-                    data = match is_engine_a {
-                        true => self.read_bga_u64(addr),
-                        false => self.read_bgb_u64(pixel_base),
-                    };
+            let color = if color_256 {
+                let ci = u32::from(
+                    self.vram
+                        .read_u8(region, char_base + tile * 64 + ty * 8 + tx),
+                );
+                if ci == 0 {
+                    continue;
                 }
-
-                let tile_x = if x_flip {
-                    7 - (x_offset & 0x7)
+                if ext_palette {
+                    let ext = if is_engine_a {
+                        Region::BgExtPalA
+                    } else {
+                        Region::BgExtPalB
+                    };
+                    self.vram
+                        .read_u16(ext, ext_slot * 0x2000 + pal_bank * 512 + ci * 2)
                 } else {
-                    x_offset & 0x7
-                };
-
-                let mut color = ((data >> (tile_x * 8)) & 0xFF) as u16;
-
-                let (window_mask_byte, bg_extended_palette) = match is_engine_a {
-                    true => (
-                        &self.engine_upper.window_mask[pixel],
-                        self.engine_upper.dispcnt.bg_extended_palette,
-                    ),
-                    false => (
-                        &self.engine_lower.window_mask[pixel],
-                        self.engine_upper.dispcnt.bg_extended_palette,
-                    ),
-                };
-
-                if color != 0 && (window_mask_byte & (1 << index)) != 0 {
-                    if bg_extended_palette {
-                        let ext_base = index as u32 * 1024 * 8;
-                        let address = ext_base + (palette_id as u32 * 512) + (color as u32 * 2);
-
-                        color = match is_engine_a {
-                            true => self.read_extpal_bga_u16(address),
-                            false => self.read_extpal_bgb_u16(address),
-                        };
-                    } else {
-                        color = palette[color as usize];
-                    }
-
-                    let r = ((color & 0x1F) << 3) as u32;
-                    let g = (((color >> 5) & 0x1F) << 3) as u32;
-                    let b = (((color >> 10) & 0x1F) << 3) as u32;
-
-                    let engine = match is_engine_a {
-                        true => &mut self.engine_upper,
-                        false => &mut self.engine_lower,
-                    };
-                    engine.framebuffer[pixel + scanline] = 0xFF000000 | (r << 16) | (g << 8) | b;
-                    engine.final_bg_priority[pixel] = (engine.bgcnt[index] & 0x3) as u8;
+                    read_palette_value(palette, ci * 2)
                 }
+            } else {
+                let byte = self
+                    .vram
+                    .read_u8(region, char_base + tile * 32 + ty * 4 + tx / 2);
+                let ci = u32::from(if tx & 1 != 0 { byte >> 4 } else { byte & 0xF });
+                if ci == 0 {
+                    continue;
+                }
+                read_palette_value(palette, (pal_bank * 16 + ci) * 2)
+            };
 
-                x_offset = x_offset.wrapping_add(1);
-            }
+            let r = u32::from(color & 0x1F) << 3;
+            let g = u32::from((color >> 5) & 0x1F) << 3;
+            let b = u32::from((color >> 10) & 0x1F) << 3;
+            let engine = if is_engine_a {
+                &mut self.engine_upper
+            } else {
+                &mut self.engine_lower
+            };
+            engine.framebuffer[scanline + px] = 0xFF00_0000 | (r << 16) | (g << 8) | b;
+            engine.final_bg_priority[px] = priority;
         }
     }
 

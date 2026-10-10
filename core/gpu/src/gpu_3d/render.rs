@@ -235,16 +235,15 @@ impl Gpu3D {
 
     pub fn read_clip_mtx(&mut self, address: u32) -> u32 {
         self.update_clip_matrix();
-        let x = ((address - 0x04000640) % 4) as usize;
-        let y = ((address - 0x04000640) / 4) as usize;
-        self.clip_mtx.m[y][x] as u32
+        // 16 words, row-major 4x4 (CLIPMTX_RESULT, 0x04000640..0x0400067F).
+        let index = (((address - 0x0400_0640) / 4) & 0xF) as usize;
+        self.clip_mtx.m[index / 4][index % 4] as u32
     }
 
     pub fn read_vec_mtx(&self, address: u32) -> u32 {
-        let addr = address - 0x04000680;
-        let x = (addr % 3) as usize;
-        let y = (addr / 3) as usize;
-        self.vector_mtx.m[y][x] as u32
+        // 9 words, row-major 3x3 (VECMTX_RESULT, 0x04000680..0x040006A3).
+        let index = (((address - 0x0400_0680) / 4) % 9) as usize;
+        self.vector_mtx.m[index / 3][index % 3] as u32
     }
 
     pub fn read_vec_test(&self, address: u32) -> u16 {

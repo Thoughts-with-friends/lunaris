@@ -193,7 +193,9 @@ impl Emulator {
                                     .iter()
                                     .map(|&x| x as i32)
                                     .collect::<Vec<_>>()
-                                    .chunks_exact(4)
+                                    .as_chunks::<4>()
+                                    .0
+                                    .iter()
                                     .enumerate()
                                     .for_each(|(i, row)| {
                                         self.gpu.engine_3d.vector_mtx.m[i].copy_from_slice(row);

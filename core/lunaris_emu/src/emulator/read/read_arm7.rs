@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::Emulator;
-use lunaris_ds_interrupts::Interrupt;
+use lunaris_ds_ipc::Side;
 use lunaris_ds_mem_const::*;
 
 impl Emulator {
@@ -19,30 +19,28 @@ impl Emulator {
                 let off = (address & MAIN_RAM_MASK) as usize;
                 u32::from_le_bytes(self.main_ram[off..off + 4].try_into().unwrap())
             }
-            SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wram_cnt {
-                    0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
-                    1 => address & 0x3FFF,            // First half
-                    2 => (address & 0x3FFF) + 0x4000, // Second half
-                    3 => address & 0x7FFF,            // Entire 32 KB
-                    _ => return 0,                    // TODO: Log trancing error
-                } as usize;
-                u32::from_le_bytes(self.arm7_wram[off..off + 4].try_into().unwrap())
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &self.arm7_wram
+                } else {
+                    &self.shared_wram
+                };
+                u32::from_le_bytes([mem[off], mem[off + 1], mem[off + 2], mem[off + 3]])
             }
 
             0x04000120 | 0x04000400..0x04000500 => 0,
-            0x04000180 => self.ipc_sync_nds7.read().into(),
+            0x04000180 => self.ipc.read_sync(Side::Arm7).into(),
+            0x04000184 => self.ipc.read_cnt(Side::Arm7).into(),
             0x040001A4 => self.cart.get_romctrl(),
             0x040001C0 => (self.spi.get_spicnt() as u32) | (self.spi.read_spidata() as u32) << 16,
             0x04000208 => self.int7_reg.ime,
             0x04000210 => self.int7_reg.irq_enable,
             0x04000214 => self.int7_reg.irq_flags,
             0x04100000 => {
-                let word: u32 = self.fifo9.read_queue();
-                if self.fifo9.request_empty_irq {
-                    self.request_interrupt9(Interrupt::IpcFifoEmpty);
-                    self.fifo9.request_empty_irq = false;
-                }
+                let (word, irq) = self.ipc.receive(Side::Arm7);
+                self.raise_ipc(irq);
                 word
             }
             0x04100010 => self.cart.get_output(),
@@ -94,23 +92,15 @@ impl Emulator {
                 u16::from_le_bytes(self.main_ram[off..off + 2].try_into().unwrap())
             }
 
-            // Shared WRAM
-            SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wram_cnt {
-                    0 => address & ARM7_WRAM_MASK,
-                    1 => address & 0x3FFF,
-                    2 => (address & 0x3FFF) + 0x4000,
-                    3 => address & 0x7FFF,
-                    _ => return 0,
-                } as usize;
-
-                u16::from_le_bytes(self.arm7_wram[off..off + 2].try_into().unwrap())
-            }
-
-            // ARM7 WRAM
-            ARM7_WRAM_START..IO_REGS_START => {
-                let off = (address & 0xFFFF) as usize;
-                u16::from_le_bytes(self.arm7_wram[off..off + 2].try_into().unwrap())
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &self.arm7_wram
+                } else {
+                    &self.shared_wram
+                };
+                u16::from_le_bytes([mem[off], mem[off + 1]])
             }
 
             // IO Registers
@@ -137,8 +127,8 @@ impl Emulator {
             0x04000136 => self.ext_key_in.get_value(),
             0x04000138 => self.rtc.read(),
 
-            0x04000180 => self.ipc_sync_nds7.read(),
-            0x04000184 => self.fifo7.read_cnt(),
+            0x04000180 => self.ipc.read_sync(Side::Arm7),
+            0x04000184 => self.ipc.read_cnt(Side::Arm7),
 
             0x040001A0 => self.cart.get_auxspicnt(),
             0x040001A2 => self.cart.read_auxspidata().into(),
@@ -183,29 +173,25 @@ impl Emulator {
     pub fn arm7_read_byte(&self, address: u32) -> u8 {
         #[allow(non_contiguous_range_endpoints)]
         match address {
+            0x04000180 => self.ipc.read_sync(Side::Arm7) as u8,
+            0x04000181 => (self.ipc.read_sync(Side::Arm7) >> 8) as u8,
+            0x04000184 => self.ipc.read_cnt(Side::Arm7) as u8,
+            0x04000185 => (self.ipc.read_cnt(Side::Arm7) >> 8) as u8,
             // Main RAM
             MAIN_RAM_START..SHARED_WRAM_START => {
                 let off = (address & MAIN_RAM_MASK) as usize;
                 self.main_ram[off]
             }
 
-            // ARM7 WRAM
-            ARM7_WRAM_START..IO_REGS_START => {
-                let off = (address & ARM7_WRAM_MASK) as usize;
-                self.arm7_wram[off]
-            }
-
-            // Shared WRAM
-            SHARED_WRAM_START..ARM7_WRAM_START => {
-                let off = match self.wram_cnt {
-                    0 => address & ARM7_WRAM_MASK,    // Mirror to ARM7 WRAM
-                    1 => address & 0x3FFF,            // First half
-                    2 => (address & 0x3FFF) + 0x4000, // Second half
-                    3 => address & 0x7FFF,            // Entire 32 KB
-                    _ => return 0,
-                } as usize;
-
-                self.arm7_wram[off]
+            // Shared WRAM (per WRAMCNT) and ARM7 WRAM
+            SHARED_WRAM_START..IO_REGS_START => {
+                let (private, off) = self.arm7_wram_offset(address);
+                let mem = if private {
+                    &self.arm7_wram
+                } else {
+                    &self.shared_wram
+                };
+                mem[off]
             }
 
             // Direct IO byte reads
@@ -232,6 +218,8 @@ impl Emulator {
 
             // SPU channel region
             0x04000400..0x04000500 => self.spu.read_channel_byte(address),
+
+            0x06000000..0x07000000 => self.gpu.read_arm7_u8(address),
 
             // Default case
             _ => {

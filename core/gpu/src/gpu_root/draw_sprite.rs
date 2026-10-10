@@ -64,7 +64,8 @@ impl Gpu {
                 // Sprite position
                 let x = (attributes[1] & 0x1FF) as u32;
                 let mut y = (attributes[0] & 0xFF) as u32;
-                y = (self.get_vcount() as u32 - y) & 0xFF;
+                // y = (self.get_vcount() as u32 - y) & 0xFF;
+                y = (self.get_vcount() as u32).wrapping_sub(y) & 0xFF;
 
                 let shape = ((attributes[0] >> 14) & 0x3) as usize;
                 let size = ((attributes[1] >> 14) & 0x3) as usize;

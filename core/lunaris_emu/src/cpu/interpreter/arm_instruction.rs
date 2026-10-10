@@ -1,5 +1,6 @@
 #![allow(clippy::missing_const_for_fn)]
 use crate::cpu::arm_cpu::{CpuType, PsrMode, REG_LR, REG_PC, add_overflow, sub_overflow};
+use crate::cpu::coprocessor_15::Cp15Effect;
 use crate::emulator::Emulator;
 
 /// Loads or stores a value using a shifted register addressing mode.
@@ -154,7 +155,8 @@ pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) 
                 value = emu.get_cpu(cpu_type).get_pc() + 4;
             }
 
-            emu.get_cpu_mut(cpu_type).get_register(rs)
+            // Only the low byte of Rs is used as the shift amount.
+            emu.get_cpu_mut(cpu_type).get_register(rs) & 0xFF
         } else {
             // Shift by immediate
             (instruction >> 7) & 0x1F
@@ -177,7 +179,8 @@ pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) 
                 }
             }
             3 => {
-                if shift == 0 {
+                // Immediate ROR #0 encodes RRX; a register amount of 0 is a no-op.
+                if shift == 0 && (instruction & (1 << 4)) == 0 {
                     emu.get_cpu_mut(cpu_type).rrx(value, set_carry)
                 } else {
                     emu.get_cpu_mut(cpu_type)
@@ -309,8 +312,8 @@ pub fn data_processing(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) 
 
 /// Counts the leading zeros in a value
 pub fn count_leading_zeros(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    // CLZ is undefined when ID flag is set
-    if emu.get_cpu(cpu_type).get_id() <= 0 {
+    // CLZ is ARMv5TE only: undefined on the ARM7 (id 1)
+    if emu.get_cpu(cpu_type).get_id() != 0 {
         #[cfg(feature = "tracing")]
         tracing::error!("CLZ executed while ID flag set (instr={instruction:#010X})");
 
@@ -345,8 +348,8 @@ pub fn count_leading_zeros(emu: &mut Emulator, cpu_type: CpuType, instruction: u
 
 /// Saturated operation
 pub fn saturated_op(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
-    // Saturated ops are undefined when ID flag is set
-    if emu.get_cpu(cpu_type).get_id() <= 0 {
+    // QADD/QSUB/QDADD/QDSUB are ARMv5TE only: undefined on the ARM7 (id 1)
+    if emu.get_cpu(cpu_type).get_id() != 0 {
         #[cfg(feature = "tracing")]
         tracing::error!("Saturated op executed while ID flag set (instr={instruction:#010X})");
 
@@ -419,18 +422,14 @@ pub fn multiply(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let second_operand = ((instruction >> 8) & 0xF) as i32;
     let third_operand = ((instruction >> 12) & 0xF) as i32;
 
-    let mut result = emu.get_cpu_mut(cpu_type).get_register(first_operand)
-        * emu.get_cpu_mut(cpu_type).get_register(second_operand);
+    let mut result = emu
+        .get_cpu_mut(cpu_type)
+        .get_register(first_operand)
+        .wrapping_mul(emu.get_cpu_mut(cpu_type).get_register(second_operand));
 
     if accumulate != 0 {
-        //if (emu.get_cpu_mut(cpu_type).can_disassemble())
-        #[cfg(feature = "tracing")]
-        tracing::error!("MLA {destination}, {first_operand}, {second_operand}, {third_operand}");
-        result += emu.get_cpu_mut(cpu_type).get_register(third_operand);
+        result = result.wrapping_add(emu.get_cpu_mut(cpu_type).get_register(third_operand));
     }
-    //else if (emu.get_cpu_mut(cpu_type).can_disassemble())
-    #[cfg(feature = "tracing")]
-    tracing::error!("MUL {destination}, {first_operand}, {second_operand}");
 
     if set_condition_codes != 0 {
         emu.get_cpu_mut(cpu_type).set_zero_neg_flags(result);
@@ -1112,6 +1111,12 @@ pub fn store_doubleword(emu: &mut Emulator, cpu_type: CpuType, instruction: u32)
 
 /// Load multiple registers from memory (LDM)
 pub fn load_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
+    // Follows melonDS `A_LDM`: registers are loaded from the lowest address
+    // upward, writeback happens *before* the PC jump, and the SPSR->CPSR
+    // restore of `LDM {..,pc}^` happens last. Restoring CPSR earlier would
+    // switch register banks mid-instruction, so the writeback (or the rest of
+    // the loads) would land in the interrupted mode's SP instead of the
+    // exception mode's.
     let reg_list = instruction & 0xFFFF;
     let base = (instruction >> 16) & 0xF;
 
@@ -1119,124 +1124,86 @@ pub fn load_block(emu: &mut Emulator, cpu_type: CpuType, instruction: u32) {
     let load_psr = (instruction & (1 << 22)) != 0;
     let is_adding_offset = (instruction & (1 << 23)) != 0;
     let is_preindexing = (instruction & (1 << 24)) != 0;
+    let loads_pc = (reg_list & (1 << 15)) != 0;
+    let is_arm9 = emu.get_cpu(cpu_type).get_id() == 0;
 
-    let user_bank_transfer = load_psr && (reg_list & (1 << 15)) == 0;
+    let count = reg_list.count_ones();
+    let base_addr = emu.get_cpu(cpu_type).get_register(base as i32);
+    let (mut address, wb_value) = if is_adding_offset {
+        let start = if is_preindexing {
+            base_addr.wrapping_add(4)
+        } else {
+            base_addr
+        };
+        (start, base_addr.wrapping_add(4 * count))
+    } else {
+        let low = base_addr.wrapping_sub(4 * count);
+        let start = if is_preindexing {
+            low
+        } else {
+            low.wrapping_add(4)
+        };
+        (start, low)
+    };
 
-    let mut address = emu.get_cpu(cpu_type).get_register(base as i32);
-
-    let offset = if is_adding_offset { 4 } else { -4 };
-
-    // Switch to USER bank if required
-    let old_mode = emu.get_cpu_mut(cpu_type).get_cpsr().mode;
-
+    // LDM with S bit and no PC: transfer the USER bank registers.
+    let user_bank_transfer = load_psr && !loads_pc;
+    let old_mode = emu.get_cpu(cpu_type).get_cpsr().mode;
     if user_bank_transfer {
         emu.get_cpu_mut(cpu_type).update_reg_mode(PsrMode::User);
         emu.get_cpu_mut(cpu_type).get_cpsr_mut().mode = PsrMode::User;
     }
 
-    let mut regs = 0;
-
-    if is_adding_offset {
-        // Incrementing
-        for i in 0..15 {
-            if (reg_list & (1 << i)) != 0 {
-                regs += 1;
-
-                if is_preindexing {
-                    address = address.wrapping_add(offset as u32);
-                    let value = emu.read_word(address, cpu_type);
-                    emu.get_cpu_mut(cpu_type).set_register(i, value);
-                } else {
-                    let value = emu.read_word(address, cpu_type);
-                    emu.get_cpu_mut(cpu_type).set_register(i, value);
-                    address = address.wrapping_add(offset as u32);
-                }
-            }
-        }
-
-        // PC (R15) handled last
-        if (reg_list & (1 << 15)) != 0 {
-            if is_preindexing {
-                address = address.wrapping_add(offset as u32);
-                let mut new_pc = emu.read_word(address, cpu_type);
-                if emu.get_cpu(cpu_type).get_id() != 0 {
-                    new_pc &= !0x1;
-                }
-                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
-            } else {
-                let mut new_pc = emu.read_word(address, cpu_type);
-                if emu.get_cpu(cpu_type).get_id() != 0 {
-                    new_pc &= !0x1;
-                }
-                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
-                address = address.wrapping_add(offset as u32);
-            }
-
-            if load_psr {
-                emu.get_cpu_mut(cpu_type).spsr_to_cpsr();
-            }
-
-            regs += 1;
-        }
-    } else {
-        // Decrementing: PC first
-        if (reg_list & (1 << 15)) != 0 {
-            if is_preindexing {
-                address = address.wrapping_add(offset as u32);
-                let mut new_pc = emu.read_word(address, cpu_type);
-                if emu.get_cpu(cpu_type).get_id() != 0 {
-                    new_pc &= !0x1;
-                }
-                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
-            } else {
-                let mut new_pc = emu.read_word(address, cpu_type);
-                if emu.get_cpu(cpu_type).get_id() != 0 {
-                    new_pc &= !0x1;
-                }
-                emu.get_cpu_mut(cpu_type).jp(new_pc, true);
-                address = address.wrapping_add(offset as u32);
-            }
-
-            if load_psr {
-                emu.get_cpu_mut(cpu_type).spsr_to_cpsr();
-            }
-
-            regs += 1;
-        }
-
-        for i in (0..15).rev() {
-            if (reg_list & (1 << i)) != 0 {
-                regs += 1;
-
-                if is_preindexing {
-                    address = address.wrapping_add(offset as u32);
-                    let value = emu.read_word(address, cpu_type);
-                    emu.get_cpu_mut(cpu_type).set_register(i, value);
-                } else {
-                    let value = emu.read_word(address, cpu_type);
-                    emu.get_cpu_mut(cpu_type).set_register(i, value);
-                    address = address.wrapping_add(offset as u32);
-                }
-            }
+    for i in 0..15 {
+        if (reg_list & (1 << i)) != 0 {
+            let value = emu.read_word(address & !3, cpu_type);
+            emu.get_cpu_mut(cpu_type).set_register(i, value);
+            address = address.wrapping_add(4);
         }
     }
+    let new_pc = loads_pc.then(|| emu.read_word(address & !3, cpu_type));
 
-    // Restore original mode if USER bank was used
     if user_bank_transfer {
         emu.get_cpu_mut(cpu_type).update_reg_mode(old_mode);
         emu.get_cpu_mut(cpu_type).get_cpsr_mut().mode = old_mode;
     }
 
     // Timing
-    if regs > 1 {
-        emu.get_cpu_mut(cpu_type).add_s32_data(address, regs - 1);
+    if count > 1 {
+        emu.get_cpu_mut(cpu_type)
+            .add_s32_data(address, count as i32 - 1);
     }
     emu.get_cpu_mut(cpu_type).add_n32_data(address, 1);
     emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
 
-    // Writeback (blocked when base is in list on ARM9)
-    if is_writing_back && !((reg_list & (1 << base)) != 0 && emu.get_cpu(cpu_type).get_id() != 0) {
-        emu.get_cpu_mut(cpu_type).set_register(base as i32, address);
+    // Writeback. With the base in the list, ARMv4 (ARM7) keeps the loaded
+    // value; ARMv5 (ARM9) writes back if the base is the only register or not
+    // the last one in the list.
+    if is_writing_back {
+        let write = if (reg_list & (1 << base)) == 0 {
+            true
+        } else {
+            is_arm9 && ((reg_list & !(1 << base)) == 0 || (reg_list & !((2 << base) - 1)) != 0)
+        };
+        if write {
+            emu.get_cpu_mut(cpu_type)
+                .set_register(base as i32, wb_value);
+        }
+    }
+
+    if let Some(mut pc) = new_pc {
+        let cpu = emu.get_cpu_mut(cpu_type);
+        if load_psr {
+            cpu.spsr_to_cpsr();
+            if cpu.get_cpsr().thumb_on {
+                pc |= 1;
+            } else {
+                pc &= !1;
+            }
+        } else if !is_arm9 {
+            pc &= !1; // ARMv4: LDM to PC cannot switch to Thumb
+        }
+        cpu.jp(pc, true);
     }
 }
 
@@ -1380,14 +1347,11 @@ pub fn coprocessor_reg_transfer(emu: &mut Emulator, cpu_type: CpuType, instructi
         emu.get_cpu_mut(cpu_type).add_internal_cycles(2);
         emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
 
+        // CP15 only exists on the ARM9 and only uses opcode1 = 0.
         match coprocessor_id {
-            15 => {
-                let value = emu.arm9_cp15.mrc(
-                    operation_mode as i32,
-                    cp_reg as i32,
-                    coprocessor_info as i32,
-                    coprocessor_operand as i32,
-                );
+            15 if cpu_type == CpuType::Arm9 && operation_mode == 0 => {
+                let id = (cp_reg << 8) | (coprocessor_operand << 4) | coprocessor_info;
+                let value = emu.arm9_cp15.read(id);
                 emu.get_cpu_mut(cpu_type)
                     .set_register(arm_reg as i32, value);
             }
@@ -1402,16 +1366,19 @@ pub fn coprocessor_reg_transfer(emu: &mut Emulator, cpu_type: CpuType, instructi
         emu.get_cpu_mut(cpu_type).add_internal_cycles(1);
         emu.get_cpu_mut(cpu_type).add_cop_cycles(1);
 
+        // CP15 only exists on the ARM9 and only uses opcode1 = 0.
         match coprocessor_id {
-            15 => {
+            15 if cpu_type == CpuType::Arm9 && operation_mode == 0 => {
                 let value = emu.get_cpu_mut(cpu_type).get_register(arm_reg as i32);
-                emu.arm9_cp15.mcr(
-                    operation_mode as i32,
-                    cp_reg as i32,
-                    value,
-                    coprocessor_info as i32,
-                    coprocessor_operand as i32,
-                );
+                let id = (cp_reg << 8) | (coprocessor_operand << 4) | coprocessor_info;
+                match emu.arm9_cp15.write(id, value) {
+                    Cp15Effect::Halt => emu.get_cpu_mut(cpu_type).halt(),
+                    Cp15Effect::ControlChanged => {
+                        let high = emu.arm9_cp15.high_vectors();
+                        emu.get_cpu_mut(cpu_type).set_high_vectors(high);
+                    }
+                    Cp15Effect::None => {}
+                }
             }
             _ => {
                 // mirrors printf + exit(1)
