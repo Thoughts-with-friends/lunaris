@@ -82,6 +82,26 @@ You can also select the Egui wrapper from Melonds. While some features are not s
 cargo run --release --features release --package melon_egui
 ```
 
+### Multiplay Support (MelonDS Backend only)
+
+Multiplayer support is currently not available in the Lunaris backend. However, you can use the Melonds-Egui to achieve multiplayer functionality.
+
+Host User:
+1. Run the melon_egui.exe.
+2. The host launches the ROM, then clicks System > Remote Desktop > Host Remote Desktop game.
+
+Client User:
+1. Run the melon_egui.exe.
+2. Config -> WiFi Settings: Select the WiFi network you want to connect to (VPN is also supported).
+3. The client clicks System > Remote Desktop > Join Remote Desktop game to connect.
+
+<p align="center">
+  <img src="./docs/img/multiplay.png" alt="Multiplay Settings" width="600"/>
+  <img src="./docs/img/remote.png" alt="Remote Desktop" width="600"/>
+</p>
+
+
+
 ## How to Design NDS Emulator?
 
 Further details regarding the design of the NDS emulator are summarized in the following document.

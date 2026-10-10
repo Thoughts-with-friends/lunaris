@@ -1,9 +1,9 @@
 /target
 docs/icon.drawio.svg
-*.bin
 
 .tanstack/
 
+*.bin
 *.nds
 *.sav
 *.log
@@ -23,3 +23,5 @@ core/lunaris_emu/tests/
 # Spec-test reports and the local test-ROM pointer (see core/tests/README.md)
 core/tests/dist/
 core/tests/test_rom.txt
+
+config.json
