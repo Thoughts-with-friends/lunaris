@@ -96,7 +96,7 @@ Client User:
 3. The client clicks System > Remote Desktop > Join Remote Desktop game to connect.
 
 <p align="center">
-  <img src="./docs/img/multiplay.png" alt="Multiplay Settings" width="600"/>
+  <img src="./docs/img/multiplay.png" alt="Multiplay Settings" width="300"/>
   <img src="./docs/img/remote.png" alt="Remote Desktop" width="600"/>
 </p>
 
