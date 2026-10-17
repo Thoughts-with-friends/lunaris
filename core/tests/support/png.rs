@@ -77,9 +77,8 @@ impl Canvas {
         } else {
             // Simple alpha blend for overlays.
             let a = c[3] as u32;
-            for k in 0..3 {
-                self.px[i + k] =
-                    ((self.px[i + k] as u32 * (255 - a) + c[k] as u32 * a) / 255) as u8;
+            for (k, &ck) in c.iter().take(3).enumerate() {
+                self.px[i + k] = ((self.px[i + k] as u32 * (255 - a) + ck as u32 * a) / 255) as u8;
             }
         }
     }

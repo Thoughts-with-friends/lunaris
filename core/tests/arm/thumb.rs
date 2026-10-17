@@ -41,7 +41,7 @@ fn cases() -> Vec<Case> {
             code: vec![4 << 6 | 1],
             init: vec![(0, 0x1000_0001)],
             nzcv: 0,
-            check: |x| (0x10_2, r(x, 1) << 4 | x.nzcv() as u64),
+            check: |x| ((0x10 << 4) | 0x2, r(x, 1) << 4 | x.nzcv() as u64),
         },
         Case {
             fmt: 1,
@@ -59,7 +59,7 @@ fn cases() -> Vec<Case> {
             code: vec![0x1000 | 4 << 6 | 1],
             init: vec![(0, 0x8000_0000)],
             nzcv: 0,
-            check: |x| (0xF800_0000_8, r(x, 1) << 4 | x.nzcv() as u64),
+            check: |x| ((0xF800_0000 << 4) | 0x8, r(x, 1) << 4 | x.nzcv() as u64),
         },
         Case {
             fmt: 2,
@@ -164,7 +164,7 @@ fn cases() -> Vec<Case> {
             fmt: 5,
             name: "hi-reg MOV",
             asm: "mov r8, r0; mov r1, r8",
-            code: vec![0x4600 | 1 << 7 | 0, 0x4600 | 1 << 6 | 0 << 3 | 1],
+            code: vec![0x4600 | 1 << 7, 0x4600 | 1 << 6 | 1],
             init: vec![(0, 0x1234)],
             nzcv: 0,
             check: |x| (0x1234_1234, r(x, 8) << 16 | r(x, 1)),
@@ -191,7 +191,7 @@ fn cases() -> Vec<Case> {
             fmt: 7,
             name: "STR/LDR reg offset",
             asm: "str r1,[r0,r2]; ldr r3,[r0,r2]",
-            code: vec![0x5000 | 2 << 6 | 0 << 3 | 1, 0x5800 | 2 << 6 | 0 << 3 | 3],
+            code: vec![0x5000 | 2 << 6 | 1, 0x5800 | 2 << 6 | 3],
             init: vec![(0, base), (1, 0xCAFE_BABE), (2, 8)],
             nzcv: 0,
             check: |x| (0xCAFE_BABE, r(x, 3)),
@@ -277,7 +277,7 @@ fn cases() -> Vec<Case> {
             fmt: 15,
             name: "STMIA/LDMIA",
             asm: "stmia r0!,{r1,r2}; ldmia r3!,{r4,r5}",
-            code: vec![0xC000 | 0 << 8 | 0b110, 0xC800 | 3 << 8 | 0b11_0000],
+            code: vec![0xC000 | 0b110, 0xC800 | 3 << 8 | 0b11_0000],
             init: vec![(0, base), (1, 5), (2, 6), (3, base)],
             nzcv: 0,
             check: |x| {
@@ -321,7 +321,7 @@ fn cases() -> Vec<Case> {
             code: vec![0xF000, 0xF800 | 1, 0x2101, 0x2202],
             init: vec![],
             nzcv: 0,
-            check: |x| ((CODE + 4 | 1) as u64, r(x, 14)),
+            check: |x| (((CODE + 4) | 1) as u64, r(x, 14)),
         },
         Case {
             fmt: 5,

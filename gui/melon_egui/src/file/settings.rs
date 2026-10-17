@@ -26,6 +26,8 @@ pub const INSTANCE_COUNT: u32 = 2;
 pub struct Settings {
     /// Most recently opened first.
     pub recents: Vec<PathBuf>,
+    /// Folder listed on the start screen.
+    pub rom_dir: Option<PathBuf>,
     pub view: ViewOptions,
     pub video: VideoOptions,
     /// Dialogs that were open when the window closed.
@@ -78,6 +80,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             recents: Vec::new(),
+            rom_dir: None,
             view: ViewOptions::default(),
             video: VideoOptions::default(),
             open_panes: Vec::new(),

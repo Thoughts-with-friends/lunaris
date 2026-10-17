@@ -136,7 +136,7 @@ fn cases() -> Vec<Case> {
             init: vec![(0, 0x7FFF_FFFF)],
             nzcv: 0,
             arm9_only: false,
-            check: |x| (0x8000_0000_9, r(x, 1) << 4 | x.nzcv() as u64),
+            check: |x| ((0x8000_0000 << 4) | 0x9, r(x, 1) << 4 | x.nzcv() as u64),
             rule: "7FFFFFFFh + 1 = 80000000h, N=1 V=1",
         },
         Case {
@@ -156,7 +156,7 @@ fn cases() -> Vec<Case> {
             init: vec![(0, 3)],
             nzcv: 0,
             arm9_only: false,
-            check: |x| (0xFFFF_FFFE_8, r(x, 1) << 4 | x.nzcv() as u64),
+            check: |x| ((0xFFFF_FFFE << 4) | 0x8, r(x, 1) << 4 | x.nzcv() as u64),
             rule: "3 − 5 = −2, N=1 C=0 (borrow)",
         },
         Case {
@@ -241,7 +241,7 @@ fn cases() -> Vec<Case> {
             init: vec![(0, 0x8000_0000)],
             nzcv: 0,
             arm9_only: false,
-            check: |x| (0xFFFF_FFFF_A, r(x, 1) << 4 | x.nzcv() as u64),
+            check: |x| ((0xFFFF_FFFF << 4) | 0xA, r(x, 1) << 4 | x.nzcv() as u64),
             rule: "ASR #32: all sign bits, C = bit 31",
         },
         Case {
@@ -261,7 +261,7 @@ fn cases() -> Vec<Case> {
             init: vec![(0, 2)],
             nzcv: 0b0010,
             arm9_only: false,
-            check: |x| (0x8000_0001_8, r(x, 1) << 4 | x.nzcv() as u64),
+            check: |x| ((0x8000_0001 << 4) | 0x8, r(x, 1) << 4 | x.nzcv() as u64),
             rule: "ROR #0 = RRX: C in at bit 31, bit 0 out to C",
         },
         Case {
@@ -415,7 +415,7 @@ fn cases() -> Vec<Case> {
             init: vec![(0, 0x7FFF_FFFF), (2, 1)],
             nzcv: 0,
             arm9_only: true,
-            check: |x| (0x7FFF_FFFF_1, r(x, 1) << 4 | (x.cpsr() >> 27 & 1) as u64),
+            check: |x| ((0x7FFF_FFFF << 4) | 0x1, r(x, 1) << 4 | (x.cpsr() >> 27 & 1) as u64),
             rule: "saturate to 7FFFFFFFh and set Q (ARM9 only)",
         },
         Case {

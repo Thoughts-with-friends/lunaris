@@ -236,7 +236,7 @@ fn upload_a5i3_texture(hw: &mut HW) {
     hw.arm9_write::<u8>(0x0400_0244, 0x80); // VRAMCNT_E → LCDC
     for t in 0..32u32 {
         for s in (0..32u32).step_by(2) {
-            let texel = |s: u32| (s << 3 | (t / 4) % 8) as u16;
+            let texel = |s: u32| ((s << 3) | ((t / 4) % 8)) as u16;
             hw.arm9_write::<u16>(0x0680_0000 + t * 32 + s, texel(s) | texel(s + 1) << 8);
         }
     }
@@ -324,7 +324,9 @@ fn build_cube_scene(hw: &mut HW) -> Scene {
     g.load4x4(model(35.0, 25.0, [0.0, 0.0, -3.2]));
     let s = 0.8;
     // Faces listed counter-clockwise as seen from outside the cube.
-    let faces: [([f64; 3], [[f64; 3]; 4], [u32; 3]); 6] = [
+    /// (normal, corners, colour)
+    type Face = ([f64; 3], [[f64; 3]; 4], [u32; 3]);
+    let faces: [Face; 6] = [
         ([0.0, 0.0, 1.0], [[-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]], [31, 8, 8]),
         ([0.0, 0.0, -1.0], [[s, -s, -s], [-s, -s, -s], [-s, s, -s], [s, s, -s]], [8, 31, 8]),
         ([1.0, 0.0, 0.0], [[s, -s, s], [s, -s, -s], [s, s, -s], [s, s, s]], [8, 8, 31]),

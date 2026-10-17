@@ -84,22 +84,14 @@ const STATE_HOTKEYS: [(egui::Key, usize); 5] = [
     (egui::Key::F9, 5),
 ];
 
-fn resolve_rom_path(config: &Config) -> Option<PathBuf> {
-    if let Some(arg) = std::env::args().nth(1) {
-        let p = PathBuf::from(arg);
-        if p.exists() {
-            return Some(p);
-        }
-    }
-
-    if let Some(p) = &config.last_rom_path {
-        if p.exists() {
-            return Some(p.clone());
-        }
-    }
-
-    rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
+/// A ROM given on the command line boots straight into the game; without one
+/// the app opens on the start screen (`lunaris_rom_library`).
+fn cli_rom_path() -> Option<PathBuf> {
+    std::env::args().nth(1).map(PathBuf::from).filter(|p| p.exists())
 }
+
+/// How many recent ROMs the start screen remembers.
+const RECENT_LIMIT: usize = 10;
 
 fn read_cheat_map(config: &Config) -> (CheatMap, String) {
     if let Some(rom_name) = config.last_rom_path.as_ref().and_then(|p| p.file_name()) {
@@ -229,6 +221,11 @@ struct LunarisApp {
     last_title_update: std::time::Instant,
     last_fps: f64,
     keyboard_keys: Vec<(lunaris_gui_common::input::enums::BindKey, egui::Key)>,
+    /// Start screen game list.
+    launcher: lunaris_rom_library::egui_launcher::Launcher,
+    /// While set, the start screen replaces the screens and nothing emulates
+    /// (`nds` may be the blank placeholder).
+    show_launcher: bool,
 }
 
 impl LunarisApp {
@@ -248,8 +245,11 @@ impl LunarisApp {
         nds: NDS,
         config: Config,
         cheat_editor_state: CheatEditorState,
+        show_launcher: bool,
     ) -> Self {
         let keyboard_keys = input::keyboard_keys(&config.input_bindings);
+        let mut launcher = lunaris_rom_library::egui_launcher::Launcher::default();
+        launcher.rescan(&config.recent_roms, config.rom_dir.as_deref());
 
         LunarisApp {
             nds,
@@ -276,6 +276,8 @@ impl LunarisApp {
             last_title_update: std::time::Instant::now(),
             last_fps: 0.0,
             keyboard_keys,
+            launcher,
+            show_launcher,
         }
     }
 
@@ -316,20 +318,31 @@ impl LunarisApp {
         if path.extension().and_then(|e| e.to_str()) != Some("nds") {
             return;
         }
-        self.config.last_rom_path = Some(path.clone());
+        self.load_rom_path(path.clone());
+    }
 
+    /// Boots `path`: the single entry point for the start screen, Open ROM
+    /// and drag-and-drop.
+    fn load_rom_path(&mut self, path: PathBuf) {
+        lunaris_rom_library::push_recent(&mut self.config.recent_roms, &path, RECENT_LIMIT);
+        self.config.last_rom_path = Some(path);
         self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
         self.lan_room.on_rom_changed(&self.nds);
-
-        // Save config
         self.config.save_for_instance(MAIN_INSTANCE);
         self.paused = false;
         self.screens_dirty = true;
+        self.show_launcher = false;
+        self.launcher.rescan(&self.config.recent_roms, self.config.rom_dir.as_deref());
     }
 
     fn open_rom(&mut self, save_path: Option<&Path>) {
         // NOTE: If we don't run it async, `rfd` won't be displayed during the event.
-        let rom_dir = self.config.last_rom_path.as_ref().and_then(|p| p.parent());
+        let rom_dir = self
+            .config
+            .last_rom_path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .or(self.config.rom_dir.as_deref());
         let dialog = rfd::AsyncFileDialog::new().add_filter("NDS ROM", &["nds"]);
 
         if let Some(p) = pollster::block_on(match rom_dir {
@@ -339,15 +352,48 @@ impl LunarisApp {
             let p = p.path().to_path_buf();
 
             if let Some(save_path) = save_path {
-                let dst = create_save_path(&self.config).unwrap();
-                let _ = std::fs::copy(save_path, &dst);
+                let mut config = self.config.clone();
+                config.last_rom_path = Some(p.clone());
+                if let Some(dst) = create_save_path(&config) {
+                    let _ = std::fs::copy(save_path, &dst);
+                }
             }
-            self.config.last_rom_path = Some(p);
-            self.nds = create_nds(&self.config, &mut self.cheat_editor_state);
-            self.lan_room.on_rom_changed(&self.nds);
+            self.load_rom_path(p);
+        }
+    }
+
+    /// "ROM folder..." on the start screen.
+    fn pick_rom_dir(&mut self) {
+        let mut dialog = rfd::AsyncFileDialog::new();
+        if let Some(dir) = &self.config.rom_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(dir) = pollster::block_on(dialog.pick_folder()) {
+            self.config.rom_dir = Some(dir.path().to_path_buf());
             self.config.save_for_instance(MAIN_INSTANCE);
-            self.paused = false;
-            self.screens_dirty = true;
+            self.launcher.rescan(&self.config.recent_roms, self.config.rom_dir.as_deref());
+        }
+    }
+
+    /// Draws the start screen in place of the emulated screens.
+    fn launcher_panel(&mut self, ctx: &egui::Context) {
+        let mut action = None;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            action = self
+                .launcher
+                .show(ui, &lunaris_rom_library::egui_launcher::LauncherText::default());
+        });
+        match action {
+            Some(lunaris_rom_library::egui_launcher::LauncherAction::Open(path)) => {
+                self.load_rom_path(path)
+            }
+            Some(lunaris_rom_library::egui_launcher::LauncherAction::OpenDialog) => {
+                self.open_rom(None)
+            }
+            Some(lunaris_rom_library::egui_launcher::LauncherAction::PickFolder) => {
+                self.pick_rom_dir()
+            }
+            None => {}
         }
     }
 
@@ -357,6 +403,13 @@ impl LunarisApp {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open ROM").clicked() {
                         self.open_rom(None);
+                        ui.close();
+                    }
+                    if ui.button("Start Screen").clicked() {
+                        self.nds.flush_save();
+                        self.show_launcher = true;
+                        self.launcher
+                            .rescan(&self.config.recent_roms, self.config.rom_dir.as_deref());
                         ui.close();
                     }
 
@@ -985,7 +1038,7 @@ impl eframe::App for LunarisApp {
         ctx.request_repaint();
         self.update_window_info(ctx);
 
-        if self.paused {
+        if self.paused || self.show_launcher {
             // Don't let a pause bank up a burst of frames — or a backlog of
             // stylus samples nothing is draining — on resume.
             self.frame_accum = 0.0;
@@ -1031,6 +1084,11 @@ impl eframe::App for LunarisApp {
         self.handle_file_drop(ctx);
 
         self.menu_bar(ctx);
+        if self.show_launcher {
+            self.launcher_panel(ctx);
+            self.update_title(ctx);
+            return;
+        }
         self.central_panel(ctx);
         self.debug.render(ctx, &mut self.nds);
         self.thread_mode.show(ctx, &self.config, &mut self.nds);
@@ -1075,11 +1133,17 @@ fn main() -> eframe::Result<()> {
     #[cfg(not(feature = "release"))]
     let _ = lunaris_gui_common::log::setup_logging_in(&config.log_dir);
 
-    let rom = resolve_rom_path(&config).expect("ROM required");
-    config.last_rom_path = Some(rom);
-
+    let rom = cli_rom_path();
+    let show_launcher = rom.is_none();
     let mut cheat_editor_state = CheatEditorState::default();
-    let nds = create_nds(&config, &mut cheat_editor_state);
+    let nds = match rom {
+        Some(rom) => {
+            lunaris_rom_library::push_recent(&mut config.recent_roms, &rom, RECENT_LIMIT);
+            config.last_rom_path = Some(rom);
+            create_nds(&config, &mut cheat_editor_state)
+        }
+        None => lunaris_gui_common::loader::placeholder_nds(),
+    };
 
     let (icon_rgba, [icon_width, icon_height]) = icon();
     let viewport = egui::ViewportBuilder::default()
@@ -1119,7 +1183,13 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             fonts::setup_custom_fonts::<&str>(&cc.egui_ctx, None);
-            Ok(Box::new(LunarisApp::new(&cc.egui_ctx, nds, config, cheat_editor_state)))
+            Ok(Box::new(LunarisApp::new(
+                &cc.egui_ctx,
+                nds,
+                config,
+                cheat_editor_state,
+                show_launcher,
+            )))
         }),
     )
 }

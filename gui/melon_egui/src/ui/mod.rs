@@ -23,5 +23,6 @@ pub mod notice;
 pub mod osd;
 pub mod panes;
 pub mod screen;
+pub mod start;
 pub mod view;
 pub mod window;

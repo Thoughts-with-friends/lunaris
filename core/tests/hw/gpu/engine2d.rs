@@ -49,9 +49,9 @@ fn tile4(n: usize) -> [[u8; 8]; 8] {
             }
         }
     }
-    for i in 0..8 {
-        t[0][i] = 2;
-        t[i][0] = 2;
+    t[0] = [2; 8];
+    for row in t.iter_mut() {
+        row[0] = 2;
     }
     t
 }
@@ -70,9 +70,9 @@ fn pack4(t: &[[u8; 8]; 8]) -> [u8; 32] {
 /// 8bpp tile `n` for BG1: diagonal gradient over palette entries 128..255.
 fn tile8(n: usize) -> [[u8; 8]; 8] {
     let mut t = [[0u8; 8]; 8];
-    for y in 0..8 {
-        for x in 0..8 {
-            t[y][x] = 128 + (((x + y) * 4 + n * 32) % 128) as u8;
+    for (y, row) in t.iter_mut().enumerate() {
+        for (x, v) in row.iter_mut().enumerate() {
+            *v = 128 + (((x + y) * 4 + n * 32) % 128) as u8;
         }
     }
     t
@@ -82,7 +82,7 @@ fn tile8(n: usize) -> [[u8; 8]; 8] {
 fn bg0_entry(x: usize, y: usize) -> u16 {
     let tile = ((x + y) % 16) as u16;
     let hflip = (y % 2 == 1) as u16;
-    let vflip = (x % 3 == 0) as u16;
+    let vflip = x.is_multiple_of(3) as u16;
     let pal = ((y / 4) % 4 + 1) as u16;
     tile | hflip << 10 | vflip << 11 | pal << 12
 }
@@ -99,9 +99,9 @@ fn bg_palette() -> Vec<u16> {
         p[bank * 16 + 1] = (r as u16 >> 3) | (g as u16 >> 3) << 5 | (b as u16 >> 3) << 10;
         p[bank * 16 + 2] = 0x5294;
     }
-    for i in 128..256 {
+    for (i, v) in p.iter_mut().enumerate().skip(128) {
         let t = (i - 128) as u16 / 4;
-        p[i] = (t / 2) | (8 + t / 3) << 5 | (31 - t / 2) << 10;
+        *v = (t / 2) | (8 + t / 3) << 5 | (31 - t / 2) << 10;
     }
     p
 }
@@ -164,11 +164,11 @@ fn upload_scene(hw: &mut HW) {
     }
     for n in 0..4 {
         let t = tile8(n);
-        for y in 0..8 {
+        for (y, row) in t.iter().enumerate() {
             for x in (0..8).step_by(2) {
                 hw.arm9_write::<u16>(
                     BG1_CHARS + (n * 64 + y * 8 + x) as u32,
-                    t[y][x] as u16 | (t[y][x + 1] as u16) << 8,
+                    row[x] as u16 | (row[x + 1] as u16) << 8,
                 );
             }
         }
@@ -394,9 +394,9 @@ fn report() {
     let pal = bg_palette();
     for n in 0..16 {
         let t = tile4(n);
-        for y in 0..8 {
-            for x in 0..8 {
-                let c = match t[y][x] {
+        for (y, row) in t.iter().enumerate() {
+            for (x, &v) in row.iter().enumerate() {
+                let c = match v {
                     0 => {
                         if (x + y) % 2 == 0 {
                             [220, 220, 220, 255]

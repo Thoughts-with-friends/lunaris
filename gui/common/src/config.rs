@@ -151,6 +151,10 @@ pub struct Config {
     pub bios9_path: Option<PathBuf>,
     pub firmware_path: Option<PathBuf>,
     pub last_rom_path: Option<PathBuf>,
+    /// Folder listed on the start screen (`lunaris_rom_library`).
+    pub rom_dir: Option<PathBuf>,
+    /// Recently opened ROMs, newest first, shown before the folder's games.
+    pub recent_roms: Vec<PathBuf>,
     pub save_dir: PathBuf,
     pub save_state_dir: PathBuf,
     pub enable_cheats: bool,
@@ -192,6 +196,8 @@ impl Default for Config {
             bios9_path: None,
             firmware_path: None,
             last_rom_path: None,
+            rom_dir: None,
+            recent_roms: Vec::new(),
             save_dir: PathBuf::from("./saves"),
             save_state_dir: PathBuf::from("./states"),
             enable_cheats: false,

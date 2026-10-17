@@ -13,6 +13,23 @@ pub fn load_rom(config: &Config) -> NDS {
     load_rom_for_instance(config, 0)
 }
 
+/// An [`NDS`] with a blank cartridge, for front ends that start on the
+/// ROM-picker screen before any game is chosen. It must never be stepped;
+/// it only fills the `nds` field until a real ROM is loaded.
+pub fn placeholder_nds() -> NDS {
+    let temp = std::env::temp_dir();
+    let pid = std::process::id();
+    let firmware = temp.join(format!("lunaris_placeholder_fw_{pid}.bin"));
+    let _ = fs::write(&firmware, free_bios::firmware::FIRMWARE_DS);
+    NDS::new(
+        free_bios::arm7::BIOS_ARM7_BIN.to_vec(),
+        free_bios::arm9::BIOS_ARM9_BIN.to_vec(),
+        firmware,
+        vec![0; 0x8000],
+        temp.join(format!("lunaris_placeholder_{pid}.sav")),
+    )
+}
+
 /// Like [`load_rom`], but for one of several [`NDS`] instances living in the
 /// **same process** (Thread Mode).
 ///
@@ -307,5 +324,13 @@ mod tests {
     fn instance_zero_is_left_untouched() {
         let base = free_bios::firmware::FIRMWARE_DS.to_vec();
         assert_eq!(perturb_firmware_mac(base.clone(), 0), base);
+    }
+}
+
+#[cfg(test)]
+mod placeholder_tests {
+    #[test]
+    fn placeholder_nds_constructs() {
+        let _nds = super::placeholder_nds();
     }
 }

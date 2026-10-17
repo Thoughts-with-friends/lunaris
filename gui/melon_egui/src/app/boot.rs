@@ -76,6 +76,9 @@ impl MelonEgui {
             clock_note: Notice::default(),
             ram_search: RamSearch::default(),
             recents: settings.recents,
+            rom_dir: settings.rom_dir,
+            launcher: Default::default(),
+            launcher_dirty: true,
             panes: settings.open_panes,
             second_window: false,
             airwaves: Airwaves::new(),
@@ -189,6 +192,7 @@ impl MelonEgui {
         let mut settings = self.settings();
         settings.push_recent(rom);
         self.recents = settings.recents.clone();
+        self.launcher_dirty = true;
         settings.save();
     }
 
@@ -206,6 +210,7 @@ impl MelonEgui {
     pub(crate) fn settings(&self) -> Settings {
         Settings {
             recents: self.recents.clone(),
+            rom_dir: self.rom_dir.clone(),
             view: self.view,
             video: self.video,
             open_panes: self.panes.clone(),
@@ -249,6 +254,8 @@ impl MelonEgui {
             .clone()
             .or_else(|| Some(crate::file::settings::instance_data_dir(instance, "states")));
         self.recents = settings.recents.clone();
+        self.rom_dir = settings.rom_dir.clone();
+        self.launcher_dirty = true;
         self.panes = settings.open_panes.clone();
         self.lan_tuning = settings.lan;
         self.remote_tuning = settings.remote;

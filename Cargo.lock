@@ -2291,6 +2291,7 @@ dependencies = [
  "ico",
  "lunaris_gui_common",
  "lunaris_net",
+ "lunaris_rom_library",
  "nds-core",
  "pollster 1.0.1",
  "rfd",
@@ -2320,6 +2321,7 @@ dependencies = [
  "imgui",
  "imgui-opengl-renderer",
  "lunaris_gui_common",
+ "lunaris_rom_library",
  "nds-core",
  "rfd",
  "serde",
@@ -2334,6 +2336,13 @@ version = "0.5.3"
 dependencies = [
  "nds-core",
  "rusty_enet",
+]
+
+[[package]]
+name = "lunaris_rom_library"
+version = "0.5.3"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -2378,6 +2387,7 @@ dependencies = [
  "image",
  "indexmap 2.14.2",
  "log",
+ "lunaris_rom_library",
  "melonds",
  "pollster 1.0.1",
  "rfd",

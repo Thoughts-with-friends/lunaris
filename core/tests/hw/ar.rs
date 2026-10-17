@@ -26,8 +26,8 @@ fn apply(hw: &mut HW, code: &[u32]) {
 fn cases() -> Vec<(&'static str, Vec<u32>, u32, u32, u32)> {
     vec![
         ("0XXXXXXX: 32-bit write", vec![RAM, 0x1234_5678], RAM, 4, 0x1234_5678),
-        ("1XXXXXXX: 16-bit write", vec![0x1000_0000 | RAM + 4, 0xABCD], RAM + 4, 2, 0xABCD),
-        ("2XXXXXXX: 8-bit write", vec![0x2000_0000 | RAM + 6, 0xEF], RAM + 6, 1, 0xEF),
+        ("1XXXXXXX: 16-bit write", vec![0x1000_0000 | (RAM + 4), 0xABCD], RAM + 4, 2, 0xABCD),
+        ("2XXXXXXX: 8-bit write", vec![0x2000_0000 | (RAM + 6), 0xEF], RAM + 6, 1, 0xEF),
         (
             "5XXXXXXX: if equal → true",
             vec![RAM, 0x1234_5678, 0x5000_0000 | RAM, 0x1234_5678, RAM + 0x10, 1, 0xD200_0000, 0],
@@ -44,7 +44,7 @@ fn cases() -> Vec<(&'static str, Vec<u32>, u32, u32, u32)> {
         ),
         (
             "3XXXXXXX: if greater (Y > [X])",
-            vec![RAM + 0x18, 5, 0x3000_0000 | RAM + 0x18, 9, RAM + 0x1C, 7, 0xD200_0000, 0],
+            vec![RAM + 0x18, 5, 0x3000_0000 | (RAM + 0x18), 9, RAM + 0x1C, 7, 0xD200_0000, 0],
             RAM + 0x1C,
             4,
             7,

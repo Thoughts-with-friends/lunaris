@@ -235,21 +235,21 @@ fn real_rom_banks() {
     let mut doc = Doc::new("hw/gpu/vram_rom.md", "VRAM banks: real ROM snapshot", "hw/gpu/vram.rs");
     doc.source(&format!("{} after {} frames", rom.label(), frame_budget(600)));
     let mut rows = Vec::new();
-    for b in 0..9 {
+    for (b, &name) in NAMES.iter().enumerate() {
         let v = hw.arm9_read::<u8>(cnt_addr(b));
         let (px, w, h) = hw.render_bank(true, b);
-        let file = format!("hw/gpu/vram_rom/bank_{}.png", NAMES[b]);
+        let file = format!("hw/gpu/vram_rom/bank_{}.png", name);
         if w > 0 && h > 0 && v & 0x80 != 0 {
             Canvas::from_bgr555(&px, w, h, 1).save(&file);
         }
         rows.push(vec![
-            NAMES[b].into(),
+            name.into(),
             hx(v as u64, 2),
             (v >> 7).to_string(),
             (v & 7).to_string(),
             (v >> 3 & 3).to_string(),
             if v & 0x80 != 0 {
-                format!("![{}]({})", NAMES[b], &file["hw/gpu/".len()..])
+                format!("![{}]({})", name, &file["hw/gpu/".len()..])
             } else {
                 String::new()
             },

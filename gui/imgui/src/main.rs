@@ -5,6 +5,7 @@
 mod debug;
 mod display;
 mod input;
+mod launcher;
 mod savestate;
 
 use std::{borrow::Borrow as _, collections::HashSet, path::PathBuf};
@@ -26,21 +27,62 @@ use self::{
 // ROM
 // =========================================================
 
-fn resolve_rom_path(config: &lunaris_gui_common::config::Config) -> Option<PathBuf> {
-    if let Some(arg) = std::env::args().nth(1) {
-        let p = PathBuf::from(arg);
-        if p.exists() {
-            return Some(p);
+/// A ROM given on the command line boots straight into the game; without one
+/// the app opens on the start screen.
+fn cli_rom_path() -> Option<PathBuf> {
+    std::env::args().nth(1).map(PathBuf::from).filter(|p| p.exists())
+}
+
+/// How many recent ROMs the start screen remembers.
+const RECENT_LIMIT: usize = 10;
+
+/// Boots `path`: the single entry point for the start screen, Open ROM and
+/// drag-and-drop.
+fn load_rom_path(display: &mut Display, ctx: &mut FrameCtx, path: PathBuf) {
+    lunaris_rom_library::push_recent(&mut ctx.config.recent_roms, &path, RECENT_LIMIT);
+    ctx.config.last_rom_path = Some(path.clone());
+    display.set_last_rom_path(Some(path));
+    ctx.nds = create_nds(&ctx.config);
+    ctx.paused = false;
+    ctx.show_launcher = false;
+    ctx.config.save();
+    ctx.launcher.rescan(&ctx.config.recent_roms, ctx.config.rom_dir.as_deref());
+}
+
+fn apply_launcher_action(
+    display: &mut Display,
+    ctx: &mut FrameCtx,
+    action: launcher::LauncherAction,
+) {
+    match action {
+        launcher::LauncherAction::Open(path) => load_rom_path(display, ctx, path),
+        launcher::LauncherAction::OpenDialog => {
+            if let Some(p) = pick_rom(&ctx.config) {
+                load_rom_path(display, ctx, p);
+            }
+        }
+        launcher::LauncherAction::PickFolder => {
+            let mut dialog = rfd::FileDialog::new();
+            if let Some(dir) = &ctx.config.rom_dir {
+                dialog = dialog.set_directory(dir);
+            }
+            if let Some(dir) = dialog.pick_folder() {
+                ctx.config.rom_dir = Some(dir);
+                ctx.config.save();
+                ctx.launcher.rescan(&ctx.config.recent_roms, ctx.config.rom_dir.as_deref());
+            }
         }
     }
+}
 
-    if let Some(p) = &config.last_rom_path {
-        if p.exists() {
-            return Some(p.clone());
-        }
+fn pick_rom(config: &lunaris_gui_common::config::Config) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]);
+    if let Some(dir) =
+        config.last_rom_path.as_ref().and_then(|p| p.parent()).or(config.rom_dir.as_deref())
+    {
+        dialog = dialog.set_directory(dir);
     }
-
-    rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
+    dialog.pick_file()
 }
 
 fn create_nds(config: &lunaris_gui_common::config::Config) -> NDS {
@@ -93,11 +135,21 @@ fn setup_imgui(imgui: &mut imgui::Context) {
         return;
     };
 
-    imgui.fonts().add_font(&[imgui::FontSource::TtfData {
-        data: &font_data,
-        size_pixels: 16.0,
-        config: None,
-    }]);
+    let mut sources =
+        vec![imgui::FontSource::TtfData { data: &font_data, size_pixels: 16.0, config: None }];
+    // Banner titles on the start screen are mostly Japanese; merge a CJK font.
+    let jp_data = std::fs::read("c:\\Windows\\Fonts\\msgothic.ttc").ok();
+    if let Some(jp) = &jp_data {
+        sources.push(imgui::FontSource::TtfData {
+            data: jp,
+            size_pixels: 16.0,
+            config: Some(imgui::FontConfig {
+                glyph_ranges: imgui::FontGlyphRanges::japanese(),
+                ..imgui::FontConfig::default()
+            }),
+        });
+    }
+    imgui.fonts().add_font(&sources);
 
     imgui.fonts().build_rgba32_texture();
 }
@@ -149,6 +201,9 @@ struct FrameCtx {
     config: lunaris_gui_common::config::Config,
     paused: bool,
     menu_height: f32,
+    /// While set, the start screen covers the window and nothing emulates.
+    show_launcher: bool,
+    launcher: launcher::Launcher,
 }
 
 // =========================================================
@@ -163,7 +218,7 @@ fn frame(
     debug: &mut DebugState,
     ui_state: &mut UiState,
 ) {
-    if !ctx.paused {
+    if !ctx.paused && !ctx.show_launcher {
         ctx.nds.emulate_frame();
         debug.stats.frame_completed();
     }
@@ -181,17 +236,27 @@ fn frame(
         }
     }
 
+    let mut launcher_action = None;
+    let mut menu_action = None;
     display.render_imgui(imgui, keys, |ui, keys| {
-        render_menu(ctx, ui, debug, ui_state);
-        render_debug(&mut ctx.nds, ui, &keys, debug);
+        menu_action = render_menu(ctx, ui, debug, ui_state);
+        if ctx.show_launcher {
+            launcher_action = ctx.launcher.render(ui, ctx.menu_height);
+            if launcher_action.is_none() && ui.io().key_ctrl && keys.contains(&Key::O) {
+                launcher_action = Some(launcher::LauncherAction::OpenDialog);
+            }
+        } else {
+            render_debug(&mut ctx.nds, ui, &keys, debug);
+        }
         render_audio(&mut ctx.config, &mut ctx.nds, ui, ui_state);
     });
+    if let Some(action) = menu_action.or(launcher_action) {
+        apply_launcher_action(display, ctx, action);
+    }
 
     if dropped.len() == 1 {
         if dropped[0].extension().and_then(|e| e.to_str()) == Some("nds") {
-            display.set_last_rom_path(Some(dropped[0].clone()));
-            ctx.nds = create_nds(&ctx.config);
-            ctx.paused = false;
+            load_rom_path(display, ctx, dropped[0].clone());
         }
     }
 }
@@ -200,17 +265,24 @@ fn frame(
 // Menu
 // =========================================================
 
-fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &mut UiState) {
+/// Returns a ROM-loading request (Open ROM) for the caller to apply, since
+/// loading needs the [`Display`].
+fn render_menu(
+    ctx: &mut FrameCtx,
+    ui: &Ui,
+    debug: &mut DebugState,
+    ui_state: &mut UiState,
+) -> Option<launcher::LauncherAction> {
+    let mut action = None;
     ui.main_menu_bar(|| {
         ui.menu(im_str!("File"), true, || {
             if MenuItem::new(im_str!("Open ROM")).build(ui) {
-                if let Some(p) = rfd::FileDialog::new().add_filter("NDS ROM", &["nds"]).pick_file()
-                {
-                    ctx.nds = create_nds(&ctx.config);
-                    ctx.paused = false;
-                    ctx.config.last_rom_path = Some(p.to_path_buf());
-                    ctx.config.save();
-                }
+                action = Some(launcher::LauncherAction::OpenDialog);
+            }
+            if MenuItem::new(im_str!("Start Screen")).build(ui) {
+                ctx.nds.flush_save();
+                ctx.show_launcher = true;
+                ctx.launcher.rescan(&ctx.config.recent_roms, ctx.config.rom_dir.as_deref());
             }
 
             ui.menu(im_str!("Save State"), true, || {
@@ -269,6 +341,7 @@ fn render_menu(ctx: &mut FrameCtx, ui: &Ui, debug: &mut DebugState, ui_state: &m
 
         ctx.menu_height = ui.window_size()[1];
     });
+    action
 }
 
 // =========================================================
@@ -319,8 +392,12 @@ fn main() {
     let _ = lunaris_gui_common::log::setup_logging();
 
     let mut config = lunaris_gui_common::config::Config::load();
-    let rom = resolve_rom_path(&config).expect("ROM required");
-    config.last_rom_path = Some(rom.clone());
+    let rom = cli_rom_path();
+    let show_launcher = rom.is_none();
+    if let Some(rom) = &rom {
+        lunaris_rom_library::push_recent(&mut config.recent_roms, rom, RECENT_LIMIT);
+        config.last_rom_path = Some(rom.clone());
+    }
 
     let mut imgui = imgui::Context::create();
 
@@ -331,7 +408,17 @@ fn main() {
 
     let mut debug = DebugState::new();
     let mut ui_state = UiState::new();
-    let mut ctx = FrameCtx { nds: create_nds(&config), config, paused: false, menu_height: 0.0 };
+    let nds = if show_launcher {
+        lunaris_gui_common::loader::placeholder_nds()
+    } else {
+        create_nds(&config)
+    };
+    // Icons are GL textures, so the scan runs after `Display::new` made the
+    // context current.
+    let mut launcher = launcher::Launcher::default();
+    launcher.rescan(&config.recent_roms, config.rom_dir.as_deref());
+    let mut ctx =
+        FrameCtx { nds, config, paused: false, menu_height: 0.0, show_launcher, launcher };
 
     let main_loop = move |display: &mut Display| {
         frame(display, &mut imgui, &mut ctx, &mut debug, &mut ui_state);

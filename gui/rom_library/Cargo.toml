@@ -1,0 +1,19 @@
+[package]
+name = "lunaris_rom_library"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+description = "Scans a ROM folder and reads NDS banner titles/icons for the front ends' start screen"
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+egui = { version = "0.33", optional = true }
+
+[features]
+# The start-screen widget for the egui front ends (gui/egui, gui/melon_egui).
+egui = ["dep:egui"]

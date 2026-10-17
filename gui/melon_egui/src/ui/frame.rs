@@ -26,18 +26,23 @@ impl eframe::App for MelonEgui {
 
         let mut action = None;
         egui::TopBottomPanel::top("menu").show(ctx, |ui| action = menu::bar(self, ui));
+        let mut start_action = None;
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
             ctx,
             |ui| {
                 let area = ui.max_rect();
-                self.screens(ui, area);
+                if self.mode.emulates() && !self.is_loaded() {
+                    start_action = self.start_screen(ui);
+                } else {
+                    self.screens(ui, area);
+                }
                 self.osd(ui, area);
             },
         );
         panes::show(self, ctx);
         self.guest_view(ctx);
         self.second_view(ctx);
-        if let Some(action) = action {
+        if let Some(action) = action.or(start_action) {
             self.apply(action, ctx);
         }
 

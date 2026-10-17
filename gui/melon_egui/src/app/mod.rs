@@ -275,6 +275,12 @@ pub struct MelonEgui {
     pub ram_search: RamSearch,
     /// Recently opened ROMs, newest first.
     pub(crate) recents: Vec<PathBuf>,
+    /// Folder listed on the start screen.
+    pub(crate) rom_dir: Option<PathBuf>,
+    /// Start screen shown while no cart is loaded.
+    pub(crate) launcher: lunaris_rom_library::egui_launcher::Launcher,
+    /// The start screen's list is stale (recents or folder changed).
+    pub(crate) launcher_dirty: bool,
     /// Which auxiliary windows are open.
     pub(crate) panes: Vec<Pane>,
     /// Whether the second view of this console is open.

@@ -1065,6 +1065,27 @@ pub enum I18nKey {
     #[i18n(ja = "{0} に設定しました")]
     ClockSet,
 
+    // -- Start screen -------------------------------------------------------------
+    /// Pick a game below, or open one from a file.
+    #[i18n(ja = "下のゲームを選ぶか、ファイルから開いてください。")]
+    StartSubtitle,
+
+    /// ROM folder...
+    #[i18n(ja = "ROM フォルダ...")]
+    StartRomFolder,
+
+    /// RECENT AND ROM FOLDER
+    #[i18n(ja = "最近使ったもの / ROM フォルダ")]
+    StartSection,
+
+    /// No ROMs yet. Choose a ROM folder to list its games here.
+    #[i18n(ja = "ROM がありません。ROM フォルダを選ぶとここにゲームが並びます。")]
+    StartEmpty,
+
+    /// Choose the ROM folder
+    #[i18n(ja = "ROM フォルダを選ぶ")]
+    PickRomFolder,
+
     // -- File dialogs ---------------------------------------------------------------
     /// Open a Nintendo DS ROM
     #[i18n(ja = "ニンテンドー DS の ROM を開く")]
