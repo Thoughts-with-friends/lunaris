@@ -1,0 +1,101 @@
+//! The Lunaris backend: this repository's `nds-core`.
+//!
+//! The core plays its own sound (its SPU feeds a `cpal` stream it opens
+//! itself), so [`Core::take_audio`] adds nothing and the volume is set on
+//! the core.
+use lunaris_gui_common::{config::Config, framebuffer::abgr1555_to_rgba8};
+use nds_core::{
+    ArCode, CheatMap,
+    nds::{Key, NDS},
+};
+
+use super::{Boot, Core};
+
+/// `Key` in `emu_thread::key` bit order (each key's value is its bit).
+const KEYS: [Key; 12] = [
+    Key::A,
+    Key::B,
+    Key::Select,
+    Key::Start,
+    Key::Right,
+    Key::Left,
+    Key::Up,
+    Key::Down,
+    Key::R,
+    Key::L,
+    Key::X,
+    Key::Y,
+];
+
+pub fn boot(boot: &Boot) -> Result<Box<dyn Core>, String> {
+    // The loader unwraps file reads; fail here with a message instead.
+    std::fs::metadata(&boot.rom).map_err(|e| e.to_string())?;
+    let save_dir = boot.save.parent().map(ToOwned::to_owned).unwrap_or_default();
+    std::fs::create_dir_all(&save_dir).map_err(|e| e.to_string())?;
+    let config = Config {
+        last_rom_path: Some(boot.rom.clone()),
+        save_dir,
+        bios7_path: boot.settings.arm7_bios_path.clone(),
+        bios9_path: boot.settings.arm9_bios_path.clone(),
+        firmware_path: boot.settings.firmware_path.clone(),
+        audio_volume: boot.volume * 100.0,
+        ..Config::default()
+    };
+    // Same boot as the egui GUI: free BIOS / firmware fallback, a DeSmuME
+    // `.dsv` adopted when there is no `.sav` yet.
+    let mut nds = lunaris_gui_common::loader::load_rom(&config);
+    // The emulator thread paces frames; the audio queue must not block it.
+    nds.set_audio_sync(false);
+    Ok(Box::new(Lunaris { nds, keys: 0 }))
+}
+
+struct Lunaris {
+    nds: NDS,
+    /// Buttons held at the last frame.
+    keys: u32,
+}
+
+impl Core for Lunaris {
+    fn run_frame(&mut self, keys: u32, touch: Option<(i32, i32)>) {
+        let changed = keys ^ self.keys;
+        for key in KEYS {
+            let bit = 1 << key as u32;
+            if changed & bit != 0 {
+                if keys & bit != 0 {
+                    self.nds.press_key(key);
+                } else {
+                    self.nds.release_key(key);
+                }
+            }
+        }
+        self.keys = keys;
+        match touch {
+            Some((x, y)) => self.nds.press_screen(x as usize, y as usize),
+            None => self.nds.release_screen(),
+        }
+        self.nds.emulate_frame();
+    }
+
+    fn take_audio(&mut self, _out: &mut Vec<i16>) {}
+
+    fn frame(&mut self, rgba: &mut Vec<u8>) {
+        for screen in self.nds.get_screens() {
+            rgba.extend_from_slice(&abgr1555_to_rgba8(screen));
+        }
+    }
+
+    fn set_cheats(&mut self, codes: Vec<Vec<u32>>) {
+        self.nds.set_enable_cheats(!codes.is_empty());
+        let map: CheatMap = codes.into_iter().map(|code| ArCode { code, enabled: true }).collect();
+        self.nds.set_cheat_map(map);
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.nds.set_audio_volume(volume * 100.0);
+    }
+
+    fn flush_save(&mut self) -> Result<(), String> {
+        self.nds.flush_save();
+        Ok(())
+    }
+}

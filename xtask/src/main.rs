@@ -2,11 +2,16 @@
 //!
 //! Cargo has no native syntax for a custom `--gui <name>` flag on `build`/
 //! `run`, so this crate provides it: `cargo xtask <build|run> [--gui
-//! egui|imgui|melon] [cargo args...] [-- <args passed to the emulator>]` simply
-//! re-invokes `cargo <build|run> -p <package for that GUI> ...`.
+//! egui|imgui|melon|freya] [--backend lunaris|melon|cogi] [cargo args...]
+//! [-- <args passed to the emulator>]` simply re-invokes
+//! `cargo <build|run> -p <package for that GUI> ...`.
 //!
-//! `--gui melon` additionally locates an LLVM toolchain for the melonDS C++
-//! build; see [`export_llvm_root`].
+//! `--backend` (freya only) fixes the core of the build: it becomes
+//! `--no-default-features --features <backend>`, since cargo itself has no
+//! such flag. Default: `lunaris`.
+//!
+//! `--gui melon` and `--gui freya --backend melon` additionally locate an LLVM
+//! toolchain for the melonDS C++ build; see [`export_llvm_root`].
 //!
 //! `--gui` defaults to `egui`, matching the workspace's `default-members`
 //! (`gui/egui`) so that plain `cargo build`/`cargo run` also default to the
@@ -25,6 +30,9 @@ enum Gui {
     Imgui,
     /// The melonDS-core reference front end, `gui/melon_egui`.
     Melon,
+    /// The freya front end, `gui/freya`; its core (Lunaris, melonDS or Cogi)
+    /// is chosen at build time with `--backend`.
+    Freya,
 }
 
 impl Gui {
@@ -36,16 +44,18 @@ impl Gui {
             Gui::Egui => "lunaris",
             Gui::Imgui => "lunaris_imgui",
             Gui::Melon => "melon_egui",
+            Gui::Freya => "lunaris_freya",
         }
     }
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <build|run> [--gui egui|imgui|melon] [cargo args...] [-- <emulator args>]"
+        "usage: cargo xtask <build|run> [--gui egui|imgui|melon|freya] [--backend lunaris|melon|cogi] [cargo args...] [-- <emulator args>]"
     );
     eprintln!("       --gui defaults to `egui` when omitted");
     eprintln!("       --gui melon builds gui/melon_egui (the melonDS-core reference front end)");
+    eprintln!("       --gui freya builds gui/freya; --backend picks its core (default `lunaris`)");
 }
 
 fn main() -> ExitCode {
@@ -60,6 +70,7 @@ fn main() -> ExitCode {
     }
 
     let mut gui = Gui::Egui;
+    let mut backend: Option<&'static str> = None;
     let mut cargo_args: Vec<String> = Vec::new();
     let mut emulator_args: Vec<String> = Vec::new();
 
@@ -72,9 +83,24 @@ fn main() -> ExitCode {
                     Some("egui") => Gui::Egui,
                     Some("imgui") => Gui::Imgui,
                     Some("melon") => Gui::Melon,
+                    Some("freya") => Gui::Freya,
                     other => {
                         eprintln!(
-                            "invalid --gui value: {other:?} (expected `egui`, `imgui` or `melon`)"
+                            "invalid --gui value: {other:?} (expected `egui`, `imgui`, `melon` or `freya`)"
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                };
+                i += 2;
+            }
+            "--backend" => {
+                backend = match rest.get(i + 1).map(String::as_str) {
+                    Some("lunaris") => Some("lunaris"),
+                    Some("melon" | "melonds") => Some("melon"),
+                    Some("cogi") => Some("cogi"),
+                    other => {
+                        eprintln!(
+                            "invalid --backend value: {other:?} (expected `lunaris`, `melon` or `cogi`)"
                         );
                         return ExitCode::FAILURE;
                     }
@@ -95,6 +121,22 @@ fn main() -> ExitCode {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cmd = Command::new(cargo);
     cmd.arg(&cargo_subcommand).arg("-p").arg(gui.package()).args(&cargo_args);
+    if backend.is_some() && !matches!(gui, Gui::Freya) {
+        eprintln!("--backend only applies to --gui freya");
+        return ExitCode::FAILURE;
+    }
+    if matches!(gui, Gui::Freya) {
+        let backend = backend.unwrap_or("lunaris");
+        let mut features = backend.to_owned();
+        // As for melon_egui: a release build has no console window.
+        if cargo_args.iter().any(|arg| arg == "--release" || arg == "-r") {
+            features.push_str(",release");
+        }
+        cmd.arg("--no-default-features").arg("--features").arg(features);
+        if backend == "melon" {
+            export_llvm_root(&mut cmd);
+        }
+    }
     if matches!(gui, Gui::Melon) {
         export_llvm_root(&mut cmd);
         // A release build of `melon_egui` is a build meant to be handed to

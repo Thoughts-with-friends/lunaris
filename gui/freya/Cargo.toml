@@ -1,0 +1,67 @@
+[package]
+name = "lunaris_freya"
+description = "Freya frontend of the Lunaris DS emulator"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+version.workspace = true
+# freya 0.5 needs a newer compiler than the workspace minimum.
+rust-version = "1.99"
+
+[dependencies]
+# Prerelease: pinned exactly, later release candidates may change the API.
+freya = { version = "=0.5.0-rc.10", features = [
+    "engine",
+    "borderless",
+    "titlebar",
+] }
+async-io = "2"
+futures-lite = "2"
+bytes = "1"
+rfd = "0.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
+# The Cogi backend: cogids-rs's DS core, plus the frontend helpers (menus,
+# view, instance folder, audio, gamepads) this GUI was written against.
+ds_common = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3" }
+ds_emu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3", features = [
+    "log",
+] }
+ds_gpu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3", optional = true }
+ds_spu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3", optional = true }
+
+# The Lunaris backend: this repository's core.
+nds-core = { workspace = true, optional = true }
+lunaris_gui_common = { workspace = true, optional = true }
+
+# The melonDS backend (same bindings as melon_egui). Building it compiles the
+# melonDS C++ core, which needs LLVM (see gui/melon_egui/src/main.rs).
+chrono = { version = "0.4", optional = true }
+melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665", optional = true }
+
+# The core is fixed at build time: enable exactly one backend feature.
+#
+#   cargo build --release -p lunaris_freya --features release                                  # Lunaris
+#   cargo build --release -p lunaris_freya --no-default-features --features melon,release      # melonDS
+#   cargo build --release -p lunaris_freya --no-default-features --features cogi,release       # Cogi
+#
+# or `cargo xtask build --gui freya --backend <lunaris|melon|cogi> --release`.
+[features]
+default = ["lunaris"]
+lunaris = ["dep:nds-core", "dep:lunaris_gui_common"]
+melon = ["dep:melonds", "dep:chrono", "dep:ds_spu"]
+cogi = ["dep:ds_gpu"]
+# No console window (as melon_egui's `release`).
+release = []
+
+[dev-dependencies]
+freya-testing = { version = "=0.5.0-rc.10" }
+
+[lints]
+workspace = true
