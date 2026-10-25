@@ -4,11 +4,11 @@
 //!
 //! Disabled entries are drawn greyed out with their reason as a tooltip;
 //! checkboxes get a check mark and radio entries a dot.
-use ds_common::menu::{Item, Menu as DsMenu};
 use freya::prelude::*;
 
 use crate::{
     actions,
+    menu::{Item, Menu as DsMenu},
     state::Ctx,
     theme::{self, ACCENT, TEXT, TEXT_DIM, TEXT_FAINT},
 };

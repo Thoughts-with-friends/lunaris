@@ -54,6 +54,8 @@ serde_json = "1.0.149"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665" }
+# The LAN transport (src/lan before; shared with gui/freya).
+melon_lan = { path = "../melon_lan" }
 # Game controllers. Its Windows back end is XInput plus the vendored SDL
 # mapping database, so a pad works without anything installed beside the exe.
 gilrs = "0.11"

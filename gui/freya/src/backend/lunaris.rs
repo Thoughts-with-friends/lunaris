@@ -3,13 +3,15 @@
 //! The core plays its own sound (its SPU feeds a `cpal` stream it opens
 //! itself), so [`Core::take_audio`] adds nothing and the volume is set on
 //! the core.
+use std::{any::Any, path::Path};
+
 use lunaris_gui_common::{config::Config, framebuffer::abgr1555_to_rgba8};
 use nds_core::{
     ArCode, CheatMap,
-    nds::{Key, NDS},
+    nds::{Engine, GraphicsType, Key, NDS},
 };
 
-use super::{Boot, Core};
+use super::{Boot, Core, DebugView, Image};
 
 /// `Key` in `emu_thread::key` bit order (each key's value is its bit).
 const KEYS: [Key; 12] = [
@@ -97,5 +99,101 @@ impl Core for Lunaris {
     fn flush_save(&mut self) -> Result<(), String> {
         self.nds.flush_save();
         Ok(())
+    }
+
+    fn rom_fingerprint(&self) -> Option<[u8; 16]> {
+        Some(self.nds.rom_fingerprint().to_bytes())
+    }
+
+    fn set_link(&mut self, link: Option<Box<dyn Any + Send>>) -> Result<(), String> {
+        let transport = match link {
+            Some(link) => {
+                let transport = link
+                    .downcast::<lunaris_net::NetTransport>()
+                    .map_err(|_| "Not a Lunaris LAN link".to_owned())?;
+                Some(transport as Box<dyn nds_core::nds::MpTransport>)
+            }
+            None => None,
+        };
+        self.nds.set_mp_transport(transport);
+        Ok(())
+    }
+
+    fn wifi_status(&self) -> Vec<String> {
+        let d = self.nds.wifi_diag_snapshot();
+        let mark = |ok: bool| if ok { "OK" } else { "--" };
+        let m = d.mac;
+        vec![
+            format!(
+                "MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                m[0], m[1], m[2], m[3], m[4], m[5]
+            ),
+            format!("{} 1. RF channel {}", mark(d.channel != 0), d.channel),
+            format!(
+                "{} 2. Driver setup (mode reset {}, rx buffer {})",
+                mark(d.mode_reset > 0 || d.rxbuf_cfg > 0),
+                d.mode_reset,
+                d.rxbuf_cfg
+            ),
+            format!(
+                "{} 3. Transmitting (beacon {}, cmd {}, reply {})",
+                mark(d.loc_tx + d.beacon_tx + d.cmd_tx + d.reply_tx + d.blank_reply_tx > 0),
+                d.beacon_tx,
+                d.cmd_tx,
+                d.reply_tx
+            ),
+            format!("{} 4. Receiving (accepted {})", mark(d.rx_accepted > 0), d.rx_accepted),
+            format!(
+                "{} 5. Classified (beacon {}, cmd {}, ack {}, reply {})",
+                mark(d.rxflags_beacon + d.rxflags_cmd + d.rxflags_ack + d.rxflags_reply > 0),
+                d.rxflags_beacon,
+                d.rxflags_cmd,
+                d.rxflags_ack,
+                d.rxflags_reply
+            ),
+        ]
+    }
+
+    fn debug_image(&mut self, view: DebugView) -> Option<Image> {
+        let engine = |b: bool| if b { Engine::B } else { Engine::A };
+        let kind = |obj: bool| if obj { GraphicsType::OBJ } else { GraphicsType::BG };
+        let (pixels, w, h) = match view {
+            DebugView::Palettes { engine_b, obj, extended, slot, palette } => {
+                self.nds.render_palettes(
+                    extended,
+                    slot.into(),
+                    palette.into(),
+                    engine(engine_b),
+                    kind(obj),
+                )
+            }
+            DebugView::Maps { engine_b, bg } => self.nds.render_map(engine(engine_b), bg.into()),
+            DebugView::Tiles { engine_b, obj, extended, bitmap, bpp8, slot, palette, offset } => {
+                self.nds.render_tiles(
+                    engine(engine_b),
+                    kind(obj),
+                    extended,
+                    bitmap,
+                    bpp8,
+                    slot.into(),
+                    palette.into(),
+                    offset.into(),
+                )
+            }
+            DebugView::Vram { bank, ignore_alpha } => {
+                self.nds.render_bank(bank.into(), ignore_alpha)
+            }
+        };
+        Some((abgr1555_to_rgba8(&pixels), w, h))
+    }
+
+    /// The egui GUI's format (`LNST` + zstd), so states move between them.
+    fn save_state(&mut self, path: &Path) -> Result<(), String> {
+        lunaris_gui_common::savestate::save_to_file(&mut self.nds, path).map_err(|e| e.to_string())
+    }
+
+    fn load_state(&mut self, path: &Path) -> Result<(), String> {
+        lunaris_gui_common::savestate::load_from_file(&mut self.nds, path)
+            .map_err(|e| e.to_string())
     }
 }

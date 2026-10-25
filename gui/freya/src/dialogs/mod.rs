@@ -38,7 +38,7 @@ impl Component for Dialogs {
             };
             let body: Element = match window {
                 Window::RomInfo => views::RomInfoView.into_element(),
-                Window::Multiplayer => views::MultiplayerView.into_element(),
+                Window::Multiplayer => crate::lan::LanView.into_element(),
                 Window::EmuSettings => views::EmuSettingsView.into_element(),
                 Window::Input => views::InputView.into_element(),
                 Window::Audio => views::AudioView.into_element(),

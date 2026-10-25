@@ -16,16 +16,17 @@ use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
 
 use ds_common::{
     frontend::{GuiConfig, file_name, lock, rom_paths},
-    menu::{Menu, MenuState, Window, menu_bar},
+    menu::{MenuState, Window, menu_bar},
 };
 use freya::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::frontend::Frontend;
-
-/// Why LAN play is not offered here.
-pub const NO_MULTIPLAYER: &str =
-    "LAN play is only available in the egui GUI for now (Launch new instance works)";
+use crate::{
+    backend::BACKEND,
+    debug::DebugTab,
+    frontend::Frontend,
+    menu::{self, Menu},
+};
 
 /// What the status bar shows.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -63,6 +64,8 @@ pub struct Ctx {
     pub status: State<Status>,
     /// The open dialog.
     pub dialog: State<Option<Window>>,
+    /// The view open in the Debug side panel.
+    pub debug: State<Option<DebugTab>>,
     /// The Appearance popover of the titlebar.
     pub appearance: State<bool>,
     /// Last error, shown until dismissed.
@@ -88,6 +91,7 @@ impl Ctx {
             menus: State::create(Vec::new()),
             status: State::create(Status::default()),
             dialog: State::create(None),
+            debug: State::create(None),
             appearance: State::create(false),
             error: State::create(None),
             look: State::create(look),
@@ -114,6 +118,13 @@ impl Ctx {
 
     /// Only the status (fps, pause, game).
     pub fn refresh_status(&self) {
+        // A crashed core: back to the welcome screen, with the reason.
+        if let Some(crash) = self.front.shared.take_crash() {
+            self.front.stop();
+            self.show_error(crash);
+            let mut menus = self.menus;
+            menus.set(self.build_menus());
+        }
         let rom_path = lock(&self.front.rom).clone();
         let next = Status {
             running: self.front.shared.is_running() && lock(&self.front.emu).is_some(),
@@ -134,15 +145,21 @@ impl Ctx {
         let config = lock(&self.front.config).clone();
         let loaded = lock(&self.front.rom).as_deref().map(file_name);
         let folder_roms = rom_paths(&config.rom_dir);
-        menu_bar(&MenuState {
+        let shared = menu_bar(&MenuState {
             loaded: loaded.as_deref(),
             paused: self.front.shared.is_paused(),
             view: &config.view,
             limit_framerate: config.limit_framerate,
             recent: &config.recent_roms,
             folder_roms: &folder_roms,
-            multiplayer: Err(NO_MULTIPLAYER),
-        })
+            multiplayer: crate::lan::REASON.map_or(Ok(()), Err),
+        });
+        let slots = BACKEND.has_states().then(|| {
+            std::array::from_fn(|i| self.front.state_path(i as u8 + 1).filter(|p| p.is_file()))
+        });
+        let debug = *self.debug.peek();
+        let can_undo = self.front.undo_path().is_file();
+        menu::menus(shared, &menu::Extra { loaded: loaded.is_some(), slots, debug, can_undo })
     }
 
     /// Changes the GUI config (volume, ROM folder, ...) and saves it.

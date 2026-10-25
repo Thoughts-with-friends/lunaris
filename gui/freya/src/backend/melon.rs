@@ -21,7 +21,17 @@ pub fn boot(boot: &Boot) -> Result<Box<dyn Core>, String> {
     let rom = std::fs::read(&boot.rom).map_err(|e| e.to_string())?;
     let save = std::fs::read(&boot.save).ok();
     let pending = Arc::new(Mutex::new(None));
-    let host = Box::new(SaveHost { pending: Arc::clone(&pending) });
+    let link = lock(&boot.link).take();
+    let link = match link {
+        Some(link) => Some(
+            *link
+                .downcast::<crate::lan::MelonLink>()
+                .map_err(|_| "Not a melonDS LAN link".to_owned())?,
+        ),
+        None => None,
+    };
+    let (network, pace) = link.map_or((None, None), |l| (Some(l.host), Some(l.pace)));
+    let host = Box::new(SaveHost { pending: Arc::clone(&pending), network });
     let mut nds = Nds::new(&rom, save.as_deref(), 0, host).map_err(|e| e.to_string())?;
     let now = chrono::Local::now();
     nds.set_rtc(
@@ -40,18 +50,72 @@ pub fn boot(boot: &Boot) -> Result<Box<dyn Core>, String> {
         frames: 0,
         resampler: Resampler::new(MELON_RATE / ds_spu::OUTPUT_RATE_HZ),
         raw: Vec::new(),
+        pace,
     }))
 }
 
-/// The core's callbacks: only save writes are taken (no wireless).
+/// No wireless: the core's own defaults (nobody answers).
+struct Unlinked;
+
+impl Host for Unlinked {}
+
+/// The core's callbacks: save writes, and the wireless of a LAN link
+/// (`melon_lan`, as melon_egui's `HostBridge`).
 struct SaveHost {
     pending: Arc<Mutex<Option<Vec<u8>>>>,
+    network: Option<Box<dyn Host>>,
+}
+
+impl SaveHost {
+    fn wifi(&self) -> &dyn Host {
+        self.network.as_deref().unwrap_or(&Unlinked)
+    }
 }
 
 impl Host for SaveHost {
     /// `data` is the whole backup image.
     fn write_save(&self, data: &[u8], _offset: u32, _len: u32) {
         *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(data.to_vec());
+    }
+
+    fn mp_begin(&self) {
+        self.wifi().mp_begin();
+    }
+
+    fn mp_end(&self) {
+        self.wifi().mp_end();
+    }
+
+    fn mp_send_packet(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.wifi().mp_send_packet(data, timestamp)
+    }
+
+    fn mp_send_cmd(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.wifi().mp_send_cmd(data, timestamp)
+    }
+
+    fn mp_send_reply(&self, data: &[u8], timestamp: u64, aid: u16) -> i32 {
+        self.wifi().mp_send_reply(data, timestamp, aid)
+    }
+
+    fn mp_send_ack(&self, data: &[u8], timestamp: u64) -> i32 {
+        self.wifi().mp_send_ack(data, timestamp)
+    }
+
+    fn mp_recv_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        self.wifi().mp_recv_packet(data, now, timestamp)
+    }
+
+    fn mp_recv_host_packet(&self, data: &mut [u8], now: u64, timestamp: &mut u64) -> Option<i32> {
+        self.wifi().mp_recv_host_packet(data, now, timestamp)
+    }
+
+    fn mp_recv_replies(&self, data: &mut [u8], now: u64, timestamp: u64, aidmask: u16) -> u16 {
+        self.wifi().mp_recv_replies(data, now, timestamp, aidmask)
+    }
+
+    fn mp_clock(&self, now: u64) {
+        self.wifi().mp_clock(now);
     }
 }
 
@@ -63,6 +127,8 @@ struct Melon {
     frames: u32,
     resampler: Resampler,
     raw: Vec<i16>,
+    /// The LAN link's sustainable frame rate.
+    pace: Option<melon_lan::LinkPace>,
 }
 
 impl Core for Melon {
@@ -80,6 +146,10 @@ impl Core for Melon {
         {
             log::error!("{e}");
         }
+    }
+
+    fn link_rate(&self) -> Option<f64> {
+        self.pace.as_ref().map(melon_lan::LinkPace::frame_rate).filter(|fps| *fps > 0.0)
     }
 
     fn take_audio(&mut self, out: &mut Vec<i16>) {
@@ -117,6 +187,22 @@ impl Core for Melon {
         };
         std::fs::write(&self.save_path, data)
             .map_err(|e| format!("Failed to write {}: {e}", self.save_path.display()))
+    }
+
+    /// melonDS's own format (`.mlN`, as melon_egui writes them).
+    fn save_state(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let mut buffer = Vec::new();
+        self.nds.save_state(&mut buffer).map_err(|e| e.to_string())?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(path, &buffer).map_err(|e| format!("Cannot write {}: {e}", path.display()))
+    }
+
+    fn load_state(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let buffer =
+            std::fs::read(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+        self.nds.load_state(&buffer).map_err(|e| e.to_string())
     }
 }
 

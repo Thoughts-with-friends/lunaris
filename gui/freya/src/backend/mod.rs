@@ -40,6 +40,7 @@ compile_error!(
 );
 
 use std::{
+    any::Any,
     fmt,
     path::{Path, PathBuf},
 };
@@ -76,6 +77,31 @@ impl Backend {
     pub const fn upscales(self) -> bool {
         matches!(self, Self::Cogi)
     }
+
+    /// Whether the core draws the Debug menu's VRAM views.
+    pub const fn has_debug(self) -> bool {
+        matches!(self, Self::Lunaris)
+    }
+
+    /// Whether the core can save and load states.
+    pub const fn has_states(self) -> bool {
+        !matches!(self, Self::Cogi)
+    }
+
+    /// Where savestate slot `slot` of `rom` is kept under the instance's
+    /// `states` folder, named as the core's own GUI names it (`None`: the
+    /// core has no savestates).
+    ///
+    /// Lunaris: `states/<rom>/state_N.bin` (as the egui GUI), melonDS:
+    /// `states/<rom>.mlN` (as melonDS).
+    pub fn state_path(self, states: &Path, rom: &Path, slot: u8) -> Option<PathBuf> {
+        let stem = rom.file_stem()?;
+        match self {
+            Self::Lunaris => Some(states.join(stem).join(format!("state_{slot}.bin"))),
+            Self::MelonDs => Some(states.join(format!("{}.ml{slot}", stem.to_string_lossy()))),
+            Self::Cogi => None,
+        }
+    }
 }
 
 impl fmt::Display for Backend {
@@ -104,11 +130,14 @@ pub struct Boot {
     pub settings: Settings,
     /// 0.0-1.0, for cores that play their own audio.
     pub volume: f32,
+    /// A LAN link the core is built on (melonDS: `crate::lan::MelonLink`),
+    /// taken by the core's boot.
+    pub link: std::sync::Mutex<Option<Box<dyn Any + Send>>>,
 }
 
 impl Boot {
     pub fn new(rom: &Path, save: PathBuf, settings: Settings, volume: f32) -> Self {
-        Self { rom: rom.to_owned(), save, settings, volume }
+        Self { rom: rom.to_owned(), save, settings, volume, link: std::sync::Mutex::default() }
     }
 }
 
@@ -155,7 +184,91 @@ pub trait Core {
     /// # Errors
     /// If the file cannot be written.
     fn flush_save(&mut self) -> Result<(), String>;
+
+    /// The loaded ROM's fingerprint (LAN rooms compare them).
+    fn rom_fingerprint(&self) -> Option<[u8; 16]> {
+        None
+    }
+
+    /// Installs (`Some`) or removes the LAN link made by `crate::lan` for
+    /// this core.
+    ///
+    /// # Errors
+    /// If the core has no LAN play or `link` is not its link type.
+    fn set_link(&mut self, _link: Option<Box<dyn Any + Send>>) -> Result<(), String> {
+        Err("LAN play is not supported by this core".to_owned())
+    }
+
+    /// The frame rate a LAN link sustains (`None`: no link, run at the DS
+    /// rate); the emulator thread paces to it.
+    fn link_rate(&self) -> Option<f64> {
+        None
+    }
+
+    /// How far the emulated Wi-Fi handshake got, one stage per line.
+    fn wifi_status(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Draws `view` (`None`: the core has no debug views).
+    fn debug_image(&mut self, _view: DebugView) -> Option<Image> {
+        None
+    }
+
+    /// Writes a savestate to `path`.
+    ///
+    /// # Errors
+    /// If the core has no savestates or the file cannot be written.
+    fn save_state(&mut self, _path: &Path) -> Result<(), String> {
+        Err(NO_STATES.to_owned())
+    }
+
+    /// Loads the savestate at `path`.
+    ///
+    /// # Errors
+    /// If the core has no savestates or the file cannot be loaded.
+    fn load_state(&mut self, _path: &Path) -> Result<(), String> {
+        Err(NO_STATES.to_owned())
+    }
 }
+
+/// What a Debug view shows (the egui GUI's Palettes / Maps / Tiles / VRAM
+/// windows). `engine_b`: engine B instead of A, `obj`: sprites instead of
+/// backgrounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugView {
+    Palettes {
+        engine_b: bool,
+        obj: bool,
+        extended: bool,
+        slot: u8,
+        palette: u8,
+    },
+    Maps {
+        engine_b: bool,
+        bg: u8,
+    },
+    Tiles {
+        engine_b: bool,
+        obj: bool,
+        extended: bool,
+        bitmap: bool,
+        bpp8: bool,
+        slot: u8,
+        palette: u8,
+        offset: u8,
+    },
+    Vram {
+        bank: u8,
+        ignore_alpha: bool,
+    },
+}
+
+/// An RGBA image and its width and height.
+pub type Image = (Vec<u8>, usize, usize);
+
+/// Why a core without savestates refuses them.
+pub const NO_STATES: &str = "Savestates are not supported by this core";
 
 #[cfg(any(feature = "melon", feature = "cogi", test))]
 /// 0xAARRGGBB (cogi and melonDS framebuffers) -> RGBA bytes appended to

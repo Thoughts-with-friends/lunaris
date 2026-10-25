@@ -92,7 +92,8 @@ mod fonts;
 mod gl_screen;
 mod guest;
 mod i18n;
-mod lan;
+// The LAN transport lives in its own crate; `crate::lan::*` paths still work.
+use melon_lan as lan;
 mod logger;
 mod mp;
 mod pad;

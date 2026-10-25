@@ -17,15 +17,20 @@
 //! ```
 mod actions;
 mod backend;
+mod debug;
 mod dialogs;
 mod frontend;
 mod input;
+mod lan;
+mod menu;
 mod menubar;
 mod panels;
 mod screens;
 mod state;
 mod theme;
 mod titlebar;
+#[cfg(test)]
+mod ui_tests;
 
 use std::sync::Arc;
 
@@ -33,6 +38,7 @@ use ds_common::{Instance, Settings};
 use freya::{borderless::BorderlessPlugin, prelude::*};
 
 use crate::{
+    debug::DebugPanel,
     dialogs::Dialogs,
     frontend::Frontend,
     panels::{StatusBar, Welcome},
@@ -73,6 +79,7 @@ impl Component for App {
         });
         let opacity = ctx.look.read().opacity;
         let running = ctx.status.read().running;
+        let debug_open = ctx.debug.read().is_some();
         let down_ctx = ctx.clone();
         let up_ctx = ctx.clone();
         let mut appearance = ctx.appearance;
@@ -109,7 +116,15 @@ impl Component for App {
                         Some(ctx.parent - actions::TITLEBAR_HEIGHT - actions::STATUSBAR_HEIGHT - 2.)
                     }))
                     .padding(actions::SCREEN_PADDING)
-                    .child(if running { Screens.into_element() } else { Welcome.into_element() }),
+                    .horizontal()
+                    .content(Content::Flex)
+                    .spacing(actions::SCREEN_PADDING)
+                    .child(rect().width(Size::flex(1.)).height(Size::fill()).child(if running {
+                        Screens.into_element()
+                    } else {
+                        Welcome.into_element()
+                    }))
+                    .maybe_child(debug_open.then_some(DebugPanel)),
             )
             .child(rect().width(Size::fill()).height(Size::px(1.)).background(theme::hairline()))
             .child(StatusBar)

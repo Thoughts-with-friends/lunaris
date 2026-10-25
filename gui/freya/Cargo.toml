@@ -39,11 +39,14 @@ ds_spu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev =
 # The Lunaris backend: this repository's core.
 nds-core = { workspace = true, optional = true }
 lunaris_gui_common = { workspace = true, optional = true }
+lunaris_net = { workspace = true, optional = true }
 
 # The melonDS backend (same bindings as melon_egui). Building it compiles the
 # melonDS C++ core, which needs LLVM (see gui/melon_egui/src/main.rs).
 chrono = { version = "0.4", optional = true }
 melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665", optional = true }
+# melon_egui's LAN transport.
+melon_lan = { path = "../melon_lan", optional = true }
 
 # The core is fixed at build time: enable exactly one backend feature.
 #
@@ -54,8 +57,8 @@ melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev
 # or `cargo xtask build --gui freya --backend <lunaris|melon|cogi> --release`.
 [features]
 default = ["lunaris"]
-lunaris = ["dep:nds-core", "dep:lunaris_gui_common"]
-melon = ["dep:melonds", "dep:chrono", "dep:ds_spu"]
+lunaris = ["dep:nds-core", "dep:lunaris_gui_common", "dep:lunaris_net"]
+melon = ["dep:melonds", "dep:chrono", "dep:ds_spu", "dep:melon_lan"]
 cogi = ["dep:ds_gpu"]
 # No console window (as melon_egui's `release`).
 release = []

@@ -3173,6 +3173,8 @@ dependencies = [
  "futures-lite",
  "log",
  "lunaris_gui_common",
+ "lunaris_net",
+ "melon_lan",
  "melonds",
  "nds-core",
  "rfd 0.16.1",
@@ -3277,6 +3279,7 @@ dependencies = [
  "indexmap 2.14.2",
  "log",
  "lunaris_rom_library",
+ "melon_lan",
  "melonds",
  "pollster 1.0.1",
  "rfd 0.14.1",
@@ -3286,6 +3289,15 @@ dependencies = [
  "snafu",
  "winres",
  "xbrz-rs",
+]
+
+[[package]]
+name = "melon_lan"
+version = "0.5.3"
+dependencies = [
+ "log",
+ "melonds",
+ "serde",
 ]
 
 [[package]]

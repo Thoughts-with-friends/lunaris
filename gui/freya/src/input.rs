@@ -5,6 +5,7 @@
 //!  gilrs (polled every 8 ms) ----------> gamepad bits ───┴-> Shared::set_keys
 //!  left stick press ------------------> Action::CycleSpeed
 //!  Ctrl+letter -----------------------> Action::from_shortcut
+//!  F1-F8 / Shift+F1-F8 ---------------> load / save state slot 1-8
 //! ```
 //! DS keys are ignored while a dialog is open, so typing a cheat name does
 //! not press buttons.
@@ -15,7 +16,7 @@ use ds_common::{Gamepads, emu_thread::key, menu::Action};
 use freya::prelude::*;
 use futures_lite::StreamExt;
 
-use crate::{actions, state::Ctx};
+use crate::{actions, menu::Act, state::Ctx};
 
 const POLL: Duration = Duration::from_millis(8);
 /// Polls between status refreshes (~0.5 s).
@@ -53,9 +54,31 @@ const fn shortcut_letter(code: &Code) -> Option<char> {
     })
 }
 
+/// The savestate slot of F1-F8 (melonDS's keys).
+const fn state_slot(code: &Code) -> Option<u8> {
+    Some(match code {
+        Code::F1 => 1,
+        Code::F2 => 2,
+        Code::F3 => 3,
+        Code::F4 => 4,
+        Code::F5 => 5,
+        Code::F6 => 6,
+        Code::F7 => 7,
+        Code::F8 => 8,
+        _ => return None,
+    })
+}
+
 /// Root key-down handler: shortcuts, then DS buttons.
 pub fn on_key_down(ctx: &Ctx, e: &Event<KeyboardEventData>) {
     if ctx.dialog.peek().is_some() {
+        return;
+    }
+    if let Some(slot) = state_slot(&e.code) {
+        if ctx.status.peek().running && crate::backend::BACKEND.has_states() {
+            let save = e.modifiers.contains(Modifiers::SHIFT);
+            actions::run(ctx, if save { Act::SaveState(slot) } else { Act::LoadState(slot) });
+        }
         return;
     }
     if e.modifiers.contains(Modifiers::CONTROL) {
@@ -101,6 +124,7 @@ pub fn spawn_loop(ctx: Ctx) {
             }
             n += 1;
             if n.is_multiple_of(STATUS_EVERY) {
+                ctx.front.room_tick();
                 ctx.refresh_status();
                 let names = pads.names();
                 let mut gamepads = ctx.gamepads;

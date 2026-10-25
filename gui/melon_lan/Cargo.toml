@@ -1,0 +1,22 @@
+# melonDS local wireless over UDP (measured reply budget, redundant replies,
+# link pacing): moved out of melon_egui so other front ends (gui/freya's
+# melonDS backend) use the same transport. See src/lib.rs.
+[package]
+name = "melon_lan"
+description = "A UDP transport for melonDS local wireless that survives a VPN"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Same revision as melon_egui and gui/freya: one melonDS build.
+melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665" }
+serde.workspace = true
+log = "0.4"
+

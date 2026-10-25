@@ -15,7 +15,7 @@ use rfd::AsyncFileDialog;
 use super::{field, note, section};
 use crate::{
     panels::rom_icon,
-    state::{Ctx, NO_MULTIPLAYER},
+    state::Ctx,
     theme::{self, ACCENT, DANGER, TEXT, TEXT_DIM, TEXT_FAINT},
 };
 
@@ -116,7 +116,7 @@ impl Component for PathField {
             let folder = self.folder;
             move |_| {
                 let on_change = on_change.clone();
-                spawn(async move {
+                spawn_in_window(async move {
                     let dialog = AsyncFileDialog::new();
                     let picked =
                         if folder { dialog.pick_folder().await } else { dialog.pick_file().await };
@@ -537,16 +537,5 @@ impl Component for AboutView {
                     .font_size(12.5)
                     .child("github.com/Thoughts-with-friends/cogids-rs"),
             )
-    }
-}
-
-#[derive(PartialEq)]
-pub struct MultiplayerView;
-
-impl Component for MultiplayerView {
-    fn render(&self) -> impl IntoElement {
-        rect().width(Size::fill()).spacing(8.).child(NO_MULTIPLAYER).child(note(
-            "System > Multiplayer > Launch new instance starts another emulator window.",
-        ))
     }
 }
