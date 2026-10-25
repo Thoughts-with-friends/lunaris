@@ -129,7 +129,8 @@ pub const FRAME_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 2;
 pub const MAX_DATAGRAM: usize = 1200;
 
 /// The rate the console's SPU hands samples over at.
-pub const CONSOLE_SAMPLE_RATE: u32 = crate::audio::SPU_SAMPLE_RATE;
+/// melonDS's SPU rate (melon_egui's `audio::SPU_SAMPLE_RATE`).
+pub const CONSOLE_SAMPLE_RATE: u32 = 48_000;
 
-/// The DS's video frame rate ([`crate::emu::FRAME_RATE`]).
-pub const NATIVE_FPS: f64 = crate::emu::FRAME_RATE;
+/// The DS's video frame rate (melon_egui's `emu::FRAME_RATE`).
+pub const NATIVE_FPS: f64 = 33_513_982.0 / 560_190.0;

@@ -95,9 +95,9 @@ mod i18n;
 // The LAN transport lives in its own crate; `crate::lan::*` paths still work.
 use melon_lan as lan;
 mod logger;
-mod mp;
+use melon_lan::mp;
 mod pad;
-mod remote;
+use melon_remote as remote;
 mod selftest;
 mod speed;
 mod ui;

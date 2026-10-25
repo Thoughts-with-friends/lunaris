@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::{Datelike as _, Timelike as _};
 use ds_common::frontend::lock;
-use melonds::{Cheat, Host, Nds};
+use melonds::{Cheat, Host, Nds, RenderSettings, Renderer};
 
-use super::{Boot, Core, push_rgba};
+use super::{Boot, Core, HdJob, PostScale, push_rgba};
 
 /// melonDS's output rate (fixed by the bindings).
 const MELON_RATE: f64 = 48_000.0;
@@ -18,9 +18,6 @@ const MELON_RATE: f64 = 48_000.0;
 const SAVE_EVERY: u32 = 60;
 
 pub fn boot(boot: &Boot) -> Result<Box<dyn Core>, String> {
-    let rom = std::fs::read(&boot.rom).map_err(|e| e.to_string())?;
-    let save = std::fs::read(&boot.save).ok();
-    let pending = Arc::new(Mutex::new(None));
     let link = lock(&boot.link).take();
     let link = match link {
         Some(link) => Some(
@@ -30,28 +27,80 @@ pub fn boot(boot: &Boot) -> Result<Box<dyn Core>, String> {
         ),
         None => None,
     };
-    let (network, pace) = link.map_or((None, None), |l| (Some(l.host), Some(l.pace)));
-    let host = Box::new(SaveHost { pending: Arc::clone(&pending), network });
-    let mut nds = Nds::new(&rom, save.as_deref(), 0, host).map_err(|e| e.to_string())?;
-    let now = chrono::Local::now();
-    nds.set_rtc(
-        now.year(),
-        now.month() as i32,
-        now.day() as i32,
-        now.hour() as i32,
-        now.minute() as i32,
-        now.second() as i32,
-    );
-    nds.boot();
-    Ok(Box::new(Melon {
-        nds,
-        save_path: boot.save.clone(),
-        pending,
-        frames: 0,
-        resampler: Resampler::new(MELON_RATE / ds_spu::OUTPUT_RATE_HZ),
-        raw: Vec::new(),
-        pace,
-    }))
+    let (network, pace) = link.map_or((None, None), |l| (Some(l.host), l.pace));
+    Ok(Box::new(Melon::boot(&boot.rom, &boot.save, 0, network, pace)?))
+}
+
+impl Melon {
+    /// Console `instance` (0, or 1 for Remote Desktop's second console:
+    /// melonDS gives each its own MAC) on `rom`, its wireless on `network`.
+    pub fn boot(
+        rom: &std::path::Path,
+        save_path: &std::path::Path,
+        instance: u32,
+        network: Option<Box<dyn Host>>,
+        pace: Option<melon_lan::LinkPace>,
+    ) -> Result<Self, String> {
+        let rom = std::fs::read(rom).map_err(|e| e.to_string())?;
+        let save = std::fs::read(save_path).ok();
+        let pending = Arc::new(Mutex::new(None));
+        let host = Box::new(SaveHost { pending: Arc::clone(&pending), network });
+        let mut nds = Nds::new(&rom, save.as_deref(), instance, host).map_err(|e| e.to_string())?;
+        let now = chrono::Local::now();
+        nds.set_rtc(
+            now.year(),
+            now.month() as i32,
+            now.day() as i32,
+            now.hour() as i32,
+            now.minute() as i32,
+            now.second() as i32,
+        );
+        nds.boot();
+        Ok(Self {
+            nds,
+            save_path: save_path.to_owned(),
+            pending,
+            frames: 0,
+            resampler: Resampler::new(MELON_RATE / ds_spu::OUTPUT_RATE_HZ),
+            raw: Vec::new(),
+            pace,
+            #[cfg(windows)]
+            gl: None,
+            gl_failed: false,
+            render: (1, false),
+            gl_pixels: Vec::new(),
+        })
+    }
+
+    /// Both screens as 0xAARRGGBB (the software renderer's).
+    pub fn screens(&mut self) -> Option<(&[u32], &[u32])> {
+        self.nds.framebuffers()
+    }
+
+    /// The frame's sound at 48 kHz (melonDS's rate), for Remote Desktop.
+    pub fn take_raw_audio(&mut self, out: &mut Vec<i16>) {
+        let queued = self.nds.audio_queued();
+        if queued == 0 {
+            return;
+        }
+        let start = out.len();
+        out.resize(start + queued * 2, 0);
+        let pairs = self.nds.read_audio(&mut out[start..]);
+        out.truncate(start + pairs * 2);
+    }
+}
+
+/// A frame already at its size (read back from OpenGL).
+struct Ready {
+    rgba: Vec<u8>,
+    width: usize,
+}
+
+impl HdJob for Ready {
+    fn render(self: Box<Self>, rgba: &mut Vec<u8>) -> usize {
+        rgba.extend_from_slice(&self.rgba);
+        self.width
+    }
 }
 
 /// No wireless: the core's own defaults (nobody answers).
@@ -119,7 +168,7 @@ impl Host for SaveHost {
     }
 }
 
-struct Melon {
+pub struct Melon {
     nds: Nds,
     save_path: std::path::PathBuf,
     /// The newest save image not written yet.
@@ -129,9 +178,94 @@ struct Melon {
     raw: Vec<i16>,
     /// The LAN link's sustainable frame rate.
     pace: Option<melon_lan::LinkPace>,
+    /// The OpenGL context of the OpenGL renderer (made on first use).
+    #[cfg(windows)]
+    gl: Option<super::melon_gl::GlContext>,
+    /// OpenGL could not be set up: upscaling stays on the CPU.
+    gl_failed: bool,
+    /// The renderer settings in use.
+    render: (usize, bool),
+    /// One screen read back from the OpenGL renderer.
+    gl_pixels: Vec<u32>,
+}
+
+impl Melon {
+    /// Makes the OpenGL context current (once) and binds melonDS to it.
+    #[cfg(windows)]
+    fn ensure_gl(&mut self) -> bool {
+        if self.gl.is_none() && !self.gl_failed {
+            match super::melon_gl::GlContext::new() {
+                Ok(gl) if melonds::gl_load(None) => {
+                    log::info!("OpenGL renderer ready: {}", melonds::gl_info().unwrap_or_default());
+                    self.gl = Some(gl);
+                }
+                Ok(_) => {
+                    log::error!("melonDS could not bind OpenGL; upscaling on the CPU");
+                    self.gl_failed = true;
+                }
+                Err(e) => {
+                    log::error!("{e}; upscaling on the CPU");
+                    self.gl_failed = true;
+                }
+            }
+        }
+        self.gl.is_some()
+    }
+
+    #[cfg(not(windows))]
+    fn ensure_gl(&mut self) -> bool {
+        false
+    }
 }
 
 impl Core for Melon {
+    /// Above 1x without xBRZ: the OpenGL renderer at that internal
+    /// resolution (the 3D gains detail, as melon_egui). With xBRZ, or
+    /// without OpenGL: the software renderer, scaled afterwards.
+    fn set_render_scale(&mut self, scale: usize, xbrz: bool) {
+        if self.render == (scale, xbrz) {
+            return;
+        }
+        self.render = (scale, xbrz);
+        let gl = scale > 1 && !xbrz && self.ensure_gl();
+        let wanted = if gl {
+            RenderSettings {
+                renderer: Renderer::OpenGl,
+                scale: scale as u32,
+                better_polygons: true,
+                ..RenderSettings::default()
+            }
+        } else {
+            RenderSettings::default()
+        };
+        let installed = self.nds.set_render_settings(wanted);
+        if installed != wanted.renderer {
+            log::warn!("melonDS fell back to {installed:?} (asked for {:?})", wanted.renderer);
+        }
+    }
+
+    fn hd_job(&mut self, scale: usize, xbrz: bool) -> Option<Box<dyn HdJob>> {
+        if let Some(output) = self.nds.gl_output() {
+            let (w, h) = (output.width as usize, output.height as usize);
+            self.gl_pixels.resize(w * h, 0);
+            let mut rgba = Vec::with_capacity(w * h * 8);
+            for screen in 0..2 {
+                if self.nds.gl_read_output(screen, &mut self.gl_pixels) == 0 {
+                    return None;
+                }
+                // The read-back is bottom-up (GL's origin), on this AMD
+                // driver at least, whatever melonds-rs documents.
+                for row in self.gl_pixels.chunks_exact(w).rev() {
+                    push_rgba(row, &mut rgba);
+                }
+            }
+            return Some(Box::new(Ready { rgba, width: w }));
+        }
+        let mut rgba = Vec::with_capacity(256 * 384 * 4);
+        self.frame(&mut rgba);
+        Some(Box::new(PostScale { rgba, scale, xbrz }))
+    }
+
     fn run_frame(&mut self, keys: u32, touch: Option<(i32, i32)>) {
         // Same bit layout as `emu_thread::key` (melonds::keys).
         self.nds.set_keys(keys);
@@ -207,7 +341,7 @@ impl Core for Melon {
 }
 
 /// Linear resampler for interleaved stereo `i16`.
-struct Resampler {
+pub struct Resampler {
     /// Input samples per output sample.
     step: f64,
     /// Position of the next output between `last` (0.0) and the first
@@ -217,11 +351,11 @@ struct Resampler {
 }
 
 impl Resampler {
-    const fn new(step: f64) -> Self {
+    pub const fn new(step: f64) -> Self {
         Self { step, pos: 1.0, last: [0; 2] }
     }
 
-    fn process(&mut self, input: &[i16], out: &mut Vec<i16>) {
+    pub fn process(&mut self, input: &[i16], out: &mut Vec<i16>) {
         let frames = input.as_chunks::<2>().0;
         // Frame `i` of the stream "last, frames..." is at index `i`.
         let at = |i: usize| if i == 0 { self.last } else { frames[i - 1] };

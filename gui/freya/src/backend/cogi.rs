@@ -42,7 +42,7 @@ impl Core for Cogi {
         emu.run();
     }
 
-    fn set_render_scale(&mut self, scale: usize) {
+    fn set_render_scale(&mut self, scale: usize, _xbrz: bool) {
         self.emu.gpu.set_render_scale(scale);
     }
 

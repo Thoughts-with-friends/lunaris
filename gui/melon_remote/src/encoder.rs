@@ -222,10 +222,10 @@ impl Pacer {
 #[cfg(test)]
 mod tests {
     use super::{Encoder, Pacer};
-    use crate::remote::{Tuning, tile::TILE_COUNT};
+    use crate::{Tuning, tile::TILE_COUNT};
 
     fn flat_screen(value: u32) -> Vec<u32> {
-        vec![value; crate::remote::SCREEN_WIDTH * crate::remote::SCREEN_HEIGHT]
+        vec![value; crate::SCREEN_WIDTH * crate::SCREEN_HEIGHT]
     }
 
     #[test]

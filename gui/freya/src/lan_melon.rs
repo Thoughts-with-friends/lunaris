@@ -26,7 +26,8 @@ const LAN_PORT: u16 = 7064;
 /// A link the melonDS core is booted on (passed through `Boot::link`).
 pub struct MelonLink {
     pub host: Box<dyn melonds::Host>,
-    pub pace: LinkPace,
+    /// The frame rate the link sustains (`None`: in-process airwaves).
+    pub pace: Option<LinkPace>,
 }
 
 /// The live link, for the dialog.
@@ -44,6 +45,8 @@ pub struct Lan {
     /// What a pending host / join is waiting for.
     pub waiting: Option<String>,
     pub error: Option<String>,
+    /// Remote Desktop (`crate::remote`).
+    pub remote: crate::remote::Remote,
 }
 
 /// The addresses typed last (`freya_lan.json`).
@@ -155,7 +158,8 @@ impl Frontend {
             };
             let result =
                 linked.map_err(|e| e.to_string()).and_then(|(local, remote, stats, pace, host)| {
-                    front.start_linked(&rom, Some(Box::new(MelonLink { host, pace })))?;
+                    front
+                        .start_linked(&rom, Some(Box::new(MelonLink { host, pace: Some(pace) })))?;
                     Ok(Linked { hosting, local, remote, stats })
                 });
             let mut lan = lock(&front.lan);
@@ -175,6 +179,7 @@ impl Frontend {
     /// Forgets the link (it goes with the core: stop, reset, another game).
     pub fn leave_room(&self) {
         lock(&self.lan).link = None;
+        self.drop_remote_session();
     }
 
     /// Leave: the running ROM restarts without the link.
@@ -218,7 +223,22 @@ impl Frontend {
     }
 }
 
+/// The Multiplayer dialog: LAN play, then Remote Desktop.
 impl Component for LanView {
+    fn render(&self) -> impl IntoElement {
+        rect()
+            .width(Size::fill())
+            .child(LanPart)
+            .child(section("remote desktop"))
+            .child(crate::remote::RemotePanel)
+    }
+}
+
+/// LAN play (two PCs, one console each).
+#[derive(PartialEq)]
+struct LanPart;
+
+impl Component for LanPart {
     fn render(&self) -> impl IntoElement {
         let ctx = use_consume::<Ctx>();
         let front = Arc::clone(&ctx.front);

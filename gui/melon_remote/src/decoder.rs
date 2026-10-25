@@ -150,10 +150,10 @@ mod tests {
     /// refused rather than indexed with.
     #[test]
     fn an_overlong_tile_record_is_refused() {
-        let mut datagram = crate::remote::wire::begin_video(1);
+        let mut datagram = crate::wire::begin_video(1);
         datagram.extend_from_slice(&0u16.to_le_bytes());
         datagram.extend_from_slice(&9999u16.to_le_bytes());
-        crate::remote::wire::finish_video(&mut datagram, 1);
+        crate::wire::finish_video(&mut datagram, 1);
         let mut decoder = Decoder::new();
         assert!(!decoder.apply(&datagram));
     }

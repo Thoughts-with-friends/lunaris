@@ -25,6 +25,8 @@ mod lan;
 mod menu;
 mod menubar;
 mod panels;
+#[cfg(feature = "melon")]
+mod remote;
 mod screens;
 mod state;
 mod theme;

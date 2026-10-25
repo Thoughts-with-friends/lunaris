@@ -11,7 +11,7 @@ use nds_core::{
     nds::{Engine, GraphicsType, Key, NDS},
 };
 
-use super::{Boot, Core, DebugView, Image};
+use super::{Boot, Core, DebugView, HdJob, Image, PostScale};
 
 /// `Key` in `emu_thread::key` bit order (each key's value is its bit).
 const KEYS: [Key; 12] = [
@@ -84,6 +84,14 @@ impl Core for Lunaris {
         for screen in self.nds.get_screens() {
             rgba.extend_from_slice(&abgr1555_to_rgba8(screen));
         }
+    }
+
+    /// The core draws at 256x192 only: scaled afterwards (xBRZ as the egui
+    /// GUI's Upscale setting, or pixels repeated).
+    fn hd_job(&mut self, scale: usize, xbrz: bool) -> Option<Box<dyn HdJob>> {
+        let mut rgba = Vec::with_capacity(256 * 384 * 4);
+        self.frame(&mut rgba);
+        Some(Box::new(PostScale { rgba, scale, xbrz }))
     }
 
     fn set_cheats(&mut self, codes: Vec<Vec<u32>>) {

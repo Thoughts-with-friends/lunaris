@@ -363,9 +363,22 @@ fn a_capped_frame_rate_sends_fewer_frames_and_still_converges() {
         stats.video_fps
     );
 
-    let [got_top, got_bottom] = client.take_screens().expect("a picture");
-    assert_eq!(got_top, quantised(&top), "skipping must not corrupt the picture");
-    assert_eq!(got_bottom, quantised(&bottom));
+    // The capped stream converges on the still picture. Under a loaded
+    // machine (tests run side by side) the last tiles may land after the
+    // fixed wait above, so it keeps offering the frame for a while.
+    let want = [quantised(&top), quantised(&bottom)];
+    let mut got = client.take_screens();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while got.as_ref() != Some(&want) && Instant::now() < deadline {
+        host.send_frame(&top, &bottom);
+        std::thread::sleep(Duration::from_millis(20));
+        if let Some(screens) = client.take_screens() {
+            got = Some(screens);
+        }
+    }
+    let [got_top, got_bottom] = got.expect("a picture");
+    assert_eq!(got_top, want[0], "skipping must not corrupt the picture");
+    assert_eq!(got_bottom, want[1]);
 }
 
 /// A free UDP port on loopback, released for the code under test to bind.

@@ -463,7 +463,7 @@ fn emulate(
             metered = percent;
         }
         let render = shared.render.load(Ordering::Relaxed);
-        core.set_render_scale((render & 0xFF).clamp(1, 4) as usize);
+        core.set_render_scale((render & 0xFF).clamp(1, 4) as usize, render & 0x100 != 0);
         let codes = lock(&shared.cheats).take();
         if let Some(codes) = codes {
             core.set_cheats(codes);
@@ -642,7 +642,6 @@ impl Frontend {
     ) -> Result<(), String> {
         self.stop();
 
-        let backend = BACKEND;
         self.instance.import_legacy_save(rom);
         let boot = Boot::new(
             rom,
@@ -651,24 +650,34 @@ impl Frontend {
             f32::from(lock(&self.config).volume.min(100)) / 100.0,
         );
         *lock(&boot.link) = link;
-        let fail = |e: String| {
-            log::error!("Failed to load ROM {} on {backend}: {e}", rom.display());
-            format!("Cannot load {} on {backend}: {e}", file_name(rom))
-        };
-        let thread =
-            EmuThread::start(backend::loader(boot), Arc::clone(&self.shared), self.audio.clone())
-                .map_err(fail)?;
-        log::info!("Started {} on {backend}", rom.display());
-
-        *lock(&self.emu) = Some(thread);
-        *lock(&self.rom) = Some(rom.to_owned());
-        self.load_cheats();
+        self.run_core(rom, backend::loader(boot))?;
 
         let mut config = lock(&self.config);
         remember(&mut config.recent_roms, rom);
         config.selected_rom = Some(rom.to_owned());
         self.save_config(&config);
         drop(config);
+        Ok(())
+    }
+
+    /// Runs the core `loader` builds, shown as `rom` (a ROM, or what a
+    /// Remote Desktop client is watching). Call [`Self::stop`] first.
+    ///
+    /// # Errors
+    /// If the core cannot be built.
+    pub fn run_core(&self, rom: &Path, loader: Loader) -> Result<(), String> {
+        let backend = BACKEND;
+        let fail = |e: String| {
+            log::error!("Failed to load ROM {} on {backend}: {e}", rom.display());
+            format!("Cannot load {} on {backend}: {e}", file_name(rom))
+        };
+        let thread =
+            EmuThread::start(loader, Arc::clone(&self.shared), self.audio.clone()).map_err(fail)?;
+        log::info!("Started {} on {backend}", rom.display());
+
+        *lock(&self.emu) = Some(thread);
+        *lock(&self.rom) = Some(rom.to_owned());
+        self.load_cheats();
         Ok(())
     }
 

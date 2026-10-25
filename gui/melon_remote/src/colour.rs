@@ -1,6 +1,6 @@
 //! The one place the framebuffer's channel order is decided.
 //!
-//! Everything else in [`crate::remote`] moves 16-bit pixels around without
+//! Everything else in [`crate`] moves 16-bit pixels around without
 //! caring what the bits mean. Keeping the two conversions together — and
 //! nowhere else — is deliberate: an independently written channel order that
 //! swapped red and blue would look plausible until somebody noticed the skin

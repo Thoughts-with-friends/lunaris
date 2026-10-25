@@ -154,7 +154,7 @@ pub fn unpack(bytes: &[u8], out: &mut Pixels) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{MAX_CODED, Pixels, TILE, TILE_COUNT, TILE_PIXELS, pack, unpack};
-    use crate::remote::{FRAME_PIXELS, SCREEN_WIDTH};
+    use crate::{FRAME_PIXELS, SCREEN_WIDTH};
 
     #[test]
     fn a_tile_round_trips_whatever_is_in_it() {

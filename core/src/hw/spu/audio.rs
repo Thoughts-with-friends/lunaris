@@ -4,7 +4,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 pub struct Audio {
     config: cpal::StreamConfig,
-    _stream: cpal::Stream,
+    /// `None`: no output device (a CI runner, a PC without sound); samples
+    /// are then dropped and emulation is not paced by audio.
+    _stream: Option<cpal::Stream>,
     prod: ringbuf::Producer<[f32; 2]>,
     fraction: f32,
     history: VecDeque<[f32; 2]>, // history buffer for sinc
@@ -26,9 +28,16 @@ impl Audio {
     }
 
     pub fn new() -> Self {
+        Self::open().unwrap_or_else(|e| {
+            warn!("No audio output ({e}); running silent");
+            Self::silent()
+        })
+    }
+
+    fn open() -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host.default_output_device().expect("No audio output device available!");
-        let config = device.default_output_config().expect("No audio output config available!");
+        let device = host.default_output_device().ok_or("no output device")?;
+        let config = device.default_output_config().map_err(|e| e.to_string())?;
 
         match config.sample_format() {
             cpal::SampleFormat::F32 => Audio::init::<f32>(device, config.into()),
@@ -37,7 +46,29 @@ impl Audio {
         }
     }
 
-    fn init<T: cpal::Sample>(device: cpal::Device, config: cpal::StreamConfig) -> Self {
+    /// An output that plays nothing (no device): samples are dropped.
+    fn silent() -> Self {
+        let config = cpal::StreamConfig {
+            channels: 2,
+            sample_rate: cpal::SampleRate(48_000),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        let (prod, _) = ringbuf::RingBuffer::<[f32; 2]>::new(1).split();
+        Audio {
+            config,
+            _stream: None,
+            prod,
+            fraction: 0.0,
+            history: VecDeque::new(),
+            volume: 1.0,
+            blocking: false,
+        }
+    }
+
+    fn init<T: cpal::Sample>(
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+    ) -> Result<Self, String> {
         let buffer_len = Audio::calculate_buffer_len(config.sample_rate.0);
 
         let main_buffer = ringbuf::RingBuffer::<[f32; 2]>::new(buffer_len);
@@ -65,18 +96,18 @@ impl Audio {
                 },
                 |err| error!("Audio Stream Error: {}", err),
             )
-            .unwrap();
-        stream.play().unwrap();
+            .map_err(|e| e.to_string())?;
+        stream.play().map_err(|e| e.to_string())?;
 
-        Audio {
+        Ok(Audio {
             config,
-            _stream: stream,
+            _stream: Some(stream),
             prod,
             fraction: 0.0,
             history: VecDeque::with_capacity(Self::SINC_WINDOW * 4),
             volume: 1.0,
             blocking: true,
-        }
+        })
     }
 
     fn sinc(x: f32) -> f32 {
@@ -113,6 +144,9 @@ impl Audio {
     }
 
     pub fn push_sample(&mut self, left_sample: f32, right_sample: f32) {
+        if self._stream.is_none() {
+            return;
+        }
         let left_scaled = (left_sample * self.volume).clamp(-1.0, 1.0);
         let right_scaled = (right_sample * self.volume).clamp(-1.0, 1.0);
 
@@ -158,7 +192,8 @@ impl Audio {
 
     #[inline]
     pub fn set_blocking(&mut self, blocking: bool) {
-        self.blocking = blocking;
+        // Nothing drains a silent output: never wait on it.
+        self.blocking = blocking && self._stream.is_some();
     }
 
     #[inline]
@@ -180,5 +215,22 @@ impl From<u16> for OutputConfig {
             2 => OutputConfig::Stereo,
             _ => panic!("Only Mono and Stereo audio devices supported!"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Audio;
+
+    /// Without an output device (CI runners) the core still boots, and
+    /// pushing samples neither blocks nor fails.
+    #[test]
+    fn a_silent_output_drops_samples_without_waiting() {
+        let mut audio = Audio::silent();
+        audio.set_blocking(true);
+        for _ in 0..100_000 {
+            audio.push_sample(0.5, -0.5);
+        }
+        assert_eq!(audio.sample_rate(), 48_000);
     }
 }

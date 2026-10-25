@@ -47,6 +47,11 @@ chrono = { version = "0.4", optional = true }
 melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665", optional = true }
 # melon_egui's LAN transport.
 melon_lan = { path = "../melon_lan", optional = true }
+# melon_egui's Remote Desktop stream.
+melon_remote = { path = "../melon_remote", optional = true }
+
+# xBRZ for the cores without their own (Lunaris, melonDS), as the egui GUIs.
+xbrz-rs = { version = "0.1.0", optional = true }
 
 # The core is fixed at build time: enable exactly one backend feature.
 #
@@ -57,11 +62,32 @@ melon_lan = { path = "../melon_lan", optional = true }
 # or `cargo xtask build --gui freya --backend <lunaris|melon|cogi> --release`.
 [features]
 default = ["lunaris"]
-lunaris = ["dep:nds-core", "dep:lunaris_gui_common", "dep:lunaris_net"]
-melon = ["dep:melonds", "dep:chrono", "dep:ds_spu", "dep:melon_lan"]
+lunaris = ["dep:nds-core", "dep:lunaris_gui_common", "dep:lunaris_net", "dep:xbrz-rs"]
+melon = [
+    "dep:melonds",
+    "dep:chrono",
+    "dep:ds_spu",
+    "dep:melon_lan",
+    "dep:melon_remote",
+    "dep:xbrz-rs",
+    "dep:glutin",
+    "dep:raw-window-handle",
+    "dep:windows-sys",
+]
 cogi = ["dep:ds_gpu"]
 # No console window (as melon_egui's `release`).
 release = []
+
+# melonDS's OpenGL renderer gets a context of its own on the emulator
+# thread (freya keeps Skia's): a hidden window + WGL (backend/melon_gl.rs).
+[target.'cfg(windows)'.dependencies]
+glutin = { version = "0.32", optional = true, default-features = false, features = ["wgl"] }
+raw-window-handle = { version = "0.6", optional = true }
+windows-sys = { version = "0.60", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 freya-testing = { version = "=0.5.0-rc.10" }

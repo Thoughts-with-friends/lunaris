@@ -3171,15 +3171,20 @@ dependencies = [
  "freya",
  "freya-testing",
  "futures-lite",
+ "glutin",
  "log",
  "lunaris_gui_common",
  "lunaris_net",
  "melon_lan",
+ "melon_remote",
  "melonds",
  "nds-core",
+ "raw-window-handle",
  "rfd 0.16.1",
  "serde",
  "serde_json",
+ "windows-sys 0.60.2",
+ "xbrz-rs",
 ]
 
 [[package]]
@@ -3280,6 +3285,7 @@ dependencies = [
  "log",
  "lunaris_rom_library",
  "melon_lan",
+ "melon_remote",
  "melonds",
  "pollster 1.0.1",
  "rfd 0.14.1",
@@ -3293,6 +3299,15 @@ dependencies = [
 
 [[package]]
 name = "melon_lan"
+version = "0.5.3"
+dependencies = [
+ "log",
+ "melonds",
+ "serde",
+]
+
+[[package]]
+name = "melon_remote"
 version = "0.5.3"
 dependencies = [
  "log",

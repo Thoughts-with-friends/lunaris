@@ -244,3 +244,104 @@ fn melon_link_over_localhost() {
     host.stop();
     guest.stop();
 }
+
+/// View > Video settings: 2x / 4x frames come out at that size on every
+/// core, with and without xBRZ (melonDS 4x without xBRZ: OpenGL renderer).
+#[test]
+#[ignore = "requires ROMs on disk"]
+fn upscaled_frames_have_the_internal_resolution() {
+    let front = front("hires");
+    front.start(&rom_dir().join("Newスーパーマリオブラザーズ.nds")).expect("ROM loads");
+    run_frames(&front, 60);
+    let mut native = Vec::new();
+    for (scale, xbrz) in [(1_u8, false), (2, false), (4, false), (2, true), (4, true)] {
+        front.shared.set_render(scale, xbrz);
+        run_frames(&front, 20);
+        let start = Instant::now();
+        let want = 256 * u32::from(scale);
+        loop {
+            let (_, width, rgba) = front.shared.frame_since(0).expect("frames");
+            if width == want {
+                assert_eq!(rgba.len(), (want * want * 3 / 4 * 2 * 4) as usize);
+                let lit = rgba.as_chunks::<4>().0.iter().any(|p| p[..3] != [0, 0, 0]);
+                assert!(lit, "{scale}x xbrz {xbrz}: a picture");
+                if scale == 1 {
+                    native.clone_from(&rgba);
+                } else if !xbrz {
+                    // Sampled back to 1x it is the same picture, the right
+                    // way up (the title screen stands still): a flipped or
+                    // swapped screen differs almost everywhere.
+                    let n = usize::from(scale);
+                    let differ = (0..256 * 384)
+                        .filter(|i| {
+                            let (x, y) = (i % 256, i / 256);
+                            let big = &rgba[((y * n) * 256 * n + x * n) * 4..][..3];
+                            let small = &native[i * 4..][..3];
+                            big.iter().zip(small).any(|(a, b)| a.abs_diff(*b) > 40)
+                        })
+                        .count();
+                    assert!(differ < 256 * 384 / 50, "{scale}x: {differ} pixels differ from 1x");
+                }
+                if let Some(dir) = std::env::var_os("FREYA_SNAPSHOT_DIR") {
+                    let path = PathBuf::from(dir).join(format!("{BACKEND}_{scale}x_{xbrz}.rgba"));
+                    std::fs::write(path, &rgba).expect("dump");
+                }
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "{scale}x xbrz {xbrz}: width {width}"
+            );
+            run_frames(&front, 1);
+        }
+    }
+    front.stop();
+}
+
+/// Remote Desktop (melonDS): one frontend hosts with a game running, the
+/// other joins without one and shows the host's second console's picture;
+/// its keys reach that console. Stop ends the session on both sides.
+#[cfg(feature = "melon")]
+#[test]
+#[ignore = "requires ROMs on disk"]
+fn remote_desktop_over_localhost() {
+    let host = front("rd_host");
+    let client = front("rd_client");
+    host.start(&rom_dir().join("Newスーパーマリオブラザーズ.nds")).expect("ROM loads");
+    host.host_remote("127.0.0.1:47265").expect("hosting starts");
+    std::thread::sleep(Duration::from_millis(100));
+    client.join_remote("127.0.0.1:47265").expect("joining starts");
+
+    let start = Instant::now();
+    while [&host, &client].iter().any(|f| f.remote_view().0.is_none()) {
+        for f in [&host, &client] {
+            assert!(f.remote_view().2.is_none(), "{:?}", f.remote_view().2);
+        }
+        assert!(start.elapsed() < Duration::from_secs(15), "never connected");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // The client shows a picture it got over the stream.
+    let start = Instant::now();
+    loop {
+        run_frames(&client, 10);
+        let (_, width, rgba) = client.shared.frame_since(0).expect("frames");
+        assert_eq!(width, 256);
+        if rgba.as_chunks::<4>().0.iter().any(|p| p[..3] != [0, 0, 0]) {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(15), "the stream never showed a picture");
+    }
+    client.shared.set_keys(1);
+    run_frames(&client, 30);
+    let host_stats = host.remote_view().0.expect("hosting").stats;
+    assert!(host_stats.frames > 0, "the host sent video: {host_stats:?}");
+    let client_stats = client.remote_view().0.expect("joined").stats;
+    assert!(client_stats.inputs > 0, "the client sent its keys: {client_stats:?}");
+
+    client.end_remote();
+    assert!(client.remote_view().0.is_none());
+    host.end_remote();
+    assert!(host.remote_view().0.is_none());
+    run_frames(&host, 10);
+    host.stop();
+}

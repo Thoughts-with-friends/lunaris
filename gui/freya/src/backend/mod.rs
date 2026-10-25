@@ -21,7 +21,9 @@ mod cogi;
 #[cfg(feature = "lunaris")]
 mod lunaris;
 #[cfg(feature = "melon")]
-mod melon;
+pub mod melon;
+#[cfg(feature = "melon")]
+mod melon_gl;
 
 #[cfg(not(any(feature = "lunaris", feature = "melon", feature = "cogi")))]
 compile_error!(
@@ -73,9 +75,12 @@ impl Backend {
         }
     }
 
-    /// Whether frames can be rendered above 1x (View > Internal resolution).
+    /// Whether frames can be rendered above 1x (View > Internal resolution):
+    /// Cogi in its own renderer, melonDS with its OpenGL renderer (else
+    /// xBRZ / pixel-doubled), Lunaris by post-processing (xBRZ, as its egui
+    /// GUI: the core draws at 256x192 only).
     pub const fn upscales(self) -> bool {
-        matches!(self, Self::Cogi)
+        matches!(self, Self::Lunaris | Self::MelonDs | Self::Cogi)
     }
 
     /// Whether the core draws the Debug menu's VRAM views.
@@ -156,9 +161,9 @@ pub trait Core {
     /// and the stylus at `touch` (DS pixels; `None` lifted).
     fn run_frame(&mut self, keys: u32, touch: Option<(i32, i32)>);
 
-    /// Internal resolution of the frames made from now (1-4); only cores
-    /// that [`Backend::upscales`] use it.
-    fn set_render_scale(&mut self, _scale: usize) {}
+    /// Internal resolution of the frames made from now (1-4) and whether
+    /// xBRZ is on (melonDS picks its renderer by both).
+    fn set_render_scale(&mut self, _scale: usize, _xbrz: bool) {}
 
     /// Appends the frame's audio: interleaved stereo `i16` at
     /// `ds_spu::OUTPUT_RATE_HZ`. Cores playing their own sound add nothing.
@@ -270,6 +275,50 @@ pub type Image = (Vec<u8>, usize, usize);
 /// Why a core without savestates refuses them.
 pub const NO_STATES: &str = "Savestates are not supported by this core";
 
+/// A 1x frame (both screens, RGBA, upper first) scaled on the HD worker:
+/// xBRZ, or pixels repeated (`xbrz` off), `scale` times.
+#[cfg(any(feature = "lunaris", feature = "melon"))]
+pub struct PostScale {
+    pub rgba: Vec<u8>,
+    pub scale: usize,
+    pub xbrz: bool,
+}
+
+#[cfg(any(feature = "lunaris", feature = "melon"))]
+impl HdJob for PostScale {
+    fn render(self: Box<Self>, rgba: &mut Vec<u8>) -> usize {
+        let (w, h) = (256, 192);
+        let n = self.scale.clamp(1, 6);
+        for screen in self.rgba.chunks_exact(w * h * 4) {
+            if self.xbrz && n > 1 {
+                let mut src = screen.to_vec();
+                for px in src.as_chunks_mut::<4>().0 {
+                    px[3] = 0xFF;
+                }
+                let mut out = xbrz::scale_rgba(&src, w, h, n);
+                // Its edge blending is not alpha-aware.
+                for px in out.as_chunks_mut::<4>().0 {
+                    px[3] = 0xFF;
+                }
+                rgba.extend_from_slice(&out);
+            } else {
+                for row in screen.chunks_exact(w * 4) {
+                    let start = rgba.len();
+                    for px in row.as_chunks::<4>().0 {
+                        for _ in 0..n {
+                            rgba.extend_from_slice(px);
+                        }
+                    }
+                    for _ in 1..n {
+                        rgba.extend_from_within(start..start + w * n * 4);
+                    }
+                }
+            }
+        }
+        w * n
+    }
+}
+
 #[cfg(any(feature = "melon", feature = "cogi", test))]
 /// 0xAARRGGBB (cogi and melonDS framebuffers) -> RGBA bytes appended to
 /// `dst`.
@@ -293,6 +342,17 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(feature = "lunaris", feature = "melon"))]
+    #[test]
+    fn post_scale_makes_both_screens_n_times_larger() {
+        for xbrz in [false, true] {
+            let job = Box::new(PostScale { rgba: vec![0x80; 256 * 384 * 4], scale: 3, xbrz });
+            let mut out = Vec::new();
+            assert_eq!(job.render(&mut out), 768);
+            assert_eq!(out.len(), 768 * 576 * 2 * 4, "xbrz {xbrz}");
+        }
+    }
 
     #[test]
     fn converts_argb_to_rgba() {

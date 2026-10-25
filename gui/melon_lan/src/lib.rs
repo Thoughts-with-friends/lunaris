@@ -61,6 +61,9 @@
 mod batching;
 mod endpoints;
 mod measure;
+/// Two consoles in one process on shared airwaves (melon_egui's
+/// "Launch new instance", and the pair Remote Desktop streams from).
+pub mod mp;
 mod peer;
 mod queue;
 mod tuning;

@@ -1,0 +1,20 @@
+# Remote Desktop for melonDS: one PC runs both consoles and streams the
+# second one's picture and sound to the other PC, whose controls come back.
+# Moved out of melon_egui so gui/freya uses the same stream. See src/lib.rs.
+[package]
+name = "melon_remote"
+description = "Remote Desktop streaming of a melonDS console over UDP"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665" }
+serde.workspace = true
+log = "0.4"

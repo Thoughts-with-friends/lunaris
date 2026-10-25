@@ -129,7 +129,7 @@ fn interval_for(fps: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::Tuning;
-    use crate::remote::CONSOLE_SAMPLE_RATE;
+    use crate::CONSOLE_SAMPLE_RATE;
 
     #[test]
     fn the_defaults_halve_the_audio_and_the_frame_rate() {
