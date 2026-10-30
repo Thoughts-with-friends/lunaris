@@ -73,6 +73,9 @@ impl Emulator {
             }
             self.wifi.run(slice as u32);
             self.raise_wifi_irq();
+            if self.slot2.tick(slice as u32) {
+                self.int9_reg.irq_flags |= 1 << crate::slot2::SLOT2_IRQ_BIT;
+            }
 
             if self.system_timestamp >= self.gpu_event.activation_time {
                 self.gpu_handle_event();

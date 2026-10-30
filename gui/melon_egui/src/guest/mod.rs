@@ -35,9 +35,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use melonds::{Cheat, SCREEN_HEIGHT, SCREEN_WIDTH};
-
 use ::remote::RemoteHost;
+use melonds::{Cheat, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use crate::{emu::Emu, i18n::I18nKey as K, mp::Client};
 

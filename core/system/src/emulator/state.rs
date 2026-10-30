@@ -61,6 +61,7 @@ impl Emulator {
         core::mem::swap(&mut loaded.arm7_bios, &mut self.arm7_bios);
         core::mem::swap(&mut loaded.arm9_bios, &mut self.arm9_bios);
         core::mem::swap(&mut loaded.cheats, &mut self.cheats);
+        core::mem::swap(&mut loaded.slot2, &mut self.slot2);
         core::mem::swap(&mut loaded.cart.rom, &mut self.cart.rom);
         core::mem::swap(&mut loaded.cart.save_database, &mut self.cart.save_database);
         loaded.cart.backup.set_path(self.cart.backup.path().map(ToOwned::to_owned));

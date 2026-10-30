@@ -1292,6 +1292,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
+name = "designer"
+version = "0.9.0"
+dependencies = [
+ "ds_emu",
+ "ds_fpga",
+ "ds_peripherals",
+ "ds_spu",
+ "eframe",
+ "egui",
+ "ico",
+ "log",
+ "lunaris_gui_common",
+ "pollster 0.4.0",
+ "rfd 0.14.1",
+ "serde",
+ "serde_json",
+ "winres",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1459,6 +1479,15 @@ dependencies = [
  "log",
  "serde",
  "serde-big-array",
+]
+
+[[package]]
+name = "ds_fpga"
+version = "0.9.0"
+dependencies = [
+ "ds_emu",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

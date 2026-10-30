@@ -51,6 +51,7 @@ ds_bios = { path = "./core/bios" }
 ds_cartridge = { path = "./core/cartridge" }
 ds_cpu = { path = "./core/cpu" }
 ds_emu = { path = "./core/system" }
+ds_fpga = { path = "./core/fpga" }
 ds_gpu = { path = "./core/gpu" }
 ds_interrupt = { path = "./core/interrupt" }
 ds_mem_addr = { path = "./core/mem_addr" }

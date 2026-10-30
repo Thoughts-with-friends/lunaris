@@ -32,6 +32,8 @@ enum Gui {
     /// The freya front end, `gui/freya`; its core (Lunaris or melonDS) is
     /// chosen at build time with `--backend`.
     Freya,
+    /// The block-design debugger, `gui/designer`.
+    Designer,
 }
 
 impl Gui {
@@ -42,17 +44,19 @@ impl Gui {
             Gui::Egui => "lunaris",
             Gui::Melon => "melon_egui",
             Gui::Freya => "lunaris_freya",
+            Gui::Designer => "designer",
         }
     }
 }
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <build|run> [--gui egui|melon|freya] [--backend lunaris|melon] [cargo args...] [-- <emulator args>]"
+        "usage: cargo xtask <build|run> [--gui egui|melon|freya|designer] [--backend lunaris|melon] [cargo args...] [-- <emulator args>]"
     );
     eprintln!("       --gui defaults to `egui` when omitted");
     eprintln!("       --gui melon builds gui/melon_egui (the melonDS-core reference front end)");
     eprintln!("       --gui freya builds gui/freya; --backend picks its core (default `lunaris`)");
+    eprintln!("       --gui designer builds gui/designer (block design + hardware debugger)");
 }
 
 fn main() -> ExitCode {
@@ -80,9 +84,10 @@ fn main() -> ExitCode {
                     Some("egui") => Gui::Egui,
                     Some("melon") => Gui::Melon,
                     Some("freya") => Gui::Freya,
+                    Some("designer") => Gui::Designer,
                     other => {
                         eprintln!(
-                            "invalid --gui value: {other:?} (expected `egui`, `melon` or `freya`)"
+                            "invalid --gui value: {other:?} (expected `egui`, `melon`, `freya` or `designer`)"
                         );
                         return ExitCode::FAILURE;
                     }
@@ -131,6 +136,11 @@ fn main() -> ExitCode {
         if backend == "melon" {
             export_llvm_root(&mut cmd);
         }
+    }
+    if matches!(gui, Gui::Designer)
+        && cargo_args.iter().any(|arg| arg == "--release" || arg == "-r")
+    {
+        cmd.arg("--features").arg("release");
     }
     if matches!(gui, Gui::Melon) {
         export_llvm_root(&mut cmd);

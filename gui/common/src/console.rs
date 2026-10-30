@@ -17,7 +17,7 @@
 //! The core crates stay GUI-free: savestates, debug views and Wi-Fi
 //! counters live in them, multiplayer in `ds_net`; this type only forwards.
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::Path,
     sync::{Mutex, OnceLock},
     time::Duration,
@@ -35,6 +35,9 @@ use crate::{audio::AudioOutput, cheat_map::CheatMap};
 /// Width and height of one screen.
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 192;
+
+/// Interleaved samples [`Console::audio_tap`] keeps (about 0.5 s of stereo).
+pub const AUDIO_TAP_LEN: usize = 32768;
 
 /// A DS button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -90,6 +93,9 @@ pub struct Console {
     /// Interleaved stereo samples of the frames since the last
     /// [`Self::take_audio`] (only without an own audio output).
     samples: Vec<i16>,
+    /// The last [`AUDIO_TAP_LEN`] interleaved stereo samples, whoever
+    /// plays them (for scopes and spectrograms).
+    audio_tap: VecDeque<i16>,
     audio_sync: bool,
     screens: [Vec<u32>; 2],
     cheat_map: CheatMap,
@@ -146,6 +152,7 @@ impl Console {
             has_rom,
             audio,
             samples: Vec::new(),
+            audio_tap: VecDeque::with_capacity(AUDIO_TAP_LEN),
             audio_sync: false,
             screens: [vec![0xFF00_0000; WIDTH * HEIGHT], vec![0xFF00_0000; WIDTH * HEIGHT]],
             cheat_map: CheatMap::new(),
@@ -175,12 +182,15 @@ impl Console {
         if let Some(audio) = &self.audio {
             self.samples.clear();
             self.emu.take_audio_samples(&mut self.samples);
+            Self::tap(&mut self.audio_tap, &self.samples);
             audio.push(&self.samples);
             if self.audio_sync {
                 audio.wait_for_room(Duration::from_millis(50));
             }
         } else {
+            let start = self.samples.len();
             self.emu.take_audio_samples(&mut self.samples);
+            Self::tap(&mut self.audio_tap, &self.samples[start..]);
             // Nobody collects them: keep about a second.
             let keep = 2 * ds_spu::OUTPUT_RATE_HZ as usize;
             if self.samples.len() > keep {
@@ -190,6 +200,19 @@ impl Console {
         let [upper, lower] = &mut self.screens;
         self.emu.get_upper_frame(upper);
         self.emu.get_lower_frame(lower);
+    }
+
+    fn tap(tap: &mut VecDeque<i16>, samples: &[i16]) {
+        let samples = &samples[samples.len().saturating_sub(AUDIO_TAP_LEN)..];
+        let overflow = (tap.len() + samples.len()).saturating_sub(AUDIO_TAP_LEN);
+        tap.drain(..overflow);
+        tap.extend(samples);
+    }
+
+    /// The most recent output, interleaved stereo at
+    /// `ds_spu::OUTPUT_RATE_HZ`, oldest first; does not consume anything.
+    pub const fn audio_tap(&self) -> &VecDeque<i16> {
+        &self.audio_tap
     }
 
     /// The audio since the last call (interleaved stereo `i16` at

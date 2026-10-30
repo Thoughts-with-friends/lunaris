@@ -5,7 +5,10 @@ mod read_arm9;
 use ds_cpu::arm_cpu::CpuType;
 use ds_mem_addr::{ARM7_WRAM_MASK, ARM7_WRAM_START};
 
-use crate::emulator::Emulator;
+use crate::{
+    emulator::Emulator,
+    slot2::{Slot2Bus, Width},
+};
 
 impl Emulator {
     /// Resolves an ARM7 access in `0x03000000..0x04000000` to
@@ -47,6 +50,9 @@ impl Emulator {
     ///       timers, IPC, cartridge, SPI, SPU, Wi-Fi...)
     /// ```
     pub fn read_word(&mut self, address: u32, cpu_type: CpuType) -> u32 {
+        if let Some(value) = self.slot2_read(address, Width::Word, cpu_type) {
+            return value;
+        }
         if cpu_type == CpuType::Arm9 {
             match self.arm9_cp15.tcm_read::<4>(address) {
                 Some(bytes) => u32::from_le_bytes(bytes),
@@ -60,6 +66,9 @@ impl Emulator {
     /// CPU-side 16-bit load (Thumb fetch, LDRH/LDRSH); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_halfword().
     pub fn read_halfword(&mut self, address: u32, cpu_type: CpuType) -> u16 {
+        if let Some(value) = self.slot2_read(address, Width::Half, cpu_type) {
+            return value as u16;
+        }
         if cpu_type == CpuType::Arm9 {
             match self.arm9_cp15.tcm_read::<2>(address) {
                 Some(bytes) => u16::from_le_bytes(bytes),
@@ -73,6 +82,9 @@ impl Emulator {
     /// CPU-side 8-bit load (LDRB/LDRSB); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_byte().
     pub fn read_byte(&mut self, address: u32, cpu_type: CpuType) -> u8 {
+        if let Some(value) = self.slot2_read(address, Width::Byte, cpu_type) {
+            return value as u8;
+        }
         if cpu_type == CpuType::Arm9 {
             match self.arm9_cp15.tcm_read::<1>(address) {
                 Some([byte]) => byte,
@@ -81,5 +93,21 @@ impl Emulator {
         } else {
             self.arm7_read_byte(address)
         }
+    }
+
+    /// Whether EXMEMCNT bit 7 gives the GBA slot to `cpu_type` (0 = ARM9,
+    /// 1 = ARM7). GBATEK "DS Memory Control - Cartridges and Main RAM".
+    pub fn owns_slot2(&self, cpu_type: CpuType) -> bool {
+        let arm7_owns = self.ex_mem_cnt & (1 << 7) != 0;
+        arm7_owns == (cpu_type == CpuType::Arm7)
+    }
+
+    /// A CPU read routed to the Slot-2 device; `None`: not the device's
+    /// (no device, other address or the other CPU owns the slot).
+    fn slot2_read(&mut self, address: u32, width: Width, cpu_type: CpuType) -> Option<u32> {
+        if !Slot2Bus::decodes(address) || !self.owns_slot2(cpu_type) {
+            return None;
+        }
+        self.slot2.read(address, width)
     }
 }

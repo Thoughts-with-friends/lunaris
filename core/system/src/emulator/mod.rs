@@ -86,6 +86,10 @@ pub struct Emulator {
     #[serde(skip)]
     pub cheats: Vec<Vec<u32>>,
 
+    /// Slot-2 expansion device (host data, kept by [`Self::load_state`]).
+    #[serde(skip)]
+    pub slot2: crate::slot2::Slot2Bus,
+
     /// IPCSYNC / IPCFIFO registers and queues for both CPUs
     pub ipc: Ipc,
     pub aux_spi_cnt: u16,
@@ -199,6 +203,7 @@ impl Emulator {
             dma_event: Default::default(),
             io_2d: [[0; gpu::io_2d::IO_2D_SIZE]; 2],
             cheats: Vec::new(),
+            slot2: Default::default(),
             spu_cycles: 0,
             ipc: Default::default(),
             aux_spi_cnt: Default::default(),

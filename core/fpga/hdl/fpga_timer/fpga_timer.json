@@ -1,0 +1,17 @@
+{
+  "name": "fpga_timer",
+  "description": "Example block: a free-running counter with a compare interrupt and a scratch register.",
+  "base": 0,
+  "size": 256,
+  "clock_div": 1,
+  "registers": [
+    { "name": "ID", "offset": 0, "access": "const", "reset": 1179666241, "description": "Reads 'AGPF' (0x46504741)" },
+    { "name": "CTRL", "offset": 4, "access": "rw", "description": "bit0: count enable" },
+    { "name": "COUNT", "offset": 8, "access": { "counter": { "enable": { "reg": "CTRL", "bit": 0 } } }, "description": "+1 per FPGA clock while CTRL.0" },
+    { "name": "COMPARE", "offset": 12, "access": "rw", "reset": 4294967295, "description": "STATUS.0 is set when COUNT == COMPARE" },
+    { "name": "STATUS", "offset": 16, "access": { "w1c": { "events": [ { "bit": 0, "equal": ["COUNT", "COMPARE"] } ] } }, "description": "bit0: compare match (write 1 to clear)" },
+    { "name": "IRQ_EN", "offset": 20, "access": "rw", "description": "irq = |(STATUS & IRQ_EN)" },
+    { "name": "SCRATCH", "offset": 24, "access": "rw", "description": "Free for software" }
+  ],
+  "irq": { "status": "STATUS", "enable": "IRQ_EN" }
+}

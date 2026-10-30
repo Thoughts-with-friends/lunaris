@@ -1,0 +1,22 @@
+[package]
+name = "ds_fpga"
+description = "FPGA blocks on the DS Slot-2 bus: one register-map spec, a Rust reference model and Verilog / SystemVerilog / Rust code generation"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = "1.0.149"
+
+# workspace members
+ds_emu = { workspace = true }
+
+[lints]
+workspace = true

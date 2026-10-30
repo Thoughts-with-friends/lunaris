@@ -3,7 +3,10 @@ mod write_arm9;
 
 use ds_cpu::arm_cpu::CpuType;
 
-use crate::emulator::Emulator;
+use crate::{
+    emulator::Emulator,
+    slot2::{Slot2Bus, Width},
+};
 
 /// Folds main RAM mirrors together so a watchpoint matches any of them.
 const fn watch_key(address: u32) -> u32 {
@@ -53,6 +56,12 @@ impl Emulator {
     ///       DMAs, raise IRQs (IPC), feed the GX FIFO, clock SPI...
     /// ```
     pub fn write_word(&mut self, address: u32, word: u32, cpu_type: CpuType) {
+        if Slot2Bus::decodes(address)
+            && self.owns_slot2(cpu_type)
+            && self.slot2.write(address, word, Width::Word)
+        {
+            return;
+        }
         self.check_watch(address, word, 32, cpu_type);
         if cpu_type == CpuType::Arm9 {
             if !self.arm9_cp15.tcm_write(address, &word.to_le_bytes()) {
@@ -66,6 +75,12 @@ impl Emulator {
     /// CPU-side 16-bit store (STRH); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_halfword().
     pub fn write_halfword(&mut self, address: u32, halfword: u16, cpu_type: CpuType) {
+        if Slot2Bus::decodes(address)
+            && self.owns_slot2(cpu_type)
+            && self.slot2.write(address, halfword.into(), Width::Half)
+        {
+            return;
+        }
         self.check_watch(address, halfword.into(), 16, cpu_type);
         if cpu_type == CpuType::Arm9 {
             if !self.arm9_cp15.tcm_write(address, &halfword.to_le_bytes()) {
@@ -79,6 +94,12 @@ impl Emulator {
     /// CPU-side 8-bit store (STRB); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_byte().
     pub fn write_byte(&mut self, address: u32, byte: u8, cpu_type: CpuType) {
+        if Slot2Bus::decodes(address)
+            && self.owns_slot2(cpu_type)
+            && self.slot2.write(address, byte.into(), Width::Byte)
+        {
+            return;
+        }
         self.check_watch(address, byte.into(), 8, cpu_type);
         if cpu_type == CpuType::Arm9 {
             if !self.arm9_cp15.tcm_write(address, &[byte]) {
