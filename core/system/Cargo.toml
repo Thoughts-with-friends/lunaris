@@ -15,7 +15,6 @@ version.workspace = true
 serde = { workspace = true }
 serde-big-array = { workspace = true }
 log = { workspace = true, optional = true }
-snafu = { workspace = true }
 bincode = { version = "2.0.1", features = ["serde"] }
 
 # workspace members

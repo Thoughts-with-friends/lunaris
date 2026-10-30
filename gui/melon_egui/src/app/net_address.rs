@@ -2,7 +2,7 @@
 
 /// Where a Remote Desktop session's other end is.
 ///
-/// The port comes from [`crate::remote::Tuning::port`] and **replaces** whatever
+/// The port comes from [`::remote::Tuning::port`] and **replaces** whatever
 /// the address field carries, rather than merely filling in for a missing one.
 /// The address boxes are shared with LAN mode, so they usually hold that mode's
 /// port; honouring it here would silently point Remote Desktop at the LAN

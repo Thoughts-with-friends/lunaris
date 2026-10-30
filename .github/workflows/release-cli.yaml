@@ -32,7 +32,7 @@ jobs:
             no_default_features: true
 
           - package: lunaris_freya
-            app_name: lunaris_freya
+            app_name: melon_freya
             asset: freya-melon
             features: melon,release
             no_default_features: true

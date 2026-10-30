@@ -2,7 +2,7 @@
 //! bindings `gui/melon_egui` uses).
 //!
 //! melonDS hands its audio over at 48 kHz (see `gui/melon_egui/src/audio.rs`,
-//! `SPU_SAMPLE_RATE`); [`Resampler`] brings it to the rate the shared
+//! `SPU_SAMPLE_RATE`); `Resampler` brings it to the rate the shared
 //! `AudioOutput` expects.
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -10,7 +10,7 @@ use chrono::{Datelike as _, Timelike as _};
 use ds_common::frontend::lock;
 use melonds::{Cheat, Host, Nds, RenderSettings, Renderer};
 
-use super::{Boot, Core, HdJob, PostScale, push_rgba};
+use super::{Boot, Core, HdJob, PostScale, push_rgba, resample::Resampler};
 
 /// melonDS's output rate (fixed by the bindings).
 const MELON_RATE: f64 = 48_000.0;
@@ -71,35 +71,74 @@ impl Melon {
             gl_pixels: Vec::new(),
         })
     }
-
-    /// Both screens as 0xAARRGGBB (the software renderer's).
-    pub fn screens(&mut self) -> Option<(&[u32], &[u32])> {
-        self.nds.framebuffers()
-    }
-
-    /// The frame's sound at 48 kHz (melonDS's rate), for Remote Desktop.
-    pub fn take_raw_audio(&mut self, out: &mut Vec<i16>) {
-        let queued = self.nds.audio_queued();
-        if queued == 0 {
-            return;
-        }
-        let start = out.len();
-        out.resize(start + queued * 2, 0);
-        let pairs = self.nds.read_audio(&mut out[start..]);
-        out.truncate(start + pairs * 2);
-    }
 }
 
-/// A frame already at its size (read back from OpenGL).
+/// A frame read back from OpenGL at `scale` x; with `xbrz`, its 2D put
+/// through xBRZ (melon_egui's `gl_screen`, on the CPU).
 struct Ready {
     rgba: Vec<u8>,
     width: usize,
+    scale: usize,
+    xbrz: bool,
 }
 
 impl HdJob for Ready {
     fn render(self: Box<Self>, rgba: &mut Vec<u8>) -> usize {
+        let start = rgba.len();
         rgba.extend_from_slice(&self.rgba);
+        if self.xbrz && self.scale > 1 {
+            let screen = self.width * self.width * 3 / 4 * 4;
+            for frame in rgba[start..].chunks_exact_mut(screen) {
+                xbrz_2d(frame, self.scale);
+            }
+        }
         self.width
+    }
+}
+
+/// How much a DS pixel's block may vary in luma (0-255) and still count as
+/// 2D (melon_egui's `BLOCK_TOLERANCE`, 0.02).
+const BLOCK_TOLERANCE: f32 = 0.02 * 255.0;
+
+/// One screen of the OpenGL output (RGBA, 256n x 192n): every DS pixel
+/// whose n x n block is uniform is 2D and is replaced by the xBRZ of the
+/// screen's DS pixels; a block with detail inside is 3D and keeps what the
+/// GPU drew (melon_egui's blit shader).
+fn xbrz_2d(frame: &mut [u8], n: usize) {
+    let (w, h) = (256, 192);
+    let pitch = w * n * 4;
+    let at = |frame: &[u8], x: usize, y: usize| {
+        let i = y * pitch + x * 4;
+        [frame[i], frame[i + 1], frame[i + 2]]
+    };
+    let luma = |a: [u8; 3], b: [u8; 3]| {
+        let d = |c: usize| f32::from(a[c].abs_diff(b[c]));
+        d(0).mul_add(0.2627, d(1).mul_add(0.6780, d(2) * 0.0593))
+    };
+    // One texel per DS pixel, from the middle of its block.
+    let mut small = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let [r, g, b] = at(frame, x * n + n / 2, y * n + n / 2);
+            small.extend_from_slice(&[r, g, b, 0xFF]);
+        }
+    }
+    let sharp = xbrz::scale_rgba(&small, w, h, n);
+    // Probes at 0.15 / 0.85 across the block, as the shader's.
+    let (lo, hi) = ((n * 15) / 100, (n * 85) / 100);
+    for y in 0..h {
+        for x in 0..w {
+            let q = |dx, dy| at(frame, x * n + dx, y * n + dy);
+            let (q0, q1, q2, q3) = (q(lo, lo), q(hi, lo), q(lo, hi), q(hi, hi));
+            let inside = luma(q0, q1).max(luma(q0, q2)).max(luma(q0, q3)).max(luma(q1, q2));
+            if inside > BLOCK_TOLERANCE {
+                continue;
+            }
+            for row in y * n..(y + 1) * n {
+                let from = row * pitch + x * n * 4;
+                frame[from..from + n * 4].copy_from_slice(&sharp[from..from + n * 4]);
+            }
+        }
     }
 }
 
@@ -219,15 +258,15 @@ impl Melon {
 }
 
 impl Core for Melon {
-    /// Above 1x without xBRZ: the OpenGL renderer at that internal
-    /// resolution (the 3D gains detail, as melon_egui). With xBRZ, or
-    /// without OpenGL: the software renderer, scaled afterwards.
+    /// Above 1x: the OpenGL renderer at that internal resolution (the 3D
+    /// gains detail, as melon_egui; xBRZ then goes over the 2D, see
+    /// [`Ready`]). Without OpenGL: the software renderer, scaled afterwards.
     fn set_render_scale(&mut self, scale: usize, xbrz: bool) {
         if self.render == (scale, xbrz) {
             return;
         }
         self.render = (scale, xbrz);
-        let gl = scale > 1 && !xbrz && self.ensure_gl();
+        let gl = scale > 1 && self.ensure_gl();
         let wanted = if gl {
             RenderSettings {
                 renderer: Renderer::OpenGl,
@@ -259,7 +298,7 @@ impl Core for Melon {
                     push_rgba(row, &mut rgba);
                 }
             }
-            return Some(Box::new(Ready { rgba, width: w }));
+            return Some(Box::new(Ready { rgba, width: w, scale: w / 256, xbrz }));
         }
         let mut rgba = Vec::with_capacity(256 * 384 * 4);
         self.frame(&mut rgba);
@@ -340,59 +379,41 @@ impl Core for Melon {
     }
 }
 
-/// Linear resampler for interleaved stereo `i16`.
-pub struct Resampler {
-    /// Input samples per output sample.
-    step: f64,
-    /// Position of the next output between `last` (0.0) and the first
-    /// input frame (1.0).
-    pos: f64,
-    last: [i16; 2],
-}
-
-impl Resampler {
-    pub const fn new(step: f64) -> Self {
-        Self { step, pos: 1.0, last: [0; 2] }
-    }
-
-    pub fn process(&mut self, input: &[i16], out: &mut Vec<i16>) {
-        let frames = input.as_chunks::<2>().0;
-        // Frame `i` of the stream "last, frames..." is at index `i`.
-        let at = |i: usize| if i == 0 { self.last } else { frames[i - 1] };
-        let end = frames.len() as f64;
-        #[allow(clippy::while_float)]
-        while self.pos < end {
-            let i = self.pos as usize;
-            let t = self.pos - i as f64;
-            let (a, b) = (at(i), at(i + 1));
-            for c in 0..2 {
-                let v = (f64::from(b[c]) - f64::from(a[c])).mul_add(t, f64::from(a[c]));
-                out.push(v as i16);
-            }
-            self.pos += self.step;
-        }
-        if let Some(&last) = frames.last() {
-            self.last = last;
-            self.pos -= frames.len() as f64;
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::Resampler;
+mod gl_tests {
+    use super::*;
 
+    /// Above 1x the OpenGL renderer draws, with xBRZ on too (it then goes
+    /// over the 2D only): the frame is the GPU's, at the internal size.
     #[test]
-    fn resamples_48k_to_the_spu_rate() {
-        let mut r = Resampler::new(48_000.0 / 32_728.0);
-        let mut out = Vec::new();
-        // One second of a ramp, in 60 frame-sized chunks.
-        let input: Vec<i16> = (0..48_000_i32).flat_map(|i| [(i % 1000) as i16; 2]).collect();
-        for chunk in input.chunks(1600) {
-            r.process(chunk, &mut out);
+    #[ignore = "requires a ROM and OpenGL"]
+    fn opengl_renders_above_1x_with_and_without_xbrz() {
+        let rom = std::path::Path::new("D:/GAME/Emulator/DS/Roms/Newスーパーマリオブラザーズ.nds");
+        let save = std::env::temp_dir().join("freya_gl_test.sav");
+        let mut m = Melon::boot(rom, &save, 0, None, None).expect("boots");
+        for xbrz in [false, true] {
+            m.set_render_scale(2, xbrz);
+            for _ in 0..30 {
+                m.run_frame(0, None);
+            }
+            let out = m.nds.gl_output();
+            assert!(out.is_some_and(|o| o.width == 512), "xbrz {xbrz}: {out:?}");
+            let mut rgba = Vec::new();
+            assert_eq!(m.hd_job(2, xbrz).expect("a frame").render(&mut rgba), 512);
+            assert_eq!(rgba.len(), 512 * 384 * 2 * 4);
         }
-        let frames = out.len() / 2;
-        assert!((32_700..=32_760).contains(&frames), "{frames} frames");
-        assert!(out.chunks(2).all(|f| f[0] == f[1]));
+    }
+
+    /// A uniform block is 2D (replaced by xBRZ), a varied one 3D (kept).
+    #[test]
+    fn xbrz_replaces_only_uniform_blocks() {
+        let n = 2;
+        let mut frame = vec![0_u8; 512 * 384 * 4];
+        // DS pixel (0, 0): a 3D block with detail inside.
+        frame[..4].copy_from_slice(&[255, 255, 255, 255]);
+        let before = frame.clone();
+        xbrz_2d(&mut frame, n);
+        assert_eq!(frame[..8], before[..8], "the 3D block is kept");
+        assert_eq!(frame.len(), before.len());
     }
 }

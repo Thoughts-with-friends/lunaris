@@ -37,12 +37,12 @@ jobs:
 
       - name: Check format
         run: cargo fmt --all -- --check
-      # `melon_egui`, `melon_lan` and `melon_remote` are excluded because they
-      # compile the melonDS C++ core (melonds-rs), which needs several minutes;
+      # `melon_egui` and `melon_lan` are excluded because they compile the
+      # melonDS C++ core (melonds-rs), which needs several minutes;
       # lint them with `cargo clippy -p <crate>` locally. (`ds_net` builds only
       # melonDS's small net layer, found by the runners' clang.)
       - name: Lint Check
-        run: cargo clippy --workspace --exclude melon_egui --exclude melon_lan --exclude melon_remote -- -D warnings
+        run: cargo clippy --workspace --exclude melon_egui --exclude melon_lan -- -D warnings
 
       # The action only supports Linux.
       - name: Check license, dependencies

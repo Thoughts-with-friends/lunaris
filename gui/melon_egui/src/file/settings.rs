@@ -59,8 +59,8 @@ pub struct Settings {
     pub lan_bind_address: String,
     /// How the LAN transport behaves on a slow link. See [`crate::lan::Tuning`].
     pub lan: crate::lan::Tuning,
-    /// How Remote Desktop mode behaves. See [`crate::remote::Tuning`].
-    pub remote: crate::remote::Tuning,
+    /// How Remote Desktop mode behaves. See [`::remote::Tuning`].
+    pub remote: ::remote::Tuning,
     /// Which key and which pad button each DS button answers to. Defaults to
     /// melonDS's own map; see [`crate::bindings`].
     pub bindings: crate::bindings::Bindings,
@@ -98,7 +98,7 @@ impl Default for Settings {
             lan_host_address: DEFAULT_LAN_HOST.to_owned(),
             lan_bind_address: DEFAULT_LAN_BIND.to_owned(),
             lan: crate::lan::Tuning::default(),
-            remote: crate::remote::Tuning::default(),
+            remote: ::remote::Tuning::default(),
             bindings: crate::bindings::Bindings::default(),
             window: crate::app::WindowConfig::default(),
         }

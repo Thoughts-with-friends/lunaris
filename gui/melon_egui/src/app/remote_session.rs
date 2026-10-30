@@ -18,7 +18,7 @@
 //!                                                3. audio → speakers
 //! ```
 //!
-//! Why this beats LAN mode over a VPN is explained in [`crate::remote`].
+//! Why this beats LAN mode over a VPN is explained in [`::remote`].
 
 use super::*;
 
@@ -56,12 +56,12 @@ impl MelonEgui {
         let name = if host { "melon-egui-remote-host" } else { "melon-egui-remote-client" };
         let spawned = worker::spawn(name, move || {
             let session = if host {
-                crate::remote::RemoteHost::accept(addr, tuning, &flag)
+                ::remote::RemoteHost::accept(addr, tuning, &flag)
                     .map(|host| RemoteSession::Host(Box::new(host)))
             } else {
                 // Any local port: the host answers wherever the hello came from.
                 let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
-                crate::remote::RemoteClient::connect(local, addr, tuning, &flag)
+                ::remote::RemoteClient::connect(local, addr, tuning, &flag)
                     .map(|client| RemoteSession::Client(Box::new(client)))
             };
             session.map_err(|error| crate::i18n::fill(&failed, &[&error]))
@@ -123,7 +123,7 @@ impl MelonEgui {
 
     /// Is the other machine ready? Red when not, green when it is.
     fn readiness(&self) -> Notice {
-        use crate::remote::Readiness;
+        use ::remote::Readiness;
         let tr = self.i18n();
         let ready = |text: String| Notice::quiet(Severity::Success, text);
         let not_ready = |text: String| Notice::quiet(Severity::Error, text);
@@ -147,7 +147,7 @@ impl MelonEgui {
         else {
             return not_ready(tr.s(K::ProbeBadAddress));
         };
-        match self.remote_probe.as_ref().map(crate::remote::Prober::readiness) {
+        match self.remote_probe.as_ref().map(::remote::Prober::readiness) {
             Some(Readiness::Ready { rtt_ms }) => {
                 ready(tr.f(K::ProbeReady, &[&target, &format!("{rtt_ms:.0}")]))
             }
@@ -159,7 +159,7 @@ impl MelonEgui {
     }
 
     /// A client connected: the second console becomes theirs.
-    fn become_remote_host(&mut self, host: crate::remote::RemoteHost) {
+    fn become_remote_host(&mut self, host: ::remote::RemoteHost) {
         let local = host.local_addr().map_or_else(|_| "?".to_owned(), |a| a.to_string());
         let remote = host.remote_addr();
         self.remote_host = Some(std::sync::Arc::new(host));
@@ -175,7 +175,7 @@ impl MelonEgui {
     }
 
     /// Connected to a host: this window stops emulating and becomes a screen.
-    fn become_remote_client(&mut self, client: crate::remote::RemoteClient) {
+    fn become_remote_client(&mut self, client: ::remote::RemoteClient) {
         // Whatever was running here stops; its save is flushed on the way out.
         self.emu = None;
         self.drop_link();

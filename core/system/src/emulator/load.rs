@@ -5,11 +5,10 @@
 use std::path::Path;
 
 use ds_cartridge::CartridgeError;
-use snafu::ResultExt as _;
 
 use crate::{
     emulator::{Emulator, emu_config::BiosMem},
-    error::{EmuError, FailedReadFileSnafu},
+    error::EmuError,
 };
 
 impl Emulator {
@@ -27,11 +26,11 @@ impl Emulator {
     /// # Errors
     pub fn load_firmware(&mut self) -> Result<(), EmuError> {
         let bin = std::fs::read(&self.config.arm9_bios_path)
-            .with_context(|_| FailedReadFileSnafu { path: &self.config.arm9_bios_path })?;
+            .map_err(EmuError::read(&self.config.arm9_bios_path))?;
         self.arm9_bios = BiosMem::User(bin);
 
         let bin = std::fs::read(&self.config.arm7_bios_path)
-            .with_context(|_| FailedReadFileSnafu { path: &self.config.arm9_bios_path })?;
+            .map_err(EmuError::read(&self.config.arm7_bios_path))?;
         self.arm7_bios = BiosMem::User(bin);
 
         let image = read_firmware_image(&self.config.firmware_path)?;
@@ -112,6 +111,6 @@ fn read_firmware_image(path: &str) -> Result<Vec<u8>, EmuError> {
         return Ok(ds_bios::firmware::FIRMWARE_DS.to_vec());
     };
     let mut image = vec![0; ds_peripherals::spi::firmware::Firmware::SIZE];
-    file.read_exact(&mut image).with_context(|_| FailedReadFileSnafu { path })?;
+    file.read_exact(&mut image).map_err(EmuError::read(path))?;
     Ok(image)
 }

@@ -1,0 +1,19 @@
+# Remote Desktop, shared by every front end and core (melon_egui; freya on
+# the melonDS and Lunaris cores): one PC runs both consoles and streams the
+# second one to the other PC. See src/lib.rs.
+[package]
+name = "remote"
+description = "Remote Desktop: stream a DS console over UDP, take the remote player's input back (core-independent)"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+log = "0.4"

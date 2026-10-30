@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.8.0" # NOTE: <- fixed ordering first(To release)
+version = "0.9.0" # NOTE: <- fixed ordering first(To release)
 authors = ["DiaSird"]
 categories = ["encoding"]
 description = "A modern Nintendo DS emulator written in Rust"
@@ -41,7 +41,6 @@ debug = true
 serde = { version = "1.0.228", features = ["derive"] }
 log = "0.4.34"
 serde-big-array = "0.5.1"
-snafu = "0.9.0"
 
 # Nintendo DS networking (melonDS LocalMP / LAN) over FFI, used by `ds_net`.
 # Its build compiles melonDS's C++ net layer (needs clang on Windows).

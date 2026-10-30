@@ -84,7 +84,7 @@ pub enum Action {
     /// Connect this console to the configured LAN host.
     GuestLanGame,
     /// Run both consoles here and stream the second one out. See
-    /// [`crate::remote`].
+    /// [`::remote`].
     HostRemoteDesktop,
     /// Become a screen for a console running elsewhere.
     JoinRemoteDesktop,

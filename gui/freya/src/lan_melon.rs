@@ -186,6 +186,11 @@ impl Frontend {
         Ok(())
     }
 
+    /// Whether a LAN link is up (Remote Desktop needs the airwaves instead).
+    pub fn lan_session_active(&self) -> bool {
+        lock(&self.lan).link.is_some()
+    }
+
     /// Forgets the link (it goes with the core: stop, reset, another game).
     pub fn leave_room(&self) {
         lock(&self.lan).link = None;

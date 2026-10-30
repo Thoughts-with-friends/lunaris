@@ -1,5 +1,6 @@
 //! Menu actions: what needs this window (file pickers, quitting, window
 //! size, dialogs) is done here, the rest by `Frontend::apply`.
+use ::remote::Request;
 use ds_common::{frontend::lock, menu::Action, view::place};
 use freya::{prelude::*, winit::dpi::LogicalSize};
 use rfd::AsyncFileDialog;
@@ -19,6 +20,11 @@ pub fn run(ctx: &Ctx, action: impl Into<Act>) {
         Act::Ds(action) => action,
         Act::SaveState(slot) => return save_state(ctx, slot),
         Act::LoadState(slot) => return load_state(ctx, slot),
+        Act::SaveStateFile | Act::LoadStateFile | Act::UndoStateLoad
+            if ctx.front.remote_client().is_some() =>
+        {
+            return done(ctx, Err(REMOTE_SLOTS_ONLY.to_owned()));
+        }
         Act::SaveStateFile => return state_file(ctx.clone(), false),
         Act::LoadStateFile => return state_file(ctx.clone(), true),
         Act::ExportSave => return export_save(ctx.clone()),
@@ -56,10 +62,52 @@ fn apply(ctx: &Ctx, action: Action) {
     ctx.refresh();
 }
 
-/// Stops the game (its save is written) and closes the window.
+/// Stops the game (its save is written), keeps the window's place and
+/// size, and closes it.
 pub fn quit(ctx: &Ctx) {
     ctx.front.stop();
+    let front = std::sync::Arc::clone(&ctx.front);
+    Platform::get().with_window(Platform::window_id(), move |window| {
+        crate::window_state::remember(&front.instance, window);
+    });
     Platform::get().close_window(Platform::window_id());
+}
+
+/// What a Remote Desktop client can do with savestates.
+const REMOTE_SLOTS_ONLY: &str =
+    "Remote Desktop: states are kept on the host, use the savestate slots (F1-F9)";
+
+/// Remote Desktop client: sends `request` to the host's second console (off
+/// the UI thread) and hands the answer to `then`. `false`: this window is
+/// not a client.
+fn remote_request(
+    ctx: &Ctx,
+    request: Request,
+    then: impl FnOnce(Vec<u8>) -> Result<(), String> + 'static,
+) -> bool {
+    let Some(client) = ctx.front.remote_client() else {
+        return false;
+    };
+    let ctx = ctx.clone();
+    spawn_in_window(async move {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(client.request(&request));
+        });
+        let answer = loop {
+            match rx.try_recv() {
+                Ok(answer) => break answer,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    async_io::Timer::after(std::time::Duration::from_millis(30)).await;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    break Err("The request stopped".to_owned());
+                }
+            }
+        };
+        done(&ctx, answer.and_then(then).map_err(|e| format!("Remote Desktop: {e}")));
+    });
+    true
 }
 
 fn pick_rom(ctx: Ctx) {
@@ -75,8 +123,27 @@ fn pick_rom(ctx: Ctx) {
     });
 }
 
-/// File > Import savefile: stop, back the old save up, copy, restart.
+/// File > Import savefile: stop, back the old save up, copy, restart (a
+/// Remote Desktop client: the host does that on its second console).
 fn import_savefile(ctx: Ctx) {
+    if ctx.front.remote_client().is_some() {
+        spawn_in_window(async move {
+            let Some(file) = AsyncFileDialog::new()
+                .add_filter("DS save", &["sav", "dsv", "bin"])
+                .pick_file()
+                .await
+            else {
+                return;
+            };
+            match std::fs::read(file.path()) {
+                Ok(data) => {
+                    remote_request(&ctx, Request::ImportSave(data), |_| Ok(()));
+                }
+                Err(e) => done(&ctx, Err(format!("Cannot read {}: {e}", file.path().display()))),
+            }
+        });
+        return;
+    }
     let Some(rom) = lock(&ctx.front.rom).clone() else {
         return;
     };
@@ -108,8 +175,11 @@ fn done(ctx: &Ctx, result: Result<(), String>) {
     ctx.refresh();
 }
 
-/// File > Save state > `slot`.
+/// File > Save state > `slot` (a Remote Desktop client: on the host).
 fn save_state(ctx: &Ctx, slot: u8) {
+    if remote_request(ctx, Request::SaveState(slot), |_| Ok(())) {
+        return;
+    }
     let result = ctx
         .front
         .state_path(slot)
@@ -118,8 +188,11 @@ fn save_state(ctx: &Ctx, slot: u8) {
     done(ctx, result.map_err(|e| format!("Save state {slot}: {e}")));
 }
 
-/// File > Load state > `slot`.
+/// File > Load state > `slot` (a Remote Desktop client: on the host).
 fn load_state(ctx: &Ctx, slot: u8) {
+    if remote_request(ctx, Request::LoadState(slot), |_| Ok(())) {
+        return;
+    }
     let result = ctx
         .front
         .state_path(slot)
@@ -156,8 +229,27 @@ fn state_file(ctx: Ctx, load: bool) {
     });
 }
 
-/// File > Export savefile...: the game's save written now, then copied.
+/// File > Export savefile...: the game's save written now, then copied (a
+/// Remote Desktop client: the host's second console's, saved here).
 fn export_save(ctx: Ctx) {
+    if ctx.front.remote_client().is_some() {
+        spawn_in_window(async move {
+            let Some(file) = AsyncFileDialog::new()
+                .add_filter("DS save", &["sav"])
+                .set_file_name("remote.sav")
+                .save_file()
+                .await
+            else {
+                return;
+            };
+            let dest = file.path().to_owned();
+            remote_request(&ctx, Request::ExportSave, move |data| {
+                std::fs::write(&dest, data)
+                    .map_err(|e| format!("Cannot write {}: {e}", dest.display()))
+            });
+        });
+        return;
+    }
     let Some(rom) = lock(&ctx.front.rom).clone() else {
         return;
     };
@@ -184,6 +276,8 @@ fn resize_window(ctx: &Ctx, n: f32) {
         .natural_h
         .mul_add(n, SCREEN_PADDING.mul_add(2.0, TITLEBAR_HEIGHT + STATUSBAR_HEIGHT));
     Platform::get().with_window(Platform::window_id(), move |window| {
-        let _ = window.request_inner_size(LogicalSize::new(f64::from(w), f64::from(h)));
+        // Never past the monitor: the status bar would end up below it.
+        let (w, h) = crate::window_state::fit_on_monitor(window, f64::from(w), f64::from(h));
+        let _ = window.request_inner_size(LogicalSize::new(w, h));
     });
 }

@@ -15,11 +15,12 @@
 //! The backend is fixed at build time by exactly one cargo feature
 //! (`lunaris` (default) or `melon`); see `gui/freya/Cargo.toml`.
 #[cfg(feature = "lunaris")]
-mod lunaris;
+pub mod lunaris;
 #[cfg(feature = "melon")]
 pub mod melon;
 #[cfg(feature = "melon")]
 mod melon_gl;
+pub mod resample;
 
 #[cfg(not(any(feature = "lunaris", feature = "melon")))]
 compile_error!(
@@ -251,14 +252,12 @@ pub const NO_STATES: &str = "Savestates are not supported by this core";
 
 /// A 1x frame (both screens, RGBA, upper first) scaled on the HD worker:
 /// xBRZ, or pixels repeated (`xbrz` off), `scale` times.
-#[cfg(feature = "melon")]
 pub struct PostScale {
     pub rgba: Vec<u8>,
     pub scale: usize,
     pub xbrz: bool,
 }
 
-#[cfg(feature = "melon")]
 impl HdJob for PostScale {
     fn render(self: Box<Self>, rgba: &mut Vec<u8>) -> usize {
         let (w, h) = (256, 192);
@@ -316,7 +315,6 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "melon")]
     #[test]
     fn post_scale_makes_both_screens_n_times_larger() {
         for xbrz in [false, true] {

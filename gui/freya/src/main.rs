@@ -9,8 +9,9 @@
 //!  App (root)
 //!    ├─ Titlebar   logo, MenuBar (ds_common::menu), drag area, Appearance,
 //!    │             minimize / maximize / close
+//!    ├─ StatusBar  state (pause button), game, Remote Desktop, fps, speed,
+//!    │             resolution, instance
 //!    ├─ Screens    frames of the emulator thread, stylus   (or Welcome)
-//!    ├─ StatusBar  state, game, fps, speed, resolution, instance
 //!    └─ Dialogs    modal cards (ROM info, settings, cheats, ...)
 //!  input.rs: keyboard + gamepads -> Shared::set_keys, status refresh
 //!  close (✕, File > Quit, Alt+F4) -> Frontend::stop (writes the save)
@@ -25,7 +26,6 @@ mod lan;
 mod menu;
 mod menubar;
 mod panels;
-#[cfg(feature = "melon")]
 mod remote;
 mod screens;
 mod state;
@@ -33,6 +33,7 @@ mod theme;
 mod titlebar;
 #[cfg(test)]
 mod ui_tests;
+mod window_state;
 
 use std::sync::Arc;
 
@@ -85,6 +86,7 @@ impl Component for App {
         let down_ctx = ctx.clone();
         let up_ctx = ctx.clone();
         let mut appearance = ctx.appearance;
+        let mut volume_popup = ctx.volume_popup;
 
         rect()
             .expanded()
@@ -98,7 +100,10 @@ impl Component for App {
                 input::on_key_down(&down_ctx, &e);
             })
             .on_global_key_up(move |e: Event<KeyboardEventData>| input::on_key_up(&up_ctx, &e))
-            .on_press(move |_| appearance.set_if_modified(false))
+            .on_press(move |_| {
+                appearance.set_if_modified(false);
+                volume_popup.set_if_modified(false);
+            })
             .child(
                 rect()
                     .width(Size::fill())
@@ -110,6 +115,10 @@ impl Component for App {
                     )
                     .child(Titlebar),
             )
+            .child(rect().width(Size::fill()).height(Size::px(1.)).background(theme::hairline()))
+            // At the top, under the titlebar: a maximized borderless window
+            // reaches under the taskbar, which hid it at the bottom.
+            .child(StatusBar)
             .child(rect().width(Size::fill()).height(Size::px(1.)).background(theme::hairline()))
             .child(
                 rect()
@@ -128,8 +137,6 @@ impl Component for App {
                     }))
                     .maybe_child(debug_open.then_some(DebugPanel)),
             )
-            .child(rect().width(Size::fill()).height(Size::px(1.)).background(theme::hairline()))
-            .child(StatusBar)
             .child(Dialogs)
     }
 }
@@ -151,6 +158,7 @@ fn main() {
     let title: &'static str =
         Box::leak(format!("Lunaris DS (instance{})", instance.number()).into_boxed_str());
 
+    let saved_window = window_state::load(&instance);
     let front = Arc::new(Frontend::new(instance, settings));
     let app = App { front: Arc::clone(&front), dialog: None };
     let root = move || app.clone();
@@ -166,9 +174,17 @@ fn main() {
                     .with_decorations(false)
                     .with_transparency(true)
                     .with_background(Color::TRANSPARENT)
-                    // Alt+F4 and the like: write the save before closing.
-                    .with_on_close(move |_, _| {
+                    // Where it was last time, kept on a monitor.
+                    .with_window_attributes(move |attrs, event_loop| {
+                        window_state::restore(attrs, event_loop, saved_window, (560., 560.))
+                    })
+                    // Alt+F4 and the like: write the save and keep the
+                    // window's place before closing.
+                    .with_on_close(move |ctx, id| {
                         on_close.stop();
+                        if let Some(window) = ctx.windows.get(&id) {
+                            window_state::remember(&on_close.instance, window.window());
+                        }
                         CloseDecision::Close
                     }),
             ),

@@ -92,7 +92,7 @@ pub enum Mode {
     #[default]
     Local,
     /// Both consoles run here; the second one's picture and sound go out over
-    /// the network and its controls come back. See [`crate::remote`].
+    /// the network and its controls come back. See [`::remote`].
     RemoteHost,
     /// No emulation at all: a screen and a pair of speakers for a console
     /// running somewhere else.
@@ -116,8 +116,8 @@ pub(crate) enum RemoteSession {
     // Boxed because the two ends are very different sizes — the host carries an
     // encoder with a whole frame of reference pixels in it — and this value
     // only ever travels once, down a channel, on the way to being unwrapped.
-    Host(Box<crate::remote::RemoteHost>),
-    Client(Box<crate::remote::RemoteClient>),
+    Host(Box<::remote::RemoteHost>),
+    Client(Box<::remote::RemoteClient>),
 }
 
 /// What an open file dialog is asking about.
@@ -308,9 +308,9 @@ pub struct MelonEgui {
     /// The Remote Desktop session this window is the host of, if it is one.
     /// Shared with the second console's thread, which is where the encoding
     /// happens.
-    pub(crate) remote_host: Option<std::sync::Arc<crate::remote::RemoteHost>>,
+    pub(crate) remote_host: Option<std::sync::Arc<::remote::RemoteHost>>,
     /// The Remote Desktop session this window is the client of, if it is one.
-    pub(crate) remote_client: Option<crate::remote::RemoteClient>,
+    pub(crate) remote_client: Option<::remote::RemoteClient>,
     /// A Remote Desktop session being established off the UI thread.
     pub(crate) remote_pending: Option<Receiver<Result<RemoteSession, String>>>,
     /// Set to abandon the pending handshake: Stop while a host is still
@@ -322,15 +322,15 @@ pub struct MelonEgui {
     pub(crate) remote_pending_host: bool,
     /// Asks the Guest IP whether it is hosting, while this machine is not in a
     /// session. `None` if its thread could not start.
-    pub(crate) remote_probe: Option<crate::remote::Prober>,
+    pub(crate) remote_probe: Option<::remote::Prober>,
     /// "Is the other machine ready?", recomputed every repaint from the
     /// session's pings or the prober: red when not, green when it is.
     pub remote_readiness: Notice,
     /// How Remote Desktop behaves, as the Wireless pane sets it.
-    pub remote_tuning: crate::remote::Tuning,
+    pub remote_tuning: ::remote::Tuning,
     /// What the live Remote Desktop session is doing, sampled each repaint so
     /// the pane and the menu read one consistent set of numbers.
-    pub remote_stats: Option<crate::remote::RemoteStats>,
+    pub remote_stats: Option<::remote::RemoteStats>,
     /// Guest's editable LAN host address.
     pub lan_guest_address: String,
     /// Host's editable local bind address.

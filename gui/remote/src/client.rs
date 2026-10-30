@@ -11,6 +11,7 @@ use std::{
 
 use super::{
     RemoteStats, Tuning,
+    control::{self, Request},
     session::{self, Session},
     wire,
 };
@@ -66,6 +67,16 @@ impl RemoteClient {
     /// upsampling on the way to the sound card.
     pub fn take_audio(&self) -> (Vec<i16>, u32) {
         self.session.take_audio()
+    }
+
+    /// Asks the host to carry `request` out on the streamed console, and
+    /// waits for it (blocks: run it off the UI thread).
+    ///
+    /// # Errors
+    /// If the host cannot be reached or refuses (its message).
+    pub fn request(&self, request: &Request) -> Result<Vec<u8>, String> {
+        control::request(self.session.remote, request)
+            .map_err(|e| format!("Cannot reach the host: {e}"))?
     }
 
     /// The address this end is bound to.

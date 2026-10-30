@@ -337,10 +337,10 @@ fn multiplayer_dialog_shows_both_modes() {
     front.pause_remote_probe();
 }
 
-/// Remote Desktop (melonDS): one frontend hosts with a game running, the
-/// other joins without one and shows the host's second console's picture;
-/// its keys reach that console. Stop ends the session on both sides.
-#[cfg(feature = "melon")]
+/// Remote Desktop: one frontend hosts with a game running, the other joins
+/// without one and shows the host's second console's picture; its keys
+/// reach that console, its save / state requests are done there (on the
+/// host's next instance folder). Stop ends the session on both sides.
 #[test]
 #[ignore = "requires ROMs on disk"]
 fn remote_desktop_over_localhost() {
@@ -387,6 +387,22 @@ fn remote_desktop_over_localhost() {
         assert!(start.elapsed() < Duration::from_secs(10), "the stream was not upscaled");
         run_frames(&client, 1);
     }
+    // The second console lives in the host's next instance folder.
+    let view = host.remote_view().0.expect("hosting");
+    assert_eq!(view.instance, Some(host.instance.number() + 1));
+    assert!(matches!(
+        client.remote_state(),
+        Some(crate::remote::RemoteState::Connected { hosting: false, .. })
+    ));
+    // The client's save and state actions are done by the host.
+    let remote = client.remote_client().expect("a client");
+    let save: Vec<u8> = (0..0x2000_u32).map(|i| (i * 7) as u8).collect();
+    remote.request(&::remote::Request::ImportSave(save.clone())).expect("import");
+    assert_eq!(remote.request(&::remote::Request::ExportSave).expect("export"), save);
+    remote.request(&::remote::Request::SaveState(3)).expect("save state");
+    remote.request(&::remote::Request::LoadState(3)).expect("load state");
+    assert!(remote.request(&::remote::Request::LoadState(4)).is_err(), "slot 4 is empty");
+    run_frames(&client, 10);
     let host_stats = host.remote_view().0.expect("hosting").stats;
     assert!(host_stats.frames > 0, "the host sent video: {host_stats:?}");
     let client_stats = client.remote_view().0.expect("joined").stats;

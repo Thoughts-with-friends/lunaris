@@ -68,6 +68,8 @@ pub struct Ctx {
     pub debug: State<Option<DebugTab>>,
     /// The Appearance popover of the titlebar.
     pub appearance: State<bool>,
+    /// The volume popover of the status bar.
+    pub volume_popup: State<bool>,
     /// Last error, shown until dismissed.
     pub error: State<Option<String>>,
     pub look: State<Look>,
@@ -93,6 +95,7 @@ impl Ctx {
             dialog: State::create(None),
             debug: State::create(None),
             appearance: State::create(false),
+            volume_popup: State::create(false),
             error: State::create(None),
             look: State::create(look),
             gamepads: State::create(Vec::new()),

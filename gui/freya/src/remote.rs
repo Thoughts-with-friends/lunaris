@@ -1,5 +1,5 @@
-//! Remote Desktop on the melonDS core (melon_egui's, via `melon_remote`):
-//! the host PC runs both consoles and streams the second one's picture and
+//! Remote Desktop (melon_egui's, via the `remote` crate) on either core: the
+//! host PC runs both consoles and streams the second one's picture and
 //! sound; the other PC shows them and sends its controls back.
 //!
 //! ```text
@@ -7,14 +7,18 @@
 //!  host_remote(bind)                            join_remote(address)
 //!   └ thread: RemoteHost::accept  ←── hello ──── thread: RemoteClient::connect
 //!  connected:                                   connected:
-//!   ├ Airwaves: this console restarts on seat 0  └ the emulator thread runs a
-//!   └ "remote-console" thread: console 2 on        RemoteView "core": keys and
-//!     seat 1, keys from the stream,                stylus -> send_input,
-//!     picture + sound -> the stream                screens + sound <- stream
+//!   ├ this console joins the in-process medium   └ the emulator thread runs a
+//!   │  (melonDS: Airwaves seat 0, restarts;        RemoteScreen "core": keys and
+//!   │   Lunaris: ds_net LocalMP instance 0)        stylus -> send_input,
+//!   └ "remote-console" thread: console 2 on        screens + sound <- stream
+//!     the next free instance folder (instance2  File > save / state actions
+//!     when only instance1 runs): its save and     -> Request over TCP, done by
+//!     states; keys from the stream, picture +       the host on console 2
+//!     sound -> the stream; Requests answered
 //!  Stop / Leave / another game ends the session (both sides).
 //! ```
 //!
-//! Why this beats LAN play over a VPN: `melon_remote`'s crate docs.
+//! Why this beats LAN play over a VPN: the `remote` crate's docs.
 use std::{
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
@@ -22,22 +26,21 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
-use ds_common::frontend::lock;
+use ::remote::{Prober, Readiness, RemoteClient, RemoteHost, RemoteStats, Request, Tuning};
+use ds_common::{Instance, Settings, frontend::lock};
 use freya::prelude::*;
-use melon_lan::mp::Airwaves;
-use melon_remote::{Prober, Readiness, RemoteClient, RemoteHost, RemoteStats, Tuning};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backend::{Core, HdJob, PostScale, melon::Melon, push_rgba},
+    backend::{BACKEND, Core, HdJob, PostScale, push_rgba, resample::Resampler},
     dialogs::{field, fold, hint, note, section, stepper},
     frontend::Frontend,
-    lan::MelonLink,
     state::Ctx,
     theme::{self, DANGER, SUCCESS, TEXT_DIM, WARNING},
 };
@@ -45,13 +48,42 @@ use crate::{
 /// The DS frame rate.
 const FRAME_RATE: f64 = 33_513_982.0 / 560_190.0;
 
+/// What both consoles are linked through (kept while hosting).
+#[cfg(feature = "melon")]
+type Medium = melon_lan::mp::Airwaves;
+#[cfg(feature = "lunaris")]
+type Medium = ();
+
+/// The second console's files: the instance folder it saves into.
+#[derive(Clone)]
+struct SecondFiles {
+    rom: PathBuf,
+    instance: Instance,
+    /// Its emulator settings (MAC); melonDS derives its own.
+    #[cfg_attr(feature = "melon", allow(dead_code))]
+    settings: Settings,
+}
+
+impl SecondFiles {
+    fn save(&self) -> PathBuf {
+        self.instance.save_path(&self.rom)
+    }
+
+    fn state(&self, slot: u8) -> Result<PathBuf, String> {
+        let dir = self.instance.root().join("states");
+        BACKEND.state_path(&dir, &self.rom, slot).ok_or_else(|| "No savestates".to_owned())
+    }
+}
+
 /// The hosting side: the stream and the second console's thread.
 struct Hosting {
     stream: Arc<RemoteHost>,
     stop: Arc<AtomicBool>,
     console: Option<JoinHandle<()>>,
-    /// Keeps the airwaves both consoles are on.
-    _air: Airwaves,
+    /// The instance folder console 2 uses (`instanceN`).
+    instance: u32,
+    /// Keeps the medium both consoles are on.
+    _medium: Medium,
 }
 
 impl Drop for Hosting {
@@ -105,6 +137,17 @@ pub struct RemoteView {
     pub hosting: bool,
     pub peer: SocketAddr,
     pub stats: RemoteStats,
+    /// Host: the instance folder the client's console saves into.
+    pub instance: Option<u32>,
+}
+
+/// Where a session stands, for the status bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteState {
+    /// Hosting, nobody joined yet / joining, the host has not answered.
+    Waiting { hosting: bool },
+    /// The other side is there.
+    Connected { hosting: bool, peer: SocketAddr },
 }
 
 /// `ip:port`, or an IP alone on `port`.
@@ -113,11 +156,6 @@ fn parse(text: &str, port: u16) -> Result<SocketAddr, String> {
     text.parse::<SocketAddr>()
         .or_else(|_| text.parse::<IpAddr>().map(|ip| SocketAddr::new(ip, port)))
         .map_err(|_| format!("Not an address: {text:?} (e.g. 192.168.0.10:{port})"))
-}
-
-/// The second console's save, beside the first one's.
-fn second_save(save: &Path) -> PathBuf {
-    save.with_extension("2.sav")
 }
 
 impl Frontend {
@@ -155,6 +193,7 @@ impl Frontend {
     /// If no game runs, a session is up or pending, or `bind` is invalid.
     pub fn host_remote(self: &Arc<Self>, bind: &str) -> Result<(), String> {
         let rom = lock(&self.rom).clone().ok_or("Start a game first")?;
+        self.refuse_remote_with_lan()?;
         self.begin(true, bind, move |front, addr, tuning, cancel| {
             let stream = RemoteHost::accept(addr, tuning, cancel).map_err(|e| e.to_string())?;
             front.serve(&rom, Arc::new(stream))
@@ -234,34 +273,82 @@ impl Frontend {
             })
     }
 
-    /// Host side, once a client said hello: this console restarts on seat 0
-    /// of new airwaves, the second one starts on seat 1 for the stream.
+    /// Host side, once a client said hello: this console joins the
+    /// in-process medium and the second one starts on it for the stream,
+    /// on the next free instance folder (its save, states and MAC).
+    #[cfg_attr(
+        feature = "lunaris",
+        expect(clippy::let_unit_value, clippy::clone_on_copy, reason = "the medium is `()` here")
+    )]
     fn serve(&self, rom: &Path, stream: Arc<RemoteHost>) -> Result<(), String> {
-        let air = Airwaves::new();
-        let link = MelonLink { host: Box::new(air.client(0)), pace: None };
-        self.start_linked(rom, Some(Box::new(link)))?;
+        // Beside this window's own (`<base>/instances/instanceN`).
+        let base =
+            self.instance.root().parent().and_then(Path::parent).unwrap_or_else(|| Path::new("."));
+        let instance = Instance::open_in(base);
+        let number = instance.number();
+        if number == self.instance.number() {
+            return Err("No free instance folder for the second console".to_owned());
+        }
+        let mut settings = Settings::load(&instance.settings_path());
+        if settings.ensure_mac() {
+            settings.save(&instance.settings_path());
+        }
+        instance.import_legacy_save(rom);
+        let files = SecondFiles { rom: rom.to_owned(), instance, settings };
+        log::info!("Remote Desktop: console 2 on instance{number} ({})", files.save().display());
 
-        let save = second_save(&self.instance.save_path(rom));
+        let medium = self.link_main_console(rom)?;
         let stop = Arc::new(AtomicBool::new(false));
-        let (thread_stop, thread_stream) = (Arc::clone(&stop), Arc::clone(&stream));
-        let (seat, rom) = (air.client(1), rom.to_owned());
-        let (booted, boot_result) = std::sync::mpsc::channel();
-        // Built on its own thread: a console is not `Send` (its GL context).
+        let (thread_stop, thread_stream, thread_medium) =
+            (Arc::clone(&stop), Arc::clone(&stream), medium.clone());
+        let (booted, boot_result) = mpsc::channel();
+        // Built on its own thread: a console is not `Send` (melonDS: its GL
+        // context).
         let handle = std::thread::Builder::new()
             .name("remote-console".to_owned())
-            .spawn(move || match Melon::boot(&rom, &save, 1, Some(Box::new(seat)), None) {
-                Ok(mut console) => {
-                    let _ = booted.send(Ok(()));
-                    run_second(&mut console, &thread_stream, &thread_stop);
-                }
-                Err(e) => {
-                    let _ = booted.send(Err(e));
-                }
+            .spawn(move || {
+                run_second(&files, &thread_medium, &thread_stream, &thread_stop, &booted);
             })
             .map_err(|e| e.to_string())?;
         boot_result.recv().map_err(|_| "The remote console stopped".to_owned())??;
-        lock(&self.lan).remote.hosting =
-            Some(Hosting { stream, stop, console: Some(handle), _air: air });
+        lock(&self.lan).remote.hosting = Some(Hosting {
+            stream,
+            stop,
+            console: Some(handle),
+            instance: number,
+            _medium: medium,
+        });
+        Ok(())
+    }
+
+    /// melonDS: this console restarts on seat 0 of new airwaves.
+    #[cfg(feature = "melon")]
+    fn link_main_console(&self, rom: &Path) -> Result<Medium, String> {
+        let air = melon_lan::mp::Airwaves::new();
+        let link = crate::lan::MelonLink { host: Box::new(air.client(0)), pace: None };
+        self.start_linked(rom, Some(Box::new(link)))?;
+        Ok(air)
+    }
+
+    /// Lunaris: this console goes on melonDS's LocalMP medium (`ds_net`) as
+    /// instance 0, without restarting.
+    #[cfg(feature = "lunaris")]
+    fn link_main_console(&self, _rom: &Path) -> Result<Medium, String> {
+        use crate::frontend::Command;
+        self.refuse_remote_with_lan()?;
+        // The backend is process-wide: nothing may be on the medium as it
+        // changes.
+        let _ = self.command(Command::SetLink(None));
+        ds_net::init(ds_net::MpBackend::Local);
+        let link = ds_net::NetLink::new(0).with_stall_budget(Some(Duration::from_millis(100)));
+        self.command(Command::SetLink(Some(Box::new(link)))).map(drop)
+    }
+
+    /// Remote Desktop needs the in-process medium a LAN session holds.
+    fn refuse_remote_with_lan(&self) -> Result<(), String> {
+        if self.lan_session_active() {
+            return Err("Leave the LAN room before hosting Remote Desktop".to_owned());
+        }
         Ok(())
     }
 
@@ -280,6 +367,11 @@ impl Frontend {
                 }) as Box<dyn Core>)
             }),
         )
+    }
+
+    /// The host this window watches, if it is a Remote Desktop client.
+    pub fn remote_client(&self) -> Option<Arc<RemoteClient>> {
+        lock(&self.lan).remote.client.clone()
     }
 
     /// Ends a running session (Stop, another game, Leave): the second
@@ -308,6 +400,21 @@ impl Frontend {
         }
     }
 
+    /// Waiting or connected (`None`: no session), for the status bar.
+    pub fn remote_state(&self) -> Option<RemoteState> {
+        let lan = lock(&self.lan);
+        let r = &lan.remote;
+        let state = if let Some(h) = &r.hosting {
+            Some(RemoteState::Connected { hosting: true, peer: h.stream.remote_addr() })
+        } else if let Some(c) = &r.client {
+            Some(RemoteState::Connected { hosting: false, peer: c.remote_addr() })
+        } else {
+            r.waiting.as_ref().map(|_| RemoteState::Waiting { hosting: r.waiting_host })
+        };
+        drop(lan);
+        state
+    }
+
     /// The session for the dialog, what is pending and the last error.
     pub fn remote_view(&self) -> (Option<RemoteView>, Option<String>, Option<String>) {
         let lan = lock(&self.lan);
@@ -319,12 +426,14 @@ impl Frontend {
                 hosting: true,
                 peer: h.stream.remote_addr(),
                 stats: h.stream.stats(),
+                instance: Some(h.instance),
             })
             .or_else(|| {
                 r.client.as_ref().map(|c| RemoteView {
                     hosting: false,
                     peer: c.remote_addr(),
                     stats: c.stats(),
+                    instance: None,
                 })
             });
         let pending = (r.waiting.as_ref().map(|(w, _)| w.clone()), r.error.clone());
@@ -399,23 +508,118 @@ impl Frontend {
     }
 }
 
-/// The second console's loop (host side): the remote player's controls in,
-/// picture and sound out, at the DS frame rate.
-fn run_second(console: &mut Melon, stream: &RemoteHost, stop: &AtomicBool) {
+/// Boots console 2 on its instance's save, on the medium.
+#[cfg(feature = "melon")]
+fn boot_second(files: &SecondFiles, medium: &Medium) -> Result<Box<dyn Core>, String> {
+    use crate::backend::melon::Melon;
+    let seat = Box::new(medium.client(1));
+    Melon::boot(&files.rom, &files.save(), 1, Some(seat), None)
+        .map(|m| Box::new(m) as Box<dyn Core>)
+}
+
+/// Boots console 2 on its instance's save and settings, as LocalMP
+/// instance 1 (the host console pumps the medium).
+#[cfg(feature = "lunaris")]
+fn boot_second(files: &SecondFiles, _medium: &Medium) -> Result<Box<dyn Core>, String> {
+    let boot = crate::backend::Boot::new(&files.rom, files.save(), files.settings.clone());
+    let mut core = crate::backend::lunaris::boot(&boot)?;
+    core.set_link(Some(Box::new(ds_net::NetLink::new(1).with_pump(false))))?;
+    Ok(core)
+}
+
+/// Carries out a client's request on console 2.
+fn handle_request(
+    core: &mut Option<Box<dyn Core>>,
+    request: &Request,
+    files: &SecondFiles,
+    medium: &Medium,
+) -> Result<Vec<u8>, String> {
+    let running = core.as_mut().ok_or("The remote console is not running")?;
+    match request {
+        Request::ExportSave => {
+            running.flush_save()?;
+            std::fs::read(files.save()).map_err(|_| "The game has not saved yet".to_owned())
+        }
+        Request::SaveState(slot) => running.save_state(&files.state(*slot)?).map(|()| Vec::new()),
+        Request::LoadState(slot) => {
+            let path = files.state(*slot)?;
+            if !path.is_file() {
+                return Err(format!("State {slot} is empty"));
+            }
+            running.load_state(&path).map(|()| Vec::new())
+        }
+        Request::ImportSave(data) => {
+            // As File > Import savefile: the console stops (its save is
+            // written and backed up), the file is copied in, it restarts.
+            let _ = running.flush_save();
+            drop(core.take());
+            let file = files.save().with_extension("import");
+            std::fs::write(&file, ds_emu::normalize_foreign_save(data))
+                .map_err(|e| format!("Cannot write {}: {e}", file.display()))?;
+            let imported = files.instance.import_save(&files.rom, &file);
+            let _ = std::fs::remove_file(&file);
+            imported.map_err(|e| format!("Import failed: {e}"))?;
+            *core = Some(boot_second(files, medium)?);
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Console 2's loop (host side): the remote player's controls in, picture
+/// and sound out, at the DS frame rate; the client's requests in between
+/// frames.
+fn run_second(
+    files: &SecondFiles,
+    medium: &Medium,
+    stream: &RemoteHost,
+    stop: &AtomicBool,
+    booted: &mpsc::Sender<Result<(), String>>,
+) {
+    let mut core = match boot_second(files, medium) {
+        Ok(core) => {
+            let _ = booted.send(Ok(()));
+            Some(core)
+        }
+        Err(e) => {
+            let _ = booted.send(Err(e));
+            return;
+        }
+    };
     let frame_time = Duration::from_secs_f64(1.0 / FRAME_RATE);
+    let rate = ds_spu::OUTPUT_RATE_HZ.round() as u32;
     let mut next = Instant::now();
-    let mut audio = Vec::new();
+    let (mut audio, mut rgba, mut pixels) = (Vec::new(), Vec::new(), Vec::new());
     let mut frames = 0_u32;
     while !stop.load(Ordering::Relaxed) {
+        while let Some(pending) = stream.take_request() {
+            let result = handle_request(&mut core, &pending.request, files, medium);
+            if let Err(e) = &result {
+                log::warn!("Remote Desktop request {:?}: {e}", request_name(&pending.request));
+            }
+            pending.reply(result);
+        }
+        let Some(console) = core.as_mut() else {
+            break;
+        };
         let input = stream.input();
         let touch = input.touch.map(|(x, y)| (i32::from(x), i32::from(y)));
         console.run_frame(input.keys, touch);
-        if let Some((top, bottom)) = console.screens() {
+        rgba.clear();
+        console.frame(&mut rgba);
+        pixels.clear();
+        pixels.extend(
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| (u32::from(p[0]) << 16) | (u32::from(p[1]) << 8) | u32::from(p[2])),
+        );
+        if pixels.len() == 256 * 192 * 2 {
+            let (top, bottom) = pixels.split_at(256 * 192);
             stream.send_frame(top, bottom);
         }
         audio.clear();
-        console.take_raw_audio(&mut audio);
-        stream.send_audio(&audio);
+        console.take_audio(&mut audio);
+        stream.send_audio_at(&audio, rate);
         frames += 1;
         if frames.is_multiple_of(60)
             && let Err(e) = console.flush_save()
@@ -430,8 +634,20 @@ fn run_second(console: &mut Melon, stream: &RemoteHost, stop: &AtomicBool) {
             next = now;
         }
     }
-    if let Err(e) = console.flush_save() {
+    if let Some(console) = core.as_mut()
+        && let Err(e) = console.flush_save()
+    {
         log::error!("Remote console save: {e}");
+    }
+}
+
+/// For the log.
+const fn request_name(request: &Request) -> &'static str {
+    match request {
+        Request::ImportSave(_) => "import save",
+        Request::ExportSave => "export save",
+        Request::SaveState(_) => "save state",
+        Request::LoadState(_) => "load state",
     }
 }
 
@@ -441,7 +657,7 @@ struct RemoteScreen {
     /// The latest picture (0xAARRGGBB, top then bottom).
     screens: Vec<u32>,
     /// From the stream's audio rate to the output's (made on first sound).
-    resampler: Option<(u32, crate::backend::melon::Resampler)>,
+    resampler: Option<(u32, Resampler)>,
 }
 
 impl Core for RemoteScreen {
@@ -462,7 +678,7 @@ impl Core for RemoteScreen {
         }
         if self.resampler.as_ref().is_none_or(|(r, _)| *r != rate) {
             let step = f64::from(rate) / ds_spu::OUTPUT_RATE_HZ;
-            self.resampler = Some((rate, crate::backend::melon::Resampler::new(step)));
+            self.resampler = Some((rate, Resampler::new(step)));
         }
         if let Some((_, resampler)) = &mut self.resampler {
             resampler.process(&samples, out);
@@ -483,6 +699,7 @@ impl Core for RemoteScreen {
 
     fn set_cheats(&mut self, _codes: Vec<Vec<u32>>) {}
 
+    /// The save is the host's: nothing to write here.
     fn flush_save(&mut self) -> Result<(), String> {
         Ok(())
     }
@@ -554,21 +771,26 @@ impl Component for RemotePanel {
             .child("Stop Remote Desktop");
 
         if let Some(v) = view {
-            let role = if v.hosting {
-                "hosting: this PC runs both consoles, the second is streamed"
-            } else {
-                "showing the host's second console"
+            let role = match v.instance {
+                Some(n) => format!(
+                    "hosting: this PC runs both consoles, the second (instance{n}: its save                      and states) is streamed"
+                ),
+                None => "showing the host's second console".to_owned(),
             };
             return out
+                .child(field("State", state_badge(true, "● Connected")))
                 .child(field("Session", rect().child(format!("{role} · peer {}", v.peer))))
                 .child(stats_rows(&v.stats))
-                .child(note(
-                    "The client owns nothing: the game, its save and its speed are the host's.",
-                ))
+                .child(note(if v.hosting {
+                    "The client's File > save, import / export and savestate slots act on the                      second console here."
+                } else {
+                    "The game is the host's: File > Import / Export savefile and the savestate                      slots act on the host's second console (its instance folder)."
+                }))
                 .child(rect().margin((8., 0., 0., 0.)).child(stop));
         }
         if let Some(w) = waiting {
             return out
+                .child(field("State", state_badge(false, "● Waiting for the other side")))
                 .child(rect().padding((8., 0.)).color(theme::rgb(WARNING)).child(w))
                 .child(rect().child(stop))
                 .child(note("Either side may start first; it waits until the other answers."));
@@ -616,6 +838,19 @@ impl Component for RemotePanel {
         ))
         .child(TuningPart)
     }
+}
+
+/// "Connected" (green) or "Waiting" (amber).
+fn state_badge(connected: bool, text: &str) -> Element {
+    let color = if connected { SUCCESS } else { WARNING };
+    rect()
+        .padding((2., 9.))
+        .corner_radius(9.)
+        .background(theme::rgba(color, 38))
+        .color(theme::rgb(color))
+        .font_size(12.)
+        .child(text.to_owned())
+        .into_element()
 }
 
 /// The live session's numbers (melon_egui's grid).

@@ -29,7 +29,7 @@ impl Guest {
     /// * `start_frame` — the frame count to start at. It is the wifi clock's
     ///   epoch, so it must match the console being joined.
     /// * `stream` — Remote Desktop only: this console's picture and sound go
-    ///   out over it and its controls come back from it ([`crate::remote`]).
+    ///   out over it and its controls come back from it ([`::remote`]).
     #[expect(
         clippy::too_many_arguments,
         reason = "each is a distinct decision the caller makes once, at boot; \

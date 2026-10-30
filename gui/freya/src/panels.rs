@@ -8,7 +8,7 @@ use std::{
 use bytes::Bytes;
 use ds_common::{
     frontend::{file_name, rom_paths},
-    menu::Action,
+    menu::{Action, Window},
     rom_info::{ICON_SIZE, RomInfo},
 };
 use freya::{elements::image::ImageHandle, engine::prelude::AlphaType, prelude::*};
@@ -272,16 +272,109 @@ impl Component for StatusBar {
         let mut error_state = ctx.error;
 
         let (state, color) = match (status.running, status.paused) {
-            (true, true) => ("Paused", WARNING),
-            (true, false) => ("Running", SUCCESS),
+            (true, true) => ("Paused · Resume", WARNING),
+            (true, false) => ("Running · Pause", SUCCESS),
             (false, _) => ("Idle", TEXT_FAINT),
         };
-        // Lunaris and melonDS render at 1x whatever the setting.
+        // Remote Desktop changes on its own threads: looked at twice a second.
+        let mut tick = use_state(|| 0_u32);
+        use_hook(move || {
+            spawn(async move {
+                loop {
+                    async_io::Timer::after(std::time::Duration::from_millis(500)).await;
+                    *tick.write() += 1;
+                }
+            });
+        });
+        let _ = tick.read();
+        let limited = ctx.config.read().limit_framerate;
+        // Every item is a button changing what it shows (or opening where it
+        // is set).
+        let remote = ctx.front.remote_state().map(|r| {
+            let (text, color) = match r {
+                crate::remote::RemoteState::Waiting { hosting: true } => {
+                    ("⇄ Remote: waiting for a client".to_owned(), WARNING)
+                }
+                crate::remote::RemoteState::Waiting { hosting: false } => {
+                    ("⇄ Remote: connecting…".to_owned(), WARNING)
+                }
+                crate::remote::RemoteState::Connected { hosting, peer } => (
+                    format!("⇄ Remote: {} {peer}", if hosting { "client" } else { "host" }),
+                    SUCCESS,
+                ),
+            };
+            button(&ctx, chip(text, color), Action::Open(Window::Multiplayer))
+        });
+        let state_button = button(
+            &ctx,
+            chip(format!("● {state}"), color),
+            if status.running { Action::TogglePause } else { Action::OpenRom },
+        );
+        let game = button(
+            &ctx,
+            label()
+                .text(status.rom.clone().unwrap_or_else(|| "No game · Open ROM…".to_owned()))
+                .max_lines(1)
+                .text_overflow(TextOverflow::Ellipsis)
+                .into_element(),
+            if status.running { Action::Open(Window::RomInfo) } else { Action::OpenRom },
+        );
+        let fps = status.running.then(|| {
+            let text = if limited {
+                format!("{:.1} fps", status.fps)
+            } else {
+                format!("{:.1} fps · unlimited", status.fps)
+            };
+            button(&ctx, chip(text, SUCCESS), Action::ToggleLimitFramerate)
+        });
+        let volume = ctx.config.read().volume;
+        let mut popup = ctx.volume_popup;
+        let volume = rect()
+            .child(
+                rect()
+                    .on_press(move |e: Event<PressEventData>| {
+                        e.stop_propagation();
+                        popup.toggle();
+                    })
+                    .child(chip(
+                        if volume == 0 { "♪ muted".to_owned() } else { format!("♪ {volume}%") },
+                        if volume == 0 { TEXT_FAINT } else { ACCENT },
+                    )),
+            )
+            .maybe_child(popup().then(|| {
+                rect().width(Size::px(0.)).height(Size::px(0.)).child(
+                    rect()
+                        .position(Position::new_absolute().top(6.).right(0.))
+                        .layer(Layer::Overlay)
+                        .child(VolumePanel),
+                )
+            }))
+            .into_element();
+        let speed =
+            button(&ctx, chip(ds_common::speed::label(view.speed), ACCENT), Action::CycleSpeed);
+        // Lunaris and melonDS render above 1x; the chip steps 1x..4x.
         let scale = if BACKEND.upscales() { view.render_scale() } else { 1 };
-        let mut res = format!("{}×{}", 256 * u32::from(scale), 192 * u32::from(scale));
-        if view.xbrz && scale >= 2 {
-            res.push_str(" · xBRZ");
-        }
+        let res = format!("{}×{}", 256 * u32::from(scale), 192 * u32::from(scale));
+        let next_scale = scale % ds_common::view::MAX_RENDER_SCALE + 1;
+        let res = button(&ctx, chip(res, theme::ACCENT_2), Action::SetRenderScale(next_scale));
+        let xbrz = BACKEND.upscales().then(|| {
+            let (text, color) = if view.xbrz && scale >= 2 {
+                ("xBRZ on", theme::ACCENT_2)
+            } else {
+                ("xBRZ off", TEXT_FAINT)
+            };
+            button(&ctx, chip(text.to_owned(), color), Action::ToggleXbrz)
+        });
+        let backend = button(
+            &ctx,
+            chip(format!("⚙ {BACKEND}"), theme::ACCENT_2),
+            Action::Open(Window::EmuSettings),
+        );
+        let instance = button(
+            &ctx,
+            chip(format!("instance{}", status.instance), TEXT_FAINT),
+            Action::OpenDirectory,
+        );
 
         rect()
             .horizontal()
@@ -293,7 +386,8 @@ impl Component for StatusBar {
             .spacing(8.)
             .font_size(11.5)
             .color(theme::rgb(TEXT_DIM))
-            .child(chip(format!("● {state}"), color))
+            .child(state_button)
+            .maybe_child(remote)
             .child(match error {
                 Some(e) => rect()
                     .width(Size::flex(1.))
@@ -309,20 +403,79 @@ impl Component for StatusBar {
                             .child("✕"),
                     )
                     .into_element(),
-                None => rect()
-                    .width(Size::flex(1.))
-                    .child(
-                        label()
-                            .text(status.rom.clone().unwrap_or_else(|| "No game".to_owned()))
-                            .max_lines(1)
-                            .text_overflow(TextOverflow::Ellipsis),
-                    )
-                    .into_element(),
+                None => rect().width(Size::flex(1.)).child(game).into_element(),
             })
-            .maybe_child(status.running.then(|| chip(format!("{:.1} fps", status.fps), SUCCESS)))
-            .child(chip(ds_common::speed::label(view.speed), ACCENT))
-            .child(chip(res, theme::ACCENT_2))
-            .child(chip(format!("⚙ {}", BACKEND), theme::ACCENT_2))
-            .child(chip(format!("instance{}", status.instance), TEXT_FAINT))
+            .maybe_child(fps)
+            .child(volume)
+            .child(speed)
+            .child(res)
+            .maybe_child(xbrz)
+            .child(backend)
+            .child(instance)
     }
+}
+
+/// The status bar's volume popover (as the titlebar's Appearance).
+#[derive(PartialEq)]
+struct VolumePanel;
+
+impl Component for VolumePanel {
+    fn render(&self) -> impl IntoElement {
+        let ctx = use_consume::<Ctx>();
+        let volume = ctx.config.read().volume;
+        let (slider_ctx, mute_ctx) = (ctx.clone(), ctx.clone());
+        let mut popup = ctx.volume_popup;
+        rect()
+            .width(Size::px(240.))
+            .padding(14.)
+            .spacing(10.)
+            .corner_radius(14.)
+            .background(theme::rgba(theme::BODY, 245))
+            .border(Border::new().width(1.).fill(theme::hairline()))
+            .shadow(Shadow::new().y(8.).blur(24.).color((0, 0, 0, 120)))
+            .color(theme::rgb(theme::TEXT))
+            .font_size(12.5)
+            .on_press(|e: Event<PressEventData>| e.stop_propagation())
+            .child(
+                rect()
+                    .horizontal()
+                    .content(Content::Flex)
+                    .width(Size::fill())
+                    .child(
+                        rect().width(Size::flex(1.)).font_weight(FontWeight::BOLD).child("Volume"),
+                    )
+                    .child(rect().color(theme::rgb(TEXT_DIM)).child(format!("{volume}%")))
+                    .child(
+                        rect()
+                            .margin((0., 0., 0., 10.))
+                            .color(theme::rgb(TEXT_FAINT))
+                            .on_press(move |_| popup.set(false))
+                            .child("✕"),
+                    ),
+            )
+            .child(
+                Slider::new(move |v: f64| {
+                    slider_ctx.update_config(|c| c.volume = v.round().clamp(0., 100.) as u8);
+                })
+                .value(f64::from(volume))
+                .size(Size::fill()),
+            )
+            .child(
+                Button::new()
+                    .on_press(move |_| {
+                        mute_ctx.update_config(|c| c.volume = if c.volume == 0 { 80 } else { 0 });
+                    })
+                    .child(if volume == 0 { "Unmute" } else { "Mute" }),
+            )
+            .into_element()
+    }
+}
+
+/// `content` as a button running `action` (as the menu entry would).
+fn button(ctx: &Ctx, content: Element, action: Action) -> Element {
+    let ctx = ctx.clone();
+    rect()
+        .on_press(move |_| crate::actions::run(&ctx, action.clone()))
+        .child(content)
+        .into_element()
 }

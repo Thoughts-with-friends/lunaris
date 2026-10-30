@@ -212,13 +212,11 @@ pub fn note(text: &str) -> Element {
 }
 
 /// A dim hint beside a control.
-#[cfg(feature = "melon")]
 pub fn hint(text: &str) -> Element {
     rect().font_size(11.5).color(theme::rgb(TEXT_DIM)).child(text.to_owned()).into_element()
 }
 
 /// `−  value  +`, then a hint.
-#[cfg(feature = "melon")]
 pub fn stepper(
     value: String,
     down: impl FnMut(Event<PressEventData>) + 'static,
@@ -237,7 +235,6 @@ pub fn stepper(
 }
 
 /// A `▸ title` line that opens and closes what follows it.
-#[cfg(feature = "melon")]
 pub fn fold(mut open: State<bool>, title: &str) -> Element {
     rect()
         .horizontal()

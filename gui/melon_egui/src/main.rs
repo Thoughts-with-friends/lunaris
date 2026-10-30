@@ -97,7 +97,6 @@ use melon_lan as lan;
 mod logger;
 use melon_lan::mp;
 mod pad;
-use melon_remote as remote;
 mod selftest;
 mod speed;
 mod ui;

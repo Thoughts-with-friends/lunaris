@@ -58,6 +58,8 @@ mod imp {
         /// Session generation the running core's link was made in.
         linked: Option<u64>,
         pub error: Option<String>,
+        /// Remote Desktop (`crate::remote`).
+        pub remote: crate::remote::Remote,
     }
 
     impl Lan {
@@ -151,8 +153,16 @@ mod imp {
             Ok(())
         }
 
-        /// Leaves the session and removes the link from a running core.
+        /// Whether a LAN session is up (Remote Desktop needs the local
+        /// medium instead).
+        pub fn lan_session_active(&self) -> bool {
+            lock(&self.lan).in_session()
+        }
+
+        /// Leaves the session and removes the link from a running core (and
+        /// ends Remote Desktop, whose link goes with the core too).
         pub fn leave_room(&self) {
+            self.drop_remote_session();
             let mut lan = lock(&self.lan);
             let Some(session) = &mut lan.session else {
                 return;
@@ -422,7 +432,7 @@ impl Component for LanView {
                 );
             }
         }
-        out
+        out.child(section("remote desktop")).child(crate::remote::RemotePanel)
     }
 }
 

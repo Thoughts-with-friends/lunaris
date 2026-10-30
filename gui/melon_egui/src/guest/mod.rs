@@ -37,7 +37,9 @@ use std::{
 
 use melonds::{Cheat, SCREEN_HEIGHT, SCREEN_WIDTH};
 
-use crate::{emu::Emu, i18n::I18nKey as K, mp::Client, remote::RemoteHost};
+use ::remote::RemoteHost;
+
+use crate::{emu::Emu, i18n::I18nKey as K, mp::Client};
 
 mod command;
 mod handle;

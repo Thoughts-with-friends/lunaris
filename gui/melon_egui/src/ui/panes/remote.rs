@@ -3,7 +3,7 @@
 //! Drawn inside the wireless dialog, immediately below the LAN link quality —
 //! because a link quality that reads badly is exactly what sends someone
 //! looking for this, and for a link past a few milliseconds no LAN tuning can
-//! help. See [`crate::remote`].
+//! help. See [`::remote`].
 
 use super::*;
 use crate::i18n::I18nKey as K;
@@ -42,7 +42,7 @@ pub(super) fn partner(app: &MelonEgui, ui: &mut egui::Ui) {
 }
 
 /// The live session's numbers: latency, video and audio bit rates, counters.
-fn session_stats(app: &MelonEgui, ui: &mut egui::Ui, stats: &crate::remote::RemoteStats) {
+fn session_stats(app: &MelonEgui, ui: &mut egui::Ui, stats: &::remote::RemoteStats) {
     let tr = app.i18n();
     ui.separator();
     egui::Grid::new("remote-stats").striped(true).show(ui, |ui| {
@@ -77,7 +77,7 @@ fn session_stats(app: &MelonEgui, ui: &mut egui::Ui, stats: &crate::remote::Remo
             &[
                 &stats.audio_rate,
                 &format!("{:.2}", stats.audio_megabits_per_second()),
-                &format!("{:.2}", crate::remote::RemoteStats::audio_megabits_per_second_raw()),
+                &format!("{:.2}", ::remote::RemoteStats::audio_megabits_per_second_raw()),
             ],
         ));
         ui.end_row();
@@ -137,7 +137,7 @@ fn session_settings(app: &mut MelonEgui, ui: &mut egui::Ui) {
                 ui.label(tr.t(K::Port));
             });
             if ui.button(tr.t(K::ResetToDefaults)).clicked() {
-                *tuning = crate::remote::Tuning::default();
+                *tuning = ::remote::Tuning::default();
             }
             app.remote_tuning.normalize();
         });

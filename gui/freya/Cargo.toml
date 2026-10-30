@@ -52,8 +52,8 @@ chrono = { version = "0.4", optional = true }
 melonds = { git = "https://github.com/Thoughts-with-friends/melonds-rs.git", rev = "9d44665", optional = true }
 # melon_egui's LAN transport.
 melon_lan = { path = "../melon_lan", optional = true }
-# melon_egui's Remote Desktop stream.
-melon_remote = { path = "../melon_remote", optional = true }
+# melon_egui's Remote Desktop stream (core-independent; both backends).
+remote = { path = "../remote", optional = true }
 
 # xBRZ for the cores without their own (Lunaris, melonDS), as the egui GUIs.
 xbrz-rs = { version = "0.1.0", optional = true }
@@ -66,13 +66,21 @@ xbrz-rs = { version = "0.1.0", optional = true }
 # or `cargo xtask build --gui freya --backend <lunaris|melon> --release`.
 [features]
 default = ["lunaris"]
-lunaris = ["dep:lunaris_gui_common", "dep:ds_net_gui", "dep:ds_gpu", "dep:ds_net"]
+lunaris = [
+    "dep:lunaris_gui_common",
+    "dep:ds_net_gui",
+    "dep:ds_gpu",
+    "dep:ds_net",
+    "dep:remote",
+    "dep:xbrz-rs",
+    "dep:ds_spu",
+]
 melon = [
     "dep:melonds",
     "dep:chrono",
     "dep:ds_spu",
     "dep:melon_lan",
-    "dep:melon_remote",
+    "dep:remote",
     "dep:xbrz-rs",
     "dep:glutin",
     "dep:raw-window-handle",

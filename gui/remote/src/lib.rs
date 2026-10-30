@@ -37,8 +37,9 @@
 //! host machine and far better than 29.6 fps with two rounds in five failing.
 //!
 //! Because every console is on the host, **the host holds all of it**: saves,
-//! savestates, cheats, instance directories. A client owns nothing and is asked
-//! for nothing.
+//! savestates, cheats, instance directories. A client owns nothing; it may
+//! ask the host to import or export the streamed console's save and to use
+//! its savestate slots ([`control`]).
 //!
 //! # What is in here
 //!
@@ -54,6 +55,7 @@
 //! | [`session`] | the socket, the threads, and the shared state; both ends ping |
 //! | [`probe`] | "is anyone hosting there, and are they free?" before a session |
 //! | [`host`] / [`client`] | the two ends |
+//! | [`control`] | save import / export and savestate slots, over TCP |
 //! | [`tuning`] | the knobs, and their bounds |
 //!
 //! # The video codec, and why it needs no acknowledgements
@@ -92,6 +94,7 @@
 pub mod audio;
 pub mod client;
 pub mod colour;
+pub mod control;
 pub mod decoder;
 pub mod encoder;
 pub mod host;
@@ -106,6 +109,7 @@ pub mod wire;
 mod tests;
 
 pub use client::RemoteClient;
+pub use control::{Pending, Request};
 pub use host::RemoteHost;
 pub use probe::{Prober, Readiness};
 pub use stats::RemoteStats;
@@ -113,7 +117,7 @@ pub use tuning::Tuning;
 #[cfg(test)]
 pub use {decoder::Decoder, encoder::Encoder};
 
-/// One DS screen, as `melonds::SCREEN_WIDTH` / `SCREEN_HEIGHT`.
+/// One DS screen.
 pub const SCREEN_WIDTH: usize = 256;
 /// See [`SCREEN_WIDTH`].
 pub const SCREEN_HEIGHT: usize = 192;
@@ -128,8 +132,9 @@ pub const FRAME_PIXELS: usize = SCREEN_WIDTH * SCREEN_HEIGHT * 2;
 /// codec exists to avoid.
 pub const MAX_DATAGRAM: usize = 1200;
 
-/// The rate the console's SPU hands samples over at.
-/// melonDS's SPU rate (melon_egui's `audio::SPU_SAMPLE_RATE`).
+/// The rate melonDS's SPU hands samples over at (melon_egui's
+/// `audio::SPU_SAMPLE_RATE`); other cores pass theirs to
+/// [`RemoteHost::send_audio_at`].
 pub const CONSOLE_SAMPLE_RATE: u32 = 48_000;
 
 /// The DS's video frame rate (melon_egui's `emu::FRAME_RATE`).

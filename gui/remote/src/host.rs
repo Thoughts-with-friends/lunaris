@@ -16,6 +16,7 @@ use std::{
 use super::{
     RemoteStats, Tuning,
     audio::Downsampler,
+    control::{ControlServer, Pending},
     encoder::{Encoder, Pacer},
     session::{self, Session},
     wire::{self, Input},
@@ -37,6 +38,9 @@ pub struct RemoteHost {
     video: Mutex<Video>,
     audio: Mutex<Downsampler>,
     tuning: Tuning,
+    /// The client's save / savestate requests (`None`: the TCP port could
+    /// not be bound; the stream works without them).
+    control: Option<ControlServer>,
 }
 
 struct Video {
@@ -61,8 +65,12 @@ impl RemoteHost {
     ) -> io::Result<Self> {
         tuning.normalize();
         let socket = UdpSocket::bind(bind_addr)?;
+        let control_addr = SocketAddr::new(bind_addr.ip(), socket.local_addr()?.port());
         let client = session::accept_hello(&socket, cancel)?;
         let session = Session::start(socket, client, tuning)?;
+        let control = ControlServer::start(control_addr, client.ip())
+            .inspect_err(|e| log::warn!("Remote Desktop: no save requests ({e})"))
+            .ok();
         Ok(Self {
             session,
             video: Mutex::new(Video {
@@ -72,6 +80,7 @@ impl RemoteHost {
             }),
             audio: Mutex::new(Downsampler::new()),
             tuning,
+            control,
         })
     }
 
@@ -115,13 +124,18 @@ impl RemoteHost {
     /// by the client — see [`super::audio`] for why that is where the quality
     /// is kept.
     pub fn send_audio(&self, samples: &[i16]) {
+        self.send_audio_at(samples, super::CONSOLE_SAMPLE_RATE);
+    }
+
+    /// [`Self::send_audio`] for a console whose sound is at `rate` Hz.
+    pub fn send_audio_at(&self, samples: &[i16], rate: u32) {
         if !self.tuning.audio || samples.is_empty() {
             return;
         }
         let mut reduced = Vec::with_capacity(samples.len());
         self.audio.lock().unwrap_or_else(|e| e.into_inner()).run(
             samples,
-            super::CONSOLE_SAMPLE_RATE,
+            rate,
             self.tuning.audio_rate,
             &mut reduced,
         );
@@ -156,6 +170,13 @@ impl RemoteHost {
     #[must_use]
     pub fn input(&self) -> Input {
         self.session.input()
+    }
+
+    /// The client's next save / savestate request, for the streamed
+    /// console's thread to carry out and answer.
+    #[must_use]
+    pub fn take_request(&self) -> Option<Pending> {
+        self.control.as_ref().and_then(ControlServer::take)
     }
 
     /// The address this end is bound to.

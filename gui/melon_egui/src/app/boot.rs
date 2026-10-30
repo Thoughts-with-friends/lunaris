@@ -94,7 +94,7 @@ impl MelonEgui {
             remote_pending: None,
             remote_cancel: None,
             remote_pending_host: false,
-            remote_probe: crate::remote::Prober::start()
+            remote_probe: ::remote::Prober::start()
                 .inspect_err(|e| log::warn!("no Remote Desktop prober: {e}"))
                 .ok(),
             remote_readiness: Notice::default(),

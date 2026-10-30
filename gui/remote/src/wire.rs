@@ -142,7 +142,7 @@ pub fn decode_audio(bytes: &[u8]) -> Option<(u32, Vec<i16>)> {
 /// lost, and a differential protocol would then hold the button down for good.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Input {
-    /// The `melonds::keys` bitmask.
+    /// The DS button bitmask (`melonds::keys` / `ds_common::emu_thread::key`).
     pub keys: u32,
     /// Where the stylus is, or `None` for lifted.
     pub touch: Option<(u16, u16)>,

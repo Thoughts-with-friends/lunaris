@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "ds_bios"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "serde",
@@ -1410,12 +1410,11 @@ dependencies = [
 
 [[package]]
 name = "ds_cartridge"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "serde",
  "serde-big-array",
- "snafu",
 ]
 
 [[package]]
@@ -1436,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "ds_cpu"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "serde",
@@ -1445,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "ds_emu"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bincode",
  "ds_bios",
@@ -1460,19 +1459,18 @@ dependencies = [
  "log",
  "serde",
  "serde-big-array",
- "snafu",
 ]
 
 [[package]]
 name = "ds_example"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "ds_gpu"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ds_interrupt",
  "ds_mem_addr",
@@ -1485,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "ds_interrupt"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde-big-array",
@@ -1493,14 +1491,14 @@ dependencies = [
 
 [[package]]
 name = "ds_mem_addr"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "ds_net"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ds_bios",
  "ds_emu",
@@ -1512,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "ds_net_gui"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ds_net",
  "log",
@@ -1520,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "ds_peripherals"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "ds_interrupt",
@@ -1532,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "ds_spu"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde-big-array",
@@ -1936,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "free_bios"
-version = "0.8.0"
+version = "0.9.0"
 
 [[package]]
 name = "freya"
@@ -2562,7 +2560,7 @@ checksum = "08c0a42eb299ebb7ec6b9161489e5bf132603a34ca12cecadb8490937aa0492a"
 
 [[package]]
 name = "i18n_derive"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -3094,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "ds_net",
  "ds_net_gui",
@@ -3115,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_freya"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "async-io",
  "bytes",
@@ -3133,9 +3131,9 @@ dependencies = [
  "log",
  "lunaris_gui_common",
  "melon_lan",
- "melon_remote",
  "melonds",
  "raw-window-handle",
+ "remote",
  "rfd 0.16.1",
  "serde",
  "serde_json",
@@ -3146,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_gui_common"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cpal 0.15.3",
  "ds_bios",
@@ -3164,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_rom_library"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "egui",
 ]
@@ -3208,7 +3206,7 @@ dependencies = [
 
 [[package]]
 name = "melon_egui"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "cpal 0.13.5",
  "eframe",
@@ -3222,9 +3220,9 @@ dependencies = [
  "log",
  "lunaris_rom_library",
  "melon_lan",
- "melon_remote",
  "melonds",
  "pollster 1.0.1",
+ "remote",
  "rfd 0.14.1",
  "ringbuf",
  "serde",
@@ -3236,16 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "melon_lan"
-version = "0.8.0"
-dependencies = [
- "log",
- "melonds",
- "serde",
-]
-
-[[package]]
-name = "melon_remote"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "melonds",
@@ -4845,6 +4834,14 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "remote"
+version = "0.9.0"
+dependencies = [
+ "log",
+ "serde",
+]
 
 [[package]]
 name = "renderdoc-sys"
@@ -6844,7 +6841,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.8.0"
+version = "0.9.0"
 
 [[package]]
 name = "y4m"

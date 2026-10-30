@@ -128,7 +128,7 @@ impl Audio {
     ///
     /// Remote Desktop sends its sound decimated, to keep it from being a third
     /// of the link's bandwidth, and names the rate in every datagram (see
-    /// [`crate::remote::audio`]). Upsampling it back here — rather than on the
+    /// [`::remote::audio`]). Upsampling it back here — rather than on the
     /// host, before it is sent — is the whole saving, and costs nothing extra:
     /// [`Resampler`] was already interpolating to the device rate, so it simply
     /// takes a different step.
