@@ -20,15 +20,6 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
 name = "accesskit"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
-dependencies = [
- "uuid",
-]
-
-[[package]]
-name = "accesskit"
 version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e883d1d28c5fd5568c79ed2d2bd48d9f2fd3945c8974ed0f53690ceddb051be"
@@ -42,7 +33,7 @@ version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24f5baf62e34a4a6c30e3d697e4782f821a7337049c44c3b40576a27dfbb580d"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_consumer",
  "atspi-common",
  "phf",
@@ -56,7 +47,7 @@ version = "0.39.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3da8f27636015191b2264ee1df681503170a632cafd832fdc1edfdd4e3a2fd3"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "hashbrown 0.17.1",
 ]
 
@@ -66,7 +57,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5280724673bbfa8b30a838c013500b719392989be3b97c5a9964062c252c232"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_consumer",
  "hashbrown 0.17.1",
  "objc2 0.5.3",
@@ -80,7 +71,7 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "123828ceeec755b05255e3976cb0852993202de98a0626c97dd8d34246991f84"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_consumer",
  "hashbrown 0.17.1",
  "objc2 0.5.3",
@@ -94,7 +85,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30d5192871228c54f1b0fb4a85cef000e11a3804f25d2165f14afa0daa67f3f6"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_atspi_common",
  "async-channel",
  "async-executor",
@@ -112,7 +103,7 @@ version = "0.35.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "498668b90da9995302a0055aaecad4756932333da2ddef6baee1c00844c430fc"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_consumer",
  "hashbrown 0.17.1",
  "static_assertions",
@@ -126,7 +117,7 @@ version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd4ab4437b520ff03088fbe48676a11e7d44a929535e64b31432c1073e48dbcc"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_ios",
  "accesskit_macos",
  "accesskit_unix",
@@ -1914,13 +1905,13 @@ dependencies = [
 
 [[package]]
 name = "free_bios"
-version = "0.7.0"
+version = "0.7.1"
 
 [[package]]
 name = "freya"
-version = "0.5.0-rc.10"
+version = "0.5.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8f34f8b61f48c069356991e156efe1ef15f415a4fa90f117c3ad3fa415b637c"
+checksum = "86a157cca36cf2009dac4473da2f55141bcf8ab85e4e4b749af647ea36227220"
 dependencies = [
  "cfg-if",
  "freya-android",
@@ -1988,7 +1979,7 @@ version = "0.5.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05749815dce31334be55f19426c3562c30eddff68ef94fd38acb25ee7057c8c"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "anyhow",
  "async-lock",
  "bytes",
@@ -2011,7 +2002,7 @@ version = "0.5.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69bb946f2c60bfaa0b472945495589fbd7b72e1dbeed4e6a7a60af482116ff20"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "async-io",
  "bitflags 2.13.2",
  "blocking",
@@ -2126,11 +2117,11 @@ dependencies = [
 
 [[package]]
 name = "freya-testing"
-version = "0.5.0-rc.10"
+version = "0.5.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5998006ec254258acd419b7eb477b1cceece2e075a0b8c9fe44023e22f94fc2d"
+checksum = "139d4988bc276b418b52050e41dd3daf677b9916726cfaaf88626a770f56f5c5"
 dependencies = [
- "accesskit 0.24.1",
+ "accesskit",
  "freya-clipboard",
  "freya-components",
  "freya-core",
@@ -2146,7 +2137,7 @@ version = "0.5.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2b550e02fe98b42fc7525156dd0de53874e94d80eef773fd0648df3c5eb66a7"
 dependencies = [
- "accesskit 0.25.2",
+ "accesskit",
  "accesskit_winit",
  "ash",
  "ash-window",
@@ -2572,7 +2563,7 @@ checksum = "08c0a42eb299ebb7ec6b9161489e5bf132603a34ca12cecadb8490937aa0492a"
 
 [[package]]
 name = "i18n_derive"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -3154,7 +3145,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "eframe",
  "egui",
@@ -3174,7 +3165,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_freya"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-io",
  "bytes",
@@ -3205,7 +3196,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_gui_common"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "free_bios",
  "nds-core",
@@ -3235,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_net"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "nds-core",
  "rusty_enet",
@@ -3243,7 +3234,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_rom_library"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "egui",
 ]
@@ -3287,7 +3278,7 @@ dependencies = [
 
 [[package]]
 name = "melon_egui"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "cpal 0.13.5",
  "eframe",
@@ -3315,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "melon_lan"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "log",
  "melonds",
@@ -3324,7 +3315,7 @@ dependencies = [
 
 [[package]]
 name = "melon_remote"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "log",
  "melonds",
@@ -6975,7 +6966,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.7.0"
+version = "0.7.1"
 
 [[package]]
 name = "y4m"

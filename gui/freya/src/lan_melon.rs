@@ -499,9 +499,9 @@ impl Component for LinkTuning {
                     .horizontal()
                     .spacing(10.)
                     .cross_align(Alignment::Center)
-                    .child(Switch::new().toggled(t.pace_to_link).on_toggle(move |()| {
-                        pace_set(&|t: &mut Tuning| t.pace_to_link ^= true);
-                    }))
+                    .child(Switch::new(WritableSetter::new(t.pace_to_link, move |on: bool| {
+                        pace_set(&move |t: &mut Tuning| t.pace_to_link = on);
+                    })))
                     .child(hint("off: 59.83 fps, rounds the link misses are dropped")),
             ))
             .child(

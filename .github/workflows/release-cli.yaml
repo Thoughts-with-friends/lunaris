@@ -23,6 +23,26 @@ jobs:
             app_name: melon_egui
             features: release
 
+          # freya: the core is chosen at build time, one archive per core
+          # (each holds `lunaris_freya[.exe]`).
+          - package: lunaris_freya
+            app_name: lunaris_freya
+            asset: freya-lunaris
+            features: lunaris,release
+            no_default_features: true
+
+          - package: lunaris_freya
+            app_name: lunaris_freya
+            asset: freya-melon
+            features: melon,release
+            no_default_features: true
+
+          - package: lunaris_freya
+            app_name: lunaris_freya
+            asset: freya-cogi
+            features: cogi,release
+            no_default_features: true
+
         target:
           - target: aarch64-apple-darwin
             os: macos-latest
@@ -55,11 +75,12 @@ jobs:
           app_name: ${{ matrix.app.app_name }}
           profile: ${{ env.PROFILE }}
           features: ${{ matrix.app.features }}
-          asset_name: ${{ matrix.app.app_name }}-${{ matrix.target.target }}
+          no_default_features: ${{ matrix.app.no_default_features || false }}
+          asset_name: ${{ matrix.app.asset || matrix.app.app_name }}-${{ matrix.target.target }}
 
       - name: Release
         uses: ncipollo/release-action@v1.21.0
         with:
           allowUpdates: true
-          artifacts: ${{ matrix.app.app_name }}-${{ matrix.target.target }}${{ runner.os == 'Windows' && '.zip' || '.tar.gz' }}
+          artifacts: ${{ matrix.app.asset || matrix.app.app_name }}-${{ matrix.target.target }}${{ runner.os == 'Windows' && '.zip' || '.tar.gz' }}
           generateReleaseNotes: true

@@ -459,9 +459,9 @@ impl Component for LanView {
                     let f = std::sync::Arc::clone(&front);
                     out = out.child(field(
                         "Auto link speed",
-                        Switch::new()
-                            .toggled(auto)
-                            .on_toggle(move |_| f.set_link_speed(!auto, runahead, timeout)),
+                        Switch::new(WritableSetter::new(auto, move |on: bool| {
+                            f.set_link_speed(on, runahead, timeout);
+                        })),
                     ));
                 }
                 out = out.child(note(&format!(

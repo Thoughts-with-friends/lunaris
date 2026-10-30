@@ -231,7 +231,7 @@ impl Component for EmuSettingsView {
         };
         let hle = {
             let set = set.clone();
-            move |_| set(Box::new(|s: &mut Settings| s.hle_bios ^= true))
+            move |on: bool| set(Box::new(move |s: &mut Settings| s.hle_bios = on))
         };
         let frameskip = s.frameskip;
 
@@ -244,7 +244,7 @@ impl Component for EmuSettingsView {
                     .horizontal()
                     .spacing(10.)
                     .cross_align(Alignment::Center)
-                    .child(Switch::new().toggled(s.hle_bios).on_toggle(hle))
+                    .child(Switch::new(WritableSetter::new(s.hle_bios, hle)))
                     .child(rect().color(theme::rgb(TEXT_DIM)).font_size(12.).child("No BIOS dump needed")),
             ))
             .child(path("ARM9 BIOS", s.arm9_bios_path.clone(), 0))

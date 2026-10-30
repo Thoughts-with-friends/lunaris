@@ -18,7 +18,7 @@ winres = "0.1.12" # Meta information can be added to the exe.
 
 [dependencies]
 # Prerelease: pinned exactly, later release candidates may change the API.
-freya = { version = "=0.5.0-rc.10", features = [
+freya = { version = "=0.5.0-rc.13", features = [
     "engine",
     "borderless",
     "titlebar",
@@ -94,7 +94,7 @@ windows-sys = { version = "0.60", optional = true, features = [
 ] }
 
 [dev-dependencies]
-freya-testing = { version = "=0.5.0-rc.10" }
+freya-testing = { version = "=0.5.0-rc.13" }
 
 [lints]
 workspace = true

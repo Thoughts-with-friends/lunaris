@@ -712,10 +712,10 @@ impl Component for TuningPart {
             ))
             .child(field(
                 "Stream audio",
-                Switch::new().toggled(t.audio).on_toggle({
+                Switch::new(WritableSetter::new(t.audio, {
                     let set = Rc::clone(&set);
-                    move |()| set(&|t: &mut Tuning| t.audio ^= true)
-                }),
+                    move |on: bool| set(&move |t: &mut Tuning| t.audio = on)
+                })),
             ))
             .child(field(
                 "Audio lag limit",
