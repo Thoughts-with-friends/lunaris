@@ -1,19 +1,20 @@
 //! The on-screen display: what a command reports, drawn over the picture.
 //!
-//! melonDS puts its messages and its frame rate over the screens rather than in
-//! a status bar, so this front end does too. The colour comes from the
-//! message's own [`Severity`].
+//! melonDS puts its messages over the screens, so this front end does too.
+//! The frame rate and the paused state live in the status bar
+//! ([`crate::ui::status`]). The colour comes from the message's own
+//! [`Severity`].
 
 use crate::app::*;
 
 impl MelonEgui {
-    /// Draw the FPS readout and the newest message (for [`OSD_LIFETIME`]).
+    /// Draw the newest message (for [`OSD_LIFETIME`]).
     pub(crate) fn osd(&mut self, ui: &mut egui::Ui, area: Rect) {
         if !self.view.show_osd {
             return;
         }
-        // Only the newest message, and only while it is fresh. The readout is
-        // always neutral; the message carries whatever colour it earned.
+        // Only the newest message, and only while it is fresh; it carries
+        // whatever colour it earned.
         let mut lines = Vec::new();
         if let Some((notice, at)) = &self.osd {
             if at.elapsed() < OSD_LIFETIME {
@@ -21,18 +22,6 @@ impl MelonEgui {
             } else {
                 self.osd = None;
             }
-        }
-        if self.is_loaded() {
-            let tr = self.translations.get(self.language);
-            let mut readout = format!("{:.1} FPS", self.fps);
-            if self.paused {
-                readout = format!("{readout}  {}", tr.t(crate::i18n::I18nKey::OsdPaused));
-            }
-            // Without this the window looks hung rather than deliberately still.
-            if !self.video.render {
-                readout = format!("{readout}  {}", tr.t(crate::i18n::I18nKey::OsdRenderingOff));
-            }
-            lines.insert(0, (Severity::Info, readout));
         }
 
         let painter = ui.painter();

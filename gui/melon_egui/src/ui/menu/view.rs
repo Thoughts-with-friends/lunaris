@@ -72,6 +72,7 @@ pub(super) fn view_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         let view = &mut app.view;
         ui.checkbox(&mut view.filtering, tr.t(K::ScreenFiltering));
         ui.checkbox(&mut view.show_osd, tr.t(K::ShowOsd));
+        ui.checkbox(&mut view.show_fps, tr.t(K::ShowFps));
     });
     m.0
 }

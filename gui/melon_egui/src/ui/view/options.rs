@@ -205,6 +205,8 @@ pub struct ViewOptions {
     /// Smooth the picture when scaled, rather than showing square pixels.
     pub filtering: bool,
     pub show_osd: bool,
+    /// The frame rate in the status bar.
+    pub show_fps: bool,
 }
 
 impl Default for ViewOptions {
@@ -224,6 +226,7 @@ impl Default for ViewOptions {
             integer_scaling: false,
             filtering: false,
             show_osd: true,
+            show_fps: true,
         }
     }
 }

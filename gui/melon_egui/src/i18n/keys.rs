@@ -340,6 +340,10 @@ pub enum I18nKey {
     #[i18n(ja = "画面上にメッセージを表示")]
     ShowOsd,
 
+    /// Show FPS
+    #[i18n(ja = "FPS を表示")]
+    ShowFps,
+
     // -- Config menu ---------------------------------------------------------
     /// Emu settings
     #[i18n(ja = "エミュレータ設定")]
@@ -2022,6 +2026,55 @@ pub enum I18nKey {
     /// [rendering off]
     #[i18n(ja = "[描画オフ]")]
     OsdRenderingOff,
+
+    // -- status bar -----------------------------------------------------------
+    /// Running · Pause
+    #[i18n(ja = "実行中 · 一時停止")]
+    StatusRunning,
+
+    /// Paused · Resume
+    #[i18n(ja = "一時停止中 · 再開")]
+    StatusPaused,
+
+    /// Idle
+    #[i18n(ja = "待機中")]
+    StatusIdle,
+
+    /// Remote Desktop
+    #[i18n(ja = "リモートデスクトップ")]
+    StatusRemoteScreen,
+
+    /// No game · Open ROM...
+    #[i18n(ja = "ゲームなし · ROM を開く...")]
+    StatusNoGame,
+
+    /// unlimited
+    #[i18n(ja = "無制限")]
+    StatusUnlimited,
+
+    /// muted
+    #[i18n(ja = "ミュート")]
+    StatusMuted,
+
+    /// xBRZ off
+    #[i18n(ja = "xBRZ オフ")]
+    StatusXbrzOff,
+
+    /// ⇄ Remote: waiting for a client
+    #[i18n(ja = "⇄ リモート: クライアント待ち")]
+    StatusRemoteWaiting,
+
+    /// ⇄ Remote: connecting...
+    #[i18n(ja = "⇄ リモート: 接続中...")]
+    StatusRemoteConnecting,
+
+    /// ⇄ Remote: client {0}
+    #[i18n(ja = "⇄ リモート: クライアント {0}")]
+    StatusRemoteClient,
+
+    /// ⇄ Remote: host {0}
+    #[i18n(ja = "⇄ リモート: ホスト {0}")]
+    StatusRemoteHost,
 
     // -- shared words --------------------------------------------------------
     /// DS slot

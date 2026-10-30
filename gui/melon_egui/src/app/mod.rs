@@ -174,9 +174,9 @@ const SHADER_COMPILE_LIMIT: u32 = 256;
 /// How long an OSD message stays up.
 pub(crate) const OSD_LIFETIME: Duration = Duration::from_secs(3);
 
-/// Room the menu bar takes, in points. Used to size the window so that the
-/// screens land on an exact scale.
-pub(crate) const CHROME_HEIGHT: f32 = 26.0;
+/// Room the menu bar and the status bar take, in points. Used to size the
+/// window so that the screens land on an exact scale.
+pub(crate) const CHROME_HEIGHT: f32 = 26.0 + crate::ui::status::STATUS_HEIGHT;
 
 /// Numbered savestate slots, as melonDS offers.
 pub const STATE_SLOTS: u8 = 8;

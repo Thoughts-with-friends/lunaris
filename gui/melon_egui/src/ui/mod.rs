@@ -8,12 +8,13 @@
 //! |-------------|------------------------------------------------------------|
 //! | `frame`     | one repaint, in order — **start reading here**             |
 //! | `menu`      | the menu bar                                               |
+//! | `status`    | the status bar under it (state, game, fps, speed, ...)     |
 //! | `screen`    | the first console's picture (software and OpenGL routes)   |
 //! | `layout`    | framebuffer → texture → window, and click → touchscreen    |
 //! | `view`      | where the two screens go (View menu options, pure maths)   |
 //! | `window`    | the second console's window, second view, `--shot`         |
 //! | `panes`     | the settings / tool windows                                |
-//! | `osd`       | messages and FPS over the picture                          |
+//! | `osd`       | messages over the picture                                  |
 //! | `notice`    | a message's severity → colour and log level                |
 
 pub mod frame;
@@ -24,5 +25,6 @@ pub mod osd;
 pub mod panes;
 pub mod screen;
 pub mod start;
+pub mod status;
 pub mod view;
 pub mod window;

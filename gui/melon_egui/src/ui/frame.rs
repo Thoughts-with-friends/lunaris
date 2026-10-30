@@ -5,6 +5,7 @@
 //!   1. advance            run the console, upload its picture   (app/emulation.rs)
 //!   2. update_window_info remember the window's position        (ui/window.rs)
 //!   3. menu bar           → Option<Action>                      (ui/menu)
+//!      status bar         → Option<Action>                      (ui/status.rs)
 //!   4. central panel      screens + OSD                          (ui/screen.rs, ui/osd.rs)
 //!   5. panes::show        the open settings windows             (ui/panes)
 //!   6. guest_view         the second console's window           (ui/window.rs)
@@ -26,6 +27,11 @@ impl eframe::App for MelonEgui {
 
         let mut action = None;
         egui::TopBottomPanel::top("menu").show(ctx, |ui| action = menu::bar(self, ui));
+        let mut status_action = None;
+        egui::TopBottomPanel::top("status")
+            .exact_height(crate::ui::status::STATUS_HEIGHT)
+            .show(ctx, |ui| status_action = self.status_bar(ui));
+        let action = action.or(status_action);
         let mut start_action = None;
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
             ctx,
