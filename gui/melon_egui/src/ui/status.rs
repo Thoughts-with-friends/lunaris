@@ -1,4 +1,4 @@
-//! The status bar under the menu bar, laid out as the freya GUI's: every item
+//! The status bar at the bottom of the window, laid out as the freya GUI's: every item
 //! is a chip that changes what it shows, or opens where it is set.
 //!
 //! ```text

@@ -8,7 +8,7 @@
 //! |-------------|------------------------------------------------------------|
 //! | `frame`     | one repaint, in order — **start reading here**             |
 //! | `menu`      | the menu bar                                               |
-//! | `status`    | the status bar under it (state, game, fps, speed, ...)     |
+//! | `status`    | the status bar at the bottom (state, game, fps, speed, ...) |
 //! | `screen`    | the first console's picture (software and OpenGL routes)   |
 //! | `layout`    | framebuffer → texture → window, and click → touchscreen    |
 //! | `view`      | where the two screens go (View menu options, pure maths)   |
