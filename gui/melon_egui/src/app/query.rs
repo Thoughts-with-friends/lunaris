@@ -155,6 +155,32 @@ impl MelonEgui {
         ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     }
 
+    /// The background behind the screens, at the window's opacity.
+    pub fn backdrop(&self) -> Color32 {
+        Color32::BLACK.gamma_multiply(self.window_opacity)
+    }
+
+    /// Make the panels (menu bar, status bar, panes) as opaque as
+    /// [`Self::window_opacity`] says, in both themes; the window itself is
+    /// cleared to nothing (`clear_color`), so what is left shows the desktop.
+    /// Only on a change: the styles are copied each time.
+    pub fn apply_opacity(&mut self, ctx: &egui::Context) {
+        let opacity = clamp_opacity(self.window_opacity);
+        if self.applied_opacity == Some(opacity) {
+            return;
+        }
+        for (theme, base) in [
+            (egui::Theme::Dark, egui::Visuals::dark()),
+            (egui::Theme::Light, egui::Visuals::light()),
+        ] {
+            ctx.style_mut_of(theme, |style| {
+                style.visuals.panel_fill = base.panel_fill.gamma_multiply(opacity);
+                style.visuals.window_fill = base.window_fill.gamma_multiply(opacity);
+            });
+        }
+        self.applied_opacity = Some(opacity);
+    }
+
     // -- the Date and time dialog -------------------------------------------
 
     /// Push the dialog's clock into the console.

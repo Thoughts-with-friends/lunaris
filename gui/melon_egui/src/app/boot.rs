@@ -66,6 +66,8 @@ impl MelonEgui {
             confirm_on_quit: false,
             dark_theme: settings.dark_theme,
             ui_scale: if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 },
+            window_opacity: clamp_opacity(settings.window_opacity),
+            applied_opacity: None,
             save_dir: settings
                 .save_dir
                 .or_else(|| Some(crate::file::settings::instance_data_dir(1, "saves"))),
@@ -223,6 +225,7 @@ impl MelonEgui {
             save_dir: self.save_dir.clone(),
             ui_scale: self.ui_scale,
             dark_theme: self.dark_theme,
+            window_opacity: self.window_opacity,
             language: self.language,
             // Remembered so a VPN address, which nobody has memorised, is typed
             // once rather than once per session.
@@ -245,6 +248,7 @@ impl MelonEgui {
         self.cheats_enabled = settings.cheats_enabled;
         self.dark_theme = settings.dark_theme;
         self.ui_scale = if settings.ui_scale > 0.0 { settings.ui_scale } else { 1.0 };
+        self.window_opacity = clamp_opacity(settings.window_opacity);
         self.save_dir = settings
             .save_dir
             .clone()

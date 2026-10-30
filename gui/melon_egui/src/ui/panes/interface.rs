@@ -23,6 +23,17 @@ pub(super) fn interface(app: &mut MelonEgui, ui: &mut egui::Ui) {
         ui.ctx().set_zoom_factor(app.ui_scale);
     }
     ui.separator();
+    // The background only: the DS screens stay opaque.
+    let opacity = egui::Slider::new(
+        &mut app.window_opacity,
+        crate::app::OPACITY_MIN..=crate::app::OPACITY_MAX,
+    )
+    .text(tr.t(K::WindowOpacity))
+    .custom_formatter(|v, _| format!("{:.0}%", v * 100.0));
+    if ui.add(opacity).on_hover_text(tr.t(K::WindowOpacityHint)).drag_stopped() {
+        app.persist();
+    }
+    ui.separator();
     ui.checkbox(&mut app.view.show_osd, tr.t(K::ShowOsd));
 }
 

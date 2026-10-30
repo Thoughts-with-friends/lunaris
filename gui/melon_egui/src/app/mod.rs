@@ -178,6 +178,20 @@ pub(crate) const OSD_LIFETIME: Duration = Duration::from_secs(3);
 /// window so that the screens land on an exact scale.
 pub(crate) const CHROME_HEIGHT: f32 = 26.0 + crate::ui::status::STATUS_HEIGHT;
 
+/// The faintest the window background may go: below this the menus and panes
+/// stop being readable over whatever is behind the window (freya's limit).
+pub const OPACITY_MIN: f32 = 0.3;
+
+/// A fully opaque background, the default.
+pub const OPACITY_MAX: f32 = 1.0;
+
+/// `opacity` held to [`OPACITY_MIN`]..=[`OPACITY_MAX`]; a hand-edited file's
+/// non-number reads as opaque.
+#[must_use]
+pub fn clamp_opacity(opacity: f32) -> f32 {
+    if opacity.is_finite() { opacity.clamp(OPACITY_MIN, OPACITY_MAX) } else { OPACITY_MAX }
+}
+
 /// Numbered savestate slots, as melonDS offers.
 pub const STATE_SLOTS: u8 = 8;
 
@@ -266,6 +280,12 @@ pub struct MelonEgui {
     pub confirm_on_quit: bool,
     pub dark_theme: bool,
     pub ui_scale: f32,
+    /// Background opacity, [`OPACITY_MIN`] to [`OPACITY_MAX`]; see
+    /// [`Self::apply_opacity`].
+    pub window_opacity: f32,
+    /// The opacity last written into egui's styles, so they are only
+    /// rewritten on a change.
+    pub(crate) applied_opacity: Option<f32>,
     /// Directory overrides; `None` means "beside the ROM".
     pub save_dir: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
@@ -396,4 +416,17 @@ pub struct MelonEgui {
     pub(crate) shot_requested: bool,
 
     pub window: WindowConfig,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opacity_is_held_in_range() {
+        assert!((clamp_opacity(0.0) - OPACITY_MIN).abs() < f32::EPSILON);
+        assert!((clamp_opacity(2.0) - OPACITY_MAX).abs() < f32::EPSILON);
+        assert!((clamp_opacity(f32::NAN) - OPACITY_MAX).abs() < f32::EPSILON);
+        assert!((clamp_opacity(0.5) - 0.5).abs() < f32::EPSILON);
+    }
 }

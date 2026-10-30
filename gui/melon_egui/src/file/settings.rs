@@ -48,6 +48,9 @@ pub struct Settings {
     /// egui's UI scale. 0 means "follow the system".
     pub ui_scale: f32,
     pub dark_theme: bool,
+    /// How opaque the window's background is, 0.3 to 1.0 (freya's "Window
+    /// opacity"). The DS screens themselves always stay opaque.
+    pub window_opacity: f32,
     /// Which translation the UI is drawn in.
     pub language: crate::i18n::Language,
     /// The address the guest join box is pre-filled with — the last one that
@@ -88,12 +91,13 @@ impl Default for Settings {
             audio_sync: false,
             speed: crate::speed::DEFAULT,
             cheats_enabled: false,
-            volume: 1.0,
+            volume: 0.2,
             state_dir: None,
             save_dir: None,
             ui_scale: 0.0,
             // The core's picture is pixel art, and a pale theme washes it out.
             dark_theme: true,
+            window_opacity: crate::app::OPACITY_MAX,
             language: crate::i18n::Language::default(),
             lan_host_address: DEFAULT_LAN_HOST.to_owned(),
             lan_bind_address: DEFAULT_LAN_BIND.to_owned(),

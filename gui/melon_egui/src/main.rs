@@ -173,6 +173,8 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([json_config.window.width, json_config.window.height])
             .with_position([json_config.window.pos_x, json_config.window.pos_y])
             .with_title("melon_egui")
+            // Interface > Window opacity lets the desktop show through.
+            .with_transparent(true)
             .with_icon(lunaris_icon()),
         vsync: json_config.video.vsync,
         ..Default::default()

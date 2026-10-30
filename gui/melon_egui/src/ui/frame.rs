@@ -24,6 +24,7 @@ impl eframe::App for MelonEgui {
         // the context current, and a paint callback is too late.
         self.advance(ctx, frame);
         self.update_window_info(ctx);
+        self.apply_opacity(ctx);
 
         let mut action = None;
         egui::TopBottomPanel::top("menu").show(ctx, |ui| action = menu::bar(self, ui));
@@ -34,7 +35,7 @@ impl eframe::App for MelonEgui {
             .show(ctx, |ui| status_action = self.status_bar(ui));
         let action = action.or(status_action);
         let mut start_action = None;
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::BLACK)).show(
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(self.backdrop())).show(
             ctx,
             |ui| {
                 let area = ui.max_rect();
@@ -72,6 +73,12 @@ impl eframe::App for MelonEgui {
             // look again at the rate it is probed, so red turns green on its own.
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
+    }
+
+    /// Nothing: the panels paint the background, at the window's opacity
+    /// (see [`MelonEgui::apply_opacity`]), so a lowered one shows the desktop.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
     }
 
     fn on_exit(&mut self, gl: Option<&eframe::glow::Context>) {

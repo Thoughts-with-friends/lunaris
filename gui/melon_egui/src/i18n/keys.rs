@@ -1607,6 +1607,14 @@ pub enum I18nKey {
     #[i18n(ja = "UI の拡大率を適用")]
     ApplyUiScale,
 
+    /// Window opacity
+    #[i18n(ja = "ウィンドウの不透明度")]
+    WindowOpacity,
+
+    /// How much of the desktop shows through the window's background. The DS screens stay opaque.
+    #[i18n(ja = "ウィンドウ背景からデスクトップがどれだけ透けるか。DS の画面は透けません。")]
+    WindowOpacityHint,
+
     /// Write translation templates
     #[i18n(ja = "翻訳ファイルのひな形を書き出す")]
     WriteTemplates,
