@@ -32,6 +32,19 @@ jobs:
             app_name: melon_egui
             features: release
 
+          # freya: one build per core; the melonDS one is renamed so the two
+          # artifacts never hold the same file name.
+          - package: lunaris_freya
+            app_name: lunaris_freya
+            features: lunaris,release
+            no_default_features: true
+
+          - package: lunaris_freya
+            app_name: lunaris_freya
+            bin_name: melon_freya
+            features: melon,release
+            no_default_features: true
+
         target:
           - target: aarch64-apple-darwin
             os: macos-latest
@@ -53,17 +66,27 @@ jobs:
           platform: ${{ matrix.target.os }}
           build_profile: ${{ env.PROFILE }}
 
-      - name: build egui
-        run: cargo build -p ${{ matrix.app.package }} --release
+      - name: Build
+        shell: bash
+        run: |
+          args=(-p "${{ matrix.app.package }}" --release)
+          if [ "${{ matrix.app.no_default_features || false }}" = "true" ]; then
+            args+=(--no-default-features)
+          fi
+          if [ -n "${{ matrix.app.features }}" ]; then
+            args+=(--features "${{ matrix.app.features }}")
+          fi
+          cargo build "${args[@]}"
 
       - name: Move exe -> ./build
         uses: ./.github/actions/setup-release
         with:
           app_name: ${{ matrix.app.app_name }}
+          bin_name: ${{ matrix.app.bin_name || matrix.app.app_name }}
           build_profile: ${{ env.PROFILE }}
 
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: ${{ matrix.app.app_name }}-${{ runner.os }}
+          name: ${{ matrix.app.bin_name || matrix.app.app_name }}-${{ runner.os }}
           path: ./build/

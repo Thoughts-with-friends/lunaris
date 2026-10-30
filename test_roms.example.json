@@ -1,0 +1,5 @@
+{
+  "default": "path/to/a/game/whose/title/screen/stands/still.nds",
+  "boot": "path/to/hello_world.nds",
+  "3d": "path/to/a/game/with/3d.nds"
+}

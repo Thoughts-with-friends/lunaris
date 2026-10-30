@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{
+use crate::{
     MAX_DATAGRAM, RemoteStats, Tuning,
     decoder::Decoder,
     stats::Counters,
@@ -20,7 +20,7 @@ use super::{
 
 /// How often each end pings the other, in wall time. Also the pace at which a
 /// joining client repeats its `HELLO` while the host is not up yet.
-pub(super) const PING_INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) const PING_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Sound waiting to be played, and the rate it arrived at.
 #[derive(Default)]
@@ -28,7 +28,7 @@ pub struct AudioQueue {
     pub samples: VecDeque<i16>,
     /// The rate the host is sending at, taken from the newest datagram. The
     /// client resamples from this rather than assuming the console's rate —
-    /// see [`super::audio`].
+    /// see [`crate::audio`].
     pub rate: u32,
 }
 
@@ -330,7 +330,7 @@ pub fn cancelled() -> io::Error {
 /// Whether a socket error only means "nothing yet": the read timeout expiring,
 /// or — on Windows, where an ICMP port-unreachable for an earlier send surfaces
 /// on the *next* receive — the other end not listening yet.
-pub(super) fn would_block(error: &io::Error) -> bool {
+pub(crate) fn would_block(error: &io::Error) -> bool {
     matches!(
         error.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::ConnectionReset

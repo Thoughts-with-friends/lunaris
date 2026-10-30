@@ -1,6 +1,6 @@
 //! The knobs behind Remote Desktop mode, and the bounds they are held to.
 
-use super::{CONSOLE_SAMPLE_RATE, NATIVE_FPS};
+use crate::{CONSOLE_SAMPLE_RATE, NATIVE_FPS};
 
 /// How Remote Desktop behaves, persisted in the instance's `settings.json`.
 ///
@@ -46,7 +46,7 @@ pub struct Tuning {
     ///
     /// The console produces 48 kHz; halving that halves the 1.5 Mbit/s the
     /// sound would otherwise cost, and the client resamples back up before the
-    /// sound card ever sees it. See [`super::audio`]. At or above 48 kHz this
+    /// sound card ever sees it. See [`crate::audio`]. At or above 48 kHz this
     /// does nothing.
     pub audio_rate: u32,
 

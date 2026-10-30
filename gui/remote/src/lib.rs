@@ -43,20 +43,23 @@
 //!
 //! # What is in here
 //!
-//! | module | what it does |
-//! |--------|--------------|
-//! | [`colour`] | 8888 ↔ 565, the only place channel order is decided |
-//! | [`tile`] | the 16×16 grid and its run/literal coder |
-//! | [`encoder`] | frame → datagrams, including which frames to skip |
-//! | [`decoder`] | datagrams → frame, in any order, with any of them missing |
-//! | [`audio`] | 48 kHz → transport rate, so sound is not most of the bandwidth |
-//! | [`wire`] | the datagram layouts |
-//! | [`stats`] | what a session is doing, for the pane |
-//! | [`session`] | the socket, the threads, and the shared state; both ends ping |
-//! | [`probe`] | "is anyone hosting there, and are they free?" before a session |
-//! | [`host`] / [`client`] | the two ends |
-//! | [`control`] | save import / export and savestate slots, over TCP |
-//! | [`tuning`] | the knobs, and their bounds |
+//! The modules live in three folders (each re-exported here, so
+//! `remote::wire` and the like keep working):
+//!
+//! | folder | module | what it does |
+//! |--------|--------|--------------|
+//! | `codec/` | [`colour`] | 8888 ↔ 565, the only place channel order is decided |
+//! | | [`tile`] | the 16×16 grid and its run/literal coder |
+//! | | [`encoder`] | frame → datagrams, including which frames to skip |
+//! | | [`decoder`] | datagrams → frame, in any order, with any of them missing |
+//! | | [`audio`] | 48 kHz → transport rate, so sound is not most of the bandwidth |
+//! | `net/` | [`wire`] | the datagram layouts |
+//! | | [`session`] | the socket, the threads, and the shared state; both ends ping |
+//! | | [`probe`] | "is anyone hosting there, and are they free?" before a session |
+//! | | [`control`] | save import / export and savestate slots, over TCP |
+//! | `peer/` | [`host`] / [`client`] | the two ends |
+//! | | [`stats`] | what a session is doing, for the pane |
+//! | | [`tuning`] | the knobs, and their bounds |
 //!
 //! # The video codec, and why it needs no acknowledgements
 //!
@@ -91,19 +94,13 @@
 //!   encoded, so a *skipped* frame delays nothing. Only smoothness is traded,
 //!   never immediacy. See [`encoder::Pacer`].
 
-pub mod audio;
-pub mod client;
-pub mod colour;
-pub mod control;
-pub mod decoder;
-pub mod encoder;
-pub mod host;
-pub mod probe;
-pub mod session;
-pub mod stats;
-pub mod tile;
-pub mod tuning;
-pub mod wire;
+pub mod codec;
+pub mod net;
+pub mod peer;
+
+pub use codec::{audio, colour, decoder, encoder, tile};
+pub use net::{control, probe, session, wire};
+pub use peer::{client, host, stats, tuning};
 
 #[cfg(test)]
 mod tests;

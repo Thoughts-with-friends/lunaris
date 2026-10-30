@@ -11,8 +11,13 @@ inputs:
     required: true
 
   app_name:
-    description: Output binary name
+    description: Cargo binary name (the file cargo builds)
     required: true
+
+  bin_name:
+    description: Binary name inside the archive (default app_name), e.g. melon_freya for the melonDS build of lunaris_freya
+    required: false
+    default: ""
 
   profile:
     description: Cargo build profile
@@ -65,7 +70,7 @@ runs:
       run: |
         cp \
           "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}" \
-          "build/${{ inputs.app_name }}"
+          "build/${{ inputs.bin_name || inputs.app_name }}"
 
     - name: Copy binary
       if: runner.os == 'Windows'
@@ -73,7 +78,7 @@ runs:
       run: |
         Copy-Item `
           "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe" `
-          "build/${{ inputs.app_name }}.exe"
+          "build/${{ inputs.bin_name || inputs.app_name }}.exe"
 
     - name: Compress Unix
       if: runner.os != 'Windows'
@@ -82,7 +87,7 @@ runs:
         tar \
           -C build \
           -czf "${{ inputs.asset_name }}.tar.gz" \
-          "${{ inputs.app_name }}"
+          "${{ inputs.bin_name || inputs.app_name }}"
 
     - name: Compress Windows
       if: runner.os == 'Windows'
@@ -95,5 +100,5 @@ runs:
         }
 
         Compress-Archive `
-          -Path "build/${{ inputs.app_name }}.exe" `
+          -Path "build/${{ inputs.bin_name || inputs.app_name }}.exe" `
           -DestinationPath $assetName

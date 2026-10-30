@@ -1,8 +1,8 @@
 //! Headless tests of the real App driven by clicks (freya-testing), and of
 //! the File menu features on a real ROM.
 //!
-//! `LUNARIS_TEST_ROM_DIR` names a folder holding `Newスーパーマリオブラザーズ.nds` (and
-//! any other `.nds` files).
+//! The ROM is `test_roms.json`'s `default` (see [`crate::test_roms`]); its
+//! folder is the ROM folder the cards are listed from.
 use std::{
     any::Any,
     path::PathBuf,
@@ -16,9 +16,17 @@ use freya_testing::prelude::*;
 
 use crate::{App, backend::BACKEND, frontend::Frontend};
 
+fn rom() -> PathBuf {
+    crate::test_roms::rom("default")
+}
+
 fn rom_dir() -> PathBuf {
-    std::env::var_os("LUNARIS_TEST_ROM_DIR")
-        .map_or_else(|| PathBuf::from("D:/GAME/Emulator/DS/Roms"), PathBuf::from)
+    rom().parent().expect("a ROM folder").to_owned()
+}
+
+/// The ROM's card label (its file name).
+fn rom_name() -> String {
+    rom().file_name().expect("a file name").to_string_lossy().into_owned()
 }
 
 /// A frontend in a fresh instance folder whose ROM folder is `rom_dir`.
@@ -59,16 +67,12 @@ fn click(t: &mut TestingRunner, text: &str) {
 }
 
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn rom_card_and_menus_work() {
     let front = front("cards");
     let mut t = runner(&front);
-    click(&mut t, "Newスーパーマリオブラザーズ.nds");
-    assert_eq!(
-        lock(&front.rom).clone(),
-        Some(rom_dir().join("Newスーパーマリオブラザーズ.nds")),
-        "card starts"
-    );
+    click(&mut t, &rom_name());
+    assert_eq!(lock(&front.rom).clone(), Some(rom()), "card starts");
     click(&mut t, "System");
     click(&mut t, "Pause");
     assert!(front.shared.is_paused(), "System > Pause");
@@ -88,13 +92,12 @@ fn run_frames(front: &Frontend, n: u64) {
 }
 
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn savestates_and_export_work() {
     use crate::frontend::Command;
 
     let front = front("states");
-    let rom = std::env::var_os("LUNARIS_TEST_ROM")
-        .map_or_else(|| rom_dir().join("Newスーパーマリオブラザーズ.nds"), PathBuf::from);
+    let rom = rom();
     front.start(&rom).expect("ROM loads");
     run_frames(&front, 30);
 
@@ -125,11 +128,11 @@ fn savestates_and_export_work() {
 }
 
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn debug_panel_shows_views() {
     let front = front("debug");
     let mut t = runner(&front);
-    click(&mut t, "Newスーパーマリオブラザーズ.nds");
+    click(&mut t, &rom_name());
     run_frames(&front, 60);
     click(&mut t, "Debug");
     click(&mut t, "Performance stats");
@@ -155,9 +158,9 @@ fn debug_panel_shows_views() {
 /// until the session is left.
 #[cfg(feature = "lunaris")]
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn lan_session_hosting() {
-    let rom = rom_dir().join("Newスーパーマリオブラザーズ.nds");
+    let rom = rom();
     let host = front("lan_host");
     let mut config = host.lan_config();
     config.player_name = "Host".to_owned();
@@ -192,9 +195,9 @@ fn lan_session_hosting() {
 /// the ROM on the link and keep running, paced by it.
 #[cfg(feature = "melon")]
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn melon_link_over_localhost() {
-    let rom = rom_dir().join("Newスーパーマリオブラザーズ.nds");
+    let rom = rom();
     let host = front("melon_lan_host");
     let guest = front("melon_lan_guest");
     host.start(&rom).expect("ROM loads");
@@ -231,10 +234,10 @@ fn melon_link_over_localhost() {
 /// View > Video settings: 2x / 4x frames come out at that size on every
 /// core, with and without xBRZ (melonDS 4x without xBRZ: OpenGL renderer).
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn upscaled_frames_have_the_internal_resolution() {
     let front = front("hires");
-    front.start(&rom_dir().join("Newスーパーマリオブラザーズ.nds")).expect("ROM loads");
+    front.start(&rom()).expect("ROM loads");
     run_frames(&front, 60);
     let mut native = Vec::new();
     for (scale, xbrz) in [(1_u8, false), (2, false), (4, false), (2, true), (4, true)] {
@@ -280,8 +283,17 @@ fn upscaled_frames_have_the_internal_resolution() {
     }
     // Changed while paused: the paused frame comes back the new way.
     front.shared.set_paused(true);
-    std::thread::sleep(Duration::from_millis(50));
-    let paused_at = front.shared.frames();
+    // The frame in progress still finishes (at 4x in a debug build, longer
+    // than any fixed wait), so wait for the count to stand still.
+    let mut paused_at = front.shared.frames();
+    loop {
+        std::thread::sleep(Duration::from_millis(100));
+        let now = front.shared.frames();
+        if now == paused_at {
+            break;
+        }
+        paused_at = now;
+    }
     front.shared.set_render(2, true);
     let start = Instant::now();
     while front.shared.frame_since(0).is_none_or(|(_, width, _)| width != 512) {
@@ -342,11 +354,11 @@ fn multiplayer_dialog_shows_both_modes() {
 /// reach that console, its save / state requests are done there (on the
 /// host's next instance folder). Stop ends the session on both sides.
 #[test]
-#[ignore = "requires ROMs on disk"]
+#[ignore = "requires a ROM (test_roms.json)"]
 fn remote_desktop_over_localhost() {
     let host = front("rd_host");
     let client = front("rd_client");
-    host.start(&rom_dir().join("Newスーパーマリオブラザーズ.nds")).expect("ROM loads");
+    host.start(&rom()).expect("ROM loads");
     assert!(!client.remote_partner("127.0.0.1:47265").0, "nobody hosts yet");
     host.host_remote("127.0.0.1:47265").expect("hosting starts");
     // The client's probe sees the waiting host before it joins.
@@ -412,6 +424,67 @@ fn remote_desktop_over_localhost() {
     assert!(client.remote_view().0.is_none());
     host.end_remote();
     assert!(host.remote_view().0.is_none());
+    run_frames(&host, 10);
+    host.stop();
+}
+
+/// Connects a host (game running) and a client on `port`.
+fn remote_pair(name: &str, port: u16) -> (Arc<Frontend>, Arc<Frontend>) {
+    let host = front(&format!("{name}_host"));
+    let client = front(&format!("{name}_client"));
+    host.start(&rom()).expect("ROM loads");
+    host.host_remote(&format!("127.0.0.1:{port}")).expect("hosting starts");
+    client.join_remote(&format!("127.0.0.1:{port}")).expect("joining starts");
+    let start = Instant::now();
+    while [&host, &client].iter().any(|f| f.remote_view().0.is_none()) {
+        assert!(start.elapsed() < Duration::from_secs(15), "never connected");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    (host, client)
+}
+
+/// Polls `front` as the status bar does until it reports the peer gone.
+fn wait_peer_gone(front: &Frontend) -> String {
+    let start = Instant::now();
+    loop {
+        if let Some(message) = front.check_remote_peer() {
+            return message;
+        }
+        assert!(start.elapsed() < Duration::from_secs(15), "the peer never counted as gone");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The host goes away: the client is told and is back on the welcome
+/// screen (no game, no session), free to start a game of its own.
+#[test]
+#[ignore = "requires a ROM (test_roms.json)"]
+fn remote_client_returns_home_when_the_host_leaves() {
+    let (host, client) = remote_pair("rd_host_leaves", 47266);
+    assert!(client.check_remote_peer().is_none(), "the host still answers");
+    host.stop();
+    let message = wait_peer_gone(&client);
+    assert!(message.contains("host"), "{message}");
+    assert!(client.remote_view().0.is_none(), "the session ended");
+    assert!(!client.shared.is_running(), "back to the welcome screen");
+    assert!(lock(&client.rom).is_none());
+    assert_eq!(client.remote_view().2.as_deref(), Some(message.as_str()), "the dialog says so");
+    client.start(&rom()).expect("the client plays on its own");
+    run_frames(&client, 10);
+    client.stop();
+}
+
+/// The client goes away: the host is told, the session ends and the host's
+/// own game keeps running.
+#[test]
+#[ignore = "requires a ROM (test_roms.json)"]
+fn remote_host_keeps_playing_when_the_client_leaves() {
+    let (host, client) = remote_pair("rd_client_leaves", 47267);
+    client.stop();
+    let message = wait_peer_gone(&host);
+    assert!(message.contains("client"), "{message}");
+    assert!(host.remote_view().0.is_none(), "the session ended");
+    assert!(host.shared.is_running(), "the host's game goes on");
     run_frames(&host, 10);
     host.stop();
 }

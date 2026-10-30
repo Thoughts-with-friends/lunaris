@@ -386,11 +386,11 @@ mod gl_tests {
     /// Above 1x the OpenGL renderer draws, with xBRZ on too (it then goes
     /// over the 2D only): the frame is the GPU's, at the internal size.
     #[test]
-    #[ignore = "requires a ROM and OpenGL"]
+    #[ignore = "requires a ROM (test_roms.json) and OpenGL"]
     fn opengl_renders_above_1x_with_and_without_xbrz() {
-        let rom = std::path::Path::new("D:/GAME/Emulator/DS/Roms/Newスーパーマリオブラザーズ.nds");
+        let rom = crate::test_roms::rom("3d");
         let save = std::env::temp_dir().join("freya_gl_test.sav");
-        let mut m = Melon::boot(rom, &save, 0, None, None).expect("boots");
+        let mut m = Melon::boot(&rom, &save, 0, None, None).expect("boots");
         for xbrz in [false, true] {
             m.set_render_scale(2, xbrz);
             for _ in 0..30 {

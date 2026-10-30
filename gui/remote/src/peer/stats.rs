@@ -10,7 +10,7 @@ use std::{
 };
 
 /// How long the other end may go without answering a ping before it is shown
-/// as not ready: four missed probes at [`super::session::PING_INTERVAL`], so
+/// as not ready: four missed probes at [`crate::session::PING_INTERVAL`], so
 /// one lost datagram never flickers the status red.
 pub const READY_WITHIN: Duration = Duration::from_secs(2);
 
@@ -24,7 +24,7 @@ pub struct RemoteStats {
     pub silent_ms: Option<f32>,
     /// Frames sent, or rebuilt.
     pub frames: u64,
-    /// Frames the pacer decided not to send. See [`super::encoder::Pacer`].
+    /// Frames the pacer decided not to send. See [`crate::encoder::Pacer`].
     pub frames_skipped: u64,
     /// The rate the picture is currently going out at.
     pub video_fps: f32,
@@ -68,7 +68,7 @@ impl RemoteStats {
     /// rather than merely claimed.
     #[must_use]
     pub fn audio_megabits_per_second_raw() -> f32 {
-        super::CONSOLE_SAMPLE_RATE as f32 * 2.0 * 16.0 / 1_000_000.0
+        crate::CONSOLE_SAMPLE_RATE as f32 * 2.0 * 16.0 / 1_000_000.0
     }
 }
 

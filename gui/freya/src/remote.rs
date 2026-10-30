@@ -48,6 +48,11 @@ use crate::{
 /// The DS frame rate.
 const FRAME_RATE: f64 = 33_513_982.0 / 560_190.0;
 
+/// How long the other side may go without answering a ping before the
+/// session counts as over (pings go every 0.5 s; a closed window or a
+/// pulled cable never answers again).
+const PEER_GONE: Duration = Duration::from_secs(5);
+
 /// What both consoles are linked through (kept while hosting).
 #[cfg(feature = "melon")]
 type Medium = melon_lan::mp::Airwaves;
@@ -383,6 +388,44 @@ impl Frontend {
         };
         drop(hosting);
         drop(client);
+    }
+
+    /// Ends a session whose other side went away, and says so (`None`: no
+    /// session, or the peer still answers). A host keeps playing its own
+    /// console; a client's screen goes away, back to the welcome screen, so
+    /// this PC can start a game of its own.
+    pub fn check_remote_peer(&self) -> Option<String> {
+        let lan = lock(&self.lan);
+        let r = &lan.remote;
+        let session = match (&r.hosting, &r.client) {
+            (Some(h), _) => Some((true, h.stream.remote_addr(), h.stream.stats())),
+            (_, Some(c)) => Some((false, c.remote_addr(), c.stats())),
+            _ => None,
+        };
+        drop(lan);
+        let (hosting, peer, stats) = session?;
+        // Never heard yet: the session is still starting.
+        let silent = stats.silent_ms?;
+        if silent < PEER_GONE.as_secs_f32() * 1000.0 {
+            return None;
+        }
+        log::warn!(
+            "Remote Desktop: {peer} silent for {:.0} s, ending the session",
+            silent / 1000.0
+        );
+        let message = if hosting {
+            self.drop_remote_session();
+            format!(
+                "Remote Desktop: the client ({peer}) disconnected. The session ended; your game \
+                 keeps running."
+            )
+        } else {
+            self.stop();
+            format!("Remote Desktop: the host ({peer}) disconnected. The session ended.")
+        };
+        // Also in the Multiplayer dialog, where the session was.
+        lock(&self.lan).remote.error = Some(message.clone());
+        Some(message)
     }
 
     /// Stop button: cancels a pending host / join, or ends the session

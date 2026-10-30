@@ -4,7 +4,7 @@
 //! a header of its own or reads a field by hand — a layout that is written down
 //! twice is a layout that will disagree with itself.
 
-use super::MAX_DATAGRAM;
+use crate::MAX_DATAGRAM;
 
 /// Identifies this protocol's datagrams.
 pub const MAGIC: &[u8; 4] = b"MRD1";
@@ -30,7 +30,7 @@ pub enum Kind {
     /// Latency probe echo, carrying the `Ping`'s value untouched.
     Pong = 6,
     /// "Are you ready?" — sent outside any session by a machine that has not
-    /// joined yet, carrying its wall clock like a `Ping`. See [`super::probe`].
+    /// joined yet, carrying its wall clock like a `Ping`. See [`crate::probe`].
     Probe = 7,
     /// The answer to a `Probe`: its stamp, then one [`PeerState`] byte.
     ProbeReply = 8,

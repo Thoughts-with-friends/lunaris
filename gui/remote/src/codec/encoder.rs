@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{
+use crate::{
     FRAME_PIXELS, MAX_DATAGRAM, Tuning,
     colour::to_565,
     tile::{self, TILE_COUNT},
@@ -215,7 +215,7 @@ impl Pacer {
     /// The frame rate the picture is currently being sent at.
     #[must_use]
     pub fn frames_per_second(&self) -> f32 {
-        super::NATIVE_FPS as f32 / self.interval.max(1) as f32
+        crate::NATIVE_FPS as f32 / self.interval.max(1) as f32
     }
 }
 

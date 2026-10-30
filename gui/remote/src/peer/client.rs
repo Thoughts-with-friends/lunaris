@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use super::{
+use crate::{
     RemoteStats, Tuning,
     control::{self, Request},
     session::{self, Session},

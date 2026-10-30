@@ -829,22 +829,14 @@ impl Frontend {
 mod tests {
     use super::*;
 
-    /// `LUNARIS_TEST_ROM` (a commercial ROM shows more than hello_world).
-    fn rom() -> PathBuf {
-        std::env::var_os("LUNARIS_TEST_ROM").map_or_else(
-            || PathBuf::from("D:/GAME/Emulator/DS/Roms/hello_world.nds"),
-            PathBuf::from,
-        )
-    }
-
     /// Boots the ROM on this build's core headlessly for ~2.5 s and checks that
     /// frames come out at roughly the DS rate, with a picture.
     #[test]
-    #[ignore = "requires a ROM on disk"]
+    #[ignore = "requires a ROM (test_roms.json)"]
     fn boots_the_built_backend() {
         let dir = std::env::temp_dir().join(format!("freya-backend-test-{BACKEND}"));
         std::fs::create_dir_all(&dir).expect("temp dir");
-        let rom = rom();
+        let rom = crate::test_roms::rom("boot");
         let save = dir.join(rom.with_extension("sav").file_name().expect("name"));
         let boot = Boot::new(&rom, save, Settings::default());
         let shared = Arc::new(Shared::default());

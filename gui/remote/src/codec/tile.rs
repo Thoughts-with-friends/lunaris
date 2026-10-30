@@ -4,7 +4,7 @@
 //! the unit a datagram carries whole, and the unit the decoder paints. Nothing
 //! larger is ever a unit — that is what lets a datagram stand on its own.
 
-use super::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 /// The side of a tile, in pixels.
 ///

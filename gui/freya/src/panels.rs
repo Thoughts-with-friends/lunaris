@@ -319,7 +319,8 @@ impl Component for StatusBar {
                 .into_element(),
             if status.running { Action::Open(Window::RomInfo) } else { Action::OpenRom },
         );
-        let fps = status.running.then(|| {
+        // View > Show FPS.
+        let fps = (status.running && view.show_fps).then(|| {
             let text = if limited {
                 format!("{:.1} fps", status.fps)
             } else {

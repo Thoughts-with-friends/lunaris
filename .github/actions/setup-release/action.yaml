@@ -6,8 +6,12 @@ inputs:
     description: "GitHub runner platform"
     required: true
   app_name:
-    description: "Application binary name"
+    description: "Application binary name (the file cargo builds)"
     required: true
+  bin_name:
+    description: "Name to give it in ./build (default app_name)"
+    required: false
+    default: ""
   build_profile:
     description: "Rust build profile"
     required: false
@@ -25,10 +29,10 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        Move-Item -Path ./target/${{ inputs.build_profile }}/${{ inputs.app_name }}.exe -Destination './build'
+        Move-Item -Path ./target/${{ inputs.build_profile }}/${{ inputs.app_name }}.exe -Destination './build/${{ inputs.bin_name || inputs.app_name }}.exe'
 
     - name: Compress outputs (macOS/Linux)
       if: runner.os != 'Windows'
       shell: bash
       run: |
-        mv ./target/${{ inputs.build_profile }}/${{ inputs.app_name }} ./build
+        mv ./target/${{ inputs.build_profile }}/${{ inputs.app_name }} ./build/${{ inputs.bin_name || inputs.app_name }}

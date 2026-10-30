@@ -1,6 +1,6 @@
 //! Asking the other machine whether it is ready, before any session exists.
 //!
-//! A session's own pings ([`super::session`]) say whether a *connected* peer
+//! A session's own pings ([`crate::session`]) say whether a *connected* peer
 //! is still there. This answers the question before that: is anyone hosting
 //! at the address in the Guest IP box, and are they free?
 //!
@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{
+use crate::{
     session::{PING_INTERVAL, would_block},
     stats::READY_WITHIN,
     wire::{self, PeerState},

@@ -186,7 +186,7 @@ impl Default for Config {
             cheat_dir: PathBuf::from("./cheats"),
             log_dir: default_log_dir(),
             window: WindowConfig::default(),
-            audio_volume: 100.0,
+            audio_volume: 20.0,
             emu_speed: 1.0,
             video: VideoConfig::default(),
             lan: LanConfig::default(),

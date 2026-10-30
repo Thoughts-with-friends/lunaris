@@ -17,10 +17,7 @@ use ds_common::view::{Placement, ScreenRect, place};
 use freya::{elements::image::ImageHandle, engine::prelude::AlphaType, prelude::*};
 use futures_lite::StreamExt;
 
-use crate::{
-    state::Ctx,
-    theme::{self, SUCCESS},
-};
+use crate::{state::Ctx, theme};
 
 /// How often the frame pump looks for a new frame.
 const FRAME_POLL: Duration = Duration::from_millis(4);
@@ -103,7 +100,6 @@ impl Component for Screens {
 
         let config = ctx.config.read().clone();
         let running = ctx.status.read().running;
-        let show_fps = config.view.show_fps;
         let a = area();
         let placement = place(&config.view, a.width(), a.height());
         let bottom = placement.screens[1];
@@ -170,7 +166,6 @@ impl Component for Screens {
                         }),
                 )
             }))
-            .maybe_child((running && show_fps).then_some(Osd))
             .maybe_child(placement_hint(&placement, running))
     }
 }
@@ -210,34 +205,6 @@ fn screen_view(
         .shadow(Shadow::new().y(6.).blur(22.).color((0, 0, 0, 110)))
         .child(image(img).expanded().aspect_ratio(AspectRatio::None).sampling_mode(sampling))
         .into_element()
-}
-
-/// Frame rate (and speed) in the top-left corner.
-#[derive(PartialEq)]
-struct Osd;
-
-impl Component for Osd {
-    fn render(&self) -> impl IntoElement {
-        let ctx = use_consume::<Ctx>();
-        let status = ctx.status.read().clone();
-        let speed = ctx.config.read().view.speed;
-        let text = if status.paused {
-            format!("{:.1} fps  ·  paused", status.fps)
-        } else if speed == ds_common::speed::NORMAL {
-            format!("{:.1} fps", status.fps)
-        } else {
-            format!("{:.1} fps  ·  {}", status.fps, ds_common::speed::label(speed))
-        };
-        rect()
-            .position(Position::new_absolute().left(8.).top(8.))
-            .padding((3., 9.))
-            .corner_radius(10.)
-            .background(Color::from_argb(150, 0, 0, 0))
-            .color(theme::rgb(SUCCESS))
-            .font_size(11.5)
-            .font_family("Consolas")
-            .child(text)
-    }
 }
 
 #[cfg(test)]

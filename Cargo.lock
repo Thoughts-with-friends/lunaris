@@ -1462,13 +1462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ds_example"
-version = "0.9.0"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "ds_gpu"
 version = "0.9.0"
 dependencies = [

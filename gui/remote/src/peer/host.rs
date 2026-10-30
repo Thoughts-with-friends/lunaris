@@ -13,7 +13,7 @@ use std::{
     },
 };
 
-use super::{
+use crate::{
     RemoteStats, Tuning,
     audio::Downsampler,
     control::{ControlServer, Pending},
@@ -121,10 +121,10 @@ impl RemoteHost {
     ///
     /// `samples` is interleaved stereo `i16` at the console's own rate. It is
     /// decimated to [`Tuning::audio_rate`] on the way out and resampled back up
-    /// by the client — see [`super::audio`] for why that is where the quality
+    /// by the client — see [`crate::audio`] for why that is where the quality
     /// is kept.
     pub fn send_audio(&self, samples: &[i16]) {
-        self.send_audio_at(samples, super::CONSOLE_SAMPLE_RATE);
+        self.send_audio_at(samples, crate::CONSOLE_SAMPLE_RATE);
     }
 
     /// [`Self::send_audio`] for a console whose sound is at `rate` Hz.

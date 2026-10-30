@@ -128,6 +128,13 @@ impl Ctx {
             let mut menus = self.menus;
             menus.set(self.build_menus());
         }
+        // The Remote Desktop partner went away: say so (a client is back on
+        // the welcome screen, free to play).
+        if let Some(gone) = self.front.check_remote_peer() {
+            self.show_error(gone);
+            let mut menus = self.menus;
+            menus.set(self.build_menus());
+        }
         let rom_path = lock(&self.front.rom).clone();
         let next = Status {
             running: self.front.shared.is_running() && lock(&self.front.emu).is_some(),

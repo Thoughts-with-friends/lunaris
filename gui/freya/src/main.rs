@@ -29,6 +29,8 @@ mod panels;
 mod remote;
 mod screens;
 mod state;
+#[cfg(test)]
+mod test_roms;
 mod theme;
 mod titlebar;
 #[cfg(test)]

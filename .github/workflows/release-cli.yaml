@@ -23,17 +23,19 @@ jobs:
             app_name: melon_egui
             features: release
 
-          # freya: the core is chosen at build time, one archive per core
-          # (each holds `lunaris_freya[.exe]`).
+          # freya: the core is chosen at build time, one archive per core.
+          # Cargo builds `lunaris_freya[.exe]` either way; the melonDS one is
+          # renamed `melon_freya[.exe]` so the two never share a name.
           - package: lunaris_freya
             app_name: lunaris_freya
-            asset: freya-lunaris
+            asset: lunaris_freya
             features: lunaris,release
             no_default_features: true
 
           - package: lunaris_freya
-            app_name: melon_freya
-            asset: freya-melon
+            app_name: lunaris_freya
+            bin_name: melon_freya
+            asset: melon_freya
             features: melon,release
             no_default_features: true
 
@@ -67,6 +69,7 @@ jobs:
           target: ${{ matrix.target.target }}
           package: ${{ matrix.app.package }}
           app_name: ${{ matrix.app.app_name }}
+          bin_name: ${{ matrix.app.bin_name || matrix.app.app_name }}
           profile: ${{ env.PROFILE }}
           features: ${{ matrix.app.features }}
           no_default_features: ${{ matrix.app.no_default_features || false }}

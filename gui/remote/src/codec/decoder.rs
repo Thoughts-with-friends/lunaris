@@ -1,6 +1,6 @@
 //! Datagrams in, picture out — in any order, with any of them missing.
 
-use super::{
+use crate::{
     FRAME_PIXELS, SCREEN_HEIGHT, SCREEN_WIDTH,
     colour::from_565,
     tile::{self, TILE_COUNT},
