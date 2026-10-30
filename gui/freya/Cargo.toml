@@ -12,6 +12,10 @@ version.workspace = true
 # freya 0.5 needs a newer compiler than the workspace minimum.
 rust-version = "1.99"
 
+[build-dependencies]
+winres = "0.1.12" # Meta information can be added to the exe.
+
+
 [dependencies]
 # Prerelease: pinned exactly, later release candidates may change the API.
 freya = { version = "=0.5.0-rc.10", features = [

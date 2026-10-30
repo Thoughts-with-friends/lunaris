@@ -416,6 +416,8 @@ fn emulate(
     let mut next = Instant::now();
     let mut last_frame = Instant::now();
     let mut idle = 0_u64;
+    // Resolution / xBRZ of the last published frame.
+    let mut published = shared.render.load(Ordering::Relaxed);
     shared.frame_taken.store(true, Ordering::Release);
     let (mut fps_start, mut fps_frames) = (Instant::now(), 0_u32);
 
@@ -445,6 +447,15 @@ fn emulate(
             if idle.is_multiple_of(DEBUG_EVERY) {
                 shared.draw_debug(core);
             }
+            // Video settings changed while paused: the paused frame again,
+            // the new way (it would wait for Resume otherwise).
+            let render = shared.render.load(Ordering::Relaxed);
+            if render != published {
+                core.set_render_scale((render & 0xFF).clamp(1, 4) as usize, render & 0x100 != 0);
+                publish_frame(core, shared, hd, true, &mut rgba);
+                shared.frame_seq.fetch_add(1, Ordering::Release);
+                published = render;
+            }
             std::thread::sleep(Duration::from_millis(10));
             next = Instant::now();
             metered = 0;
@@ -464,6 +475,7 @@ fn emulate(
         }
         let render = shared.render.load(Ordering::Relaxed);
         core.set_render_scale((render & 0xFF).clamp(1, 4) as usize, render & 0x100 != 0);
+        published = render;
         let codes = lock(&shared.cheats).take();
         if let Some(codes) = codes {
             core.set_cheats(codes);

@@ -18,6 +18,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -29,11 +30,12 @@ use std::{
 use ds_common::frontend::lock;
 use freya::prelude::*;
 use melon_lan::mp::Airwaves;
-use melon_remote::{RemoteClient, RemoteHost, RemoteStats, Tuning};
+use melon_remote::{Prober, Readiness, RemoteClient, RemoteHost, RemoteStats, Tuning};
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    backend::{Core, melon::Melon, push_rgba},
-    dialogs::{field, note},
+    backend::{Core, HdJob, PostScale, melon::Melon, push_rgba},
+    dialogs::{field, fold, hint, note, section, stepper},
     frontend::Frontend,
     lan::MelonLink,
     state::Ctx,
@@ -68,7 +70,34 @@ pub struct Remote {
     client: Option<Arc<RemoteClient>>,
     /// A host / join still waiting for the other side, and its cancel flag.
     waiting: Option<(String, Arc<AtomicBool>)>,
+    /// Whether `waiting` is a host (it cannot ask anyone: nobody known yet).
+    waiting_host: bool,
     pub error: Option<String>,
+    /// Asks the join address whether someone hosts there (made on first use).
+    probe: Option<Prober>,
+}
+
+/// The addresses typed last and the knobs for the next session
+/// (`freya_remote.json`, melon_egui keeps them in its settings).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RemoteConfig {
+    /// Where a host listens.
+    pub bind: String,
+    /// The host a client joins.
+    pub address: String,
+    pub tuning: Tuning,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        let port = Tuning::default().port;
+        Self {
+            bind: format!("0.0.0.0:{port}"),
+            address: format!("127.0.0.1:{port}"),
+            tuning: Tuning::default(),
+        }
+    }
 }
 
 /// What the dialog shows.
@@ -92,6 +121,33 @@ fn second_save(save: &Path) -> PathBuf {
 }
 
 impl Frontend {
+    fn remote_config_path(&self) -> PathBuf {
+        self.instance.root().join("freya_remote.json")
+    }
+
+    pub fn remote_config(&self) -> RemoteConfig {
+        let mut config: RemoteConfig = std::fs::read_to_string(self.remote_config_path())
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        config.tuning.normalize();
+        config
+    }
+
+    pub fn set_remote_config(&self, config: &RemoteConfig) {
+        if let Ok(text) = serde_json::to_string_pretty(config) {
+            let _ = std::fs::write(self.remote_config_path(), text);
+        }
+    }
+
+    /// Changes the knobs for the next session.
+    pub fn set_remote_tuning(&self, tuning: Tuning) {
+        let mut config = self.remote_config();
+        config.tuning = tuning;
+        config.tuning.normalize();
+        self.set_remote_config(&config);
+    }
+
     /// Starts hosting on `bind`: waits (its own thread) for a client, then
     /// runs the second console for it.
     ///
@@ -131,7 +187,8 @@ impl Frontend {
         + Send
         + 'static,
     ) -> Result<(), String> {
-        let tuning = Tuning::default();
+        let mut config = self.remote_config();
+        let tuning = config.tuning;
         let addr = parse(address, tuning.port)?;
         let cancel = Arc::new(AtomicBool::new(false));
         {
@@ -146,8 +203,16 @@ impl Frontend {
                 format!("Connecting to {addr}…")
             };
             lan.remote.waiting = Some((what, Arc::clone(&cancel)));
+            lan.remote.waiting_host = hosting;
             lan.remote.error = None;
         }
+        // Saved on the attempt, so a retry does not mean typing it again.
+        if hosting {
+            config.bind = address.trim().to_owned();
+        } else {
+            config.address = address.trim().to_owned();
+        }
+        self.set_remote_config(&config);
         let front = Arc::clone(self);
         let name = if hosting { "remote-host" } else { "remote-client" };
         std::thread::Builder::new()
@@ -267,6 +332,68 @@ impl Frontend {
         (view, pending.0, pending.1)
     }
 
+    /// Is the other machine ready? `(true, …)` green, `(false, …)` red.
+    /// Asked of `join_address` while this PC could still join someone; in a
+    /// session the session's own pings answer instead (melon_egui's).
+    pub fn remote_partner(&self, join_address: &str) -> (bool, String) {
+        let port = self.remote_config().tuning.port;
+        let target = parse(join_address, port);
+        let (stats, hosting_alone, knocking, readiness) = {
+            let mut lan = lock(&self.lan);
+            let r = &mut lan.remote;
+            let stats = r
+                .hosting
+                .as_ref()
+                .map(|h| h.stream.stats())
+                .or_else(|| r.client.as_ref().map(|c| c.stats()));
+            let hosting_alone = r.waiting.is_some() && r.waiting_host;
+            if r.probe.is_none() {
+                r.probe = Prober::start().map_err(|e| log::warn!("Remote Desktop probe: {e}")).ok();
+            }
+            if let Some(probe) = &r.probe {
+                probe.set_target(target.as_ref().ok().copied());
+                probe.set_active(stats.is_none() && !hosting_alone);
+            }
+            let found = (
+                stats,
+                hosting_alone,
+                r.waiting.is_some(),
+                r.probe.as_ref().map(Prober::readiness),
+            );
+            drop(lan);
+            found
+        };
+
+        if let Some(s) = stats {
+            return match s.silent_ms {
+                _ if s.peer_ready() => (true, format!("connected · {:.0} ms round trip", s.rtt_ms)),
+                Some(ms) => (false, format!("silent for {:.0} s", ms / 1000.0)),
+                None => (false, "has not answered yet".to_owned()),
+            };
+        }
+        if hosting_alone {
+            return (false, format!("nobody has joined yet (UDP port {port} must be reachable)"));
+        }
+        let Ok(target) = target else {
+            return (false, "the join address does not parse".to_owned());
+        };
+        match readiness {
+            Some(Readiness::Ready { rtt_ms }) => {
+                (true, format!("{target} is hosting and waiting · {rtt_ms:.0} ms"))
+            }
+            Some(Readiness::Busy) => (false, format!("{target} is hosting someone else")),
+            _ if knocking => (false, format!("knocking on {target}, no host yet")),
+            _ => (false, format!("nobody hosts at {target}")),
+        }
+    }
+
+    /// The dialog closed: stop asking.
+    pub fn pause_remote_probe(&self) {
+        if let Some(probe) = &lock(&self.lan).remote.probe {
+            probe.set_active(false);
+        }
+    }
+
     pub fn clear_remote_error(&self) {
         lock(&self.lan).remote.error = None;
     }
@@ -346,6 +473,14 @@ impl Core for RemoteScreen {
         push_rgba(&self.screens, rgba);
     }
 
+    /// The stream is 256x192: scaled here like the software renderer's
+    /// frames (xBRZ or pixels repeated), as melon_egui's client does.
+    fn hd_job(&mut self, scale: usize, xbrz: bool) -> Option<Box<dyn HdJob>> {
+        let mut rgba = Vec::with_capacity(256 * 384 * 4);
+        self.frame(&mut rgba);
+        Some(Box::new(PostScale { rgba, scale, xbrz }))
+    }
+
     fn set_cheats(&mut self, _codes: Vec<Vec<u32>>) {}
 
     fn flush_save(&mut self) -> Result<(), String> {
@@ -361,9 +496,9 @@ impl Component for RemotePanel {
     fn render(&self) -> impl IntoElement {
         let ctx = use_consume::<Ctx>();
         let front = Arc::clone(&ctx.front);
-        let port = Tuning::default().port;
-        let bind = use_state(|| format!("0.0.0.0:{port}"));
-        let address = use_state(|| format!("127.0.0.1:{port}"));
+        let config = front.remote_config();
+        let bind = use_state(|| config.bind.clone());
+        let address = use_state(|| config.address.clone());
         let mut tick = use_state(|| 0_u32);
         use_hook(move || {
             spawn(async move {
@@ -373,18 +508,26 @@ impl Component for RemotePanel {
                 }
             });
         });
+        {
+            let front = Arc::clone(&front);
+            use_drop(move || front.pause_remote_probe());
+        }
         let _ = tick.read();
         let (view, waiting, error) = front.remote_view();
+        let (ready, partner) = front.remote_partner(&address.read());
         let running = ctx.status.read().running;
 
-        let mut out = rect().width(Size::fill());
+        let mut out = rect().width(Size::fill()).child(note(
+            "The host runs both consoles (start the game there first) and streams the second \
+             one: smoother than LAN play over a slow link or VPN. The client needs no ROM.",
+        ));
         if let Some(e) = error {
             let f = Arc::clone(&front);
             out = out.child(
                 rect()
                     .horizontal()
                     .spacing(8.)
-                    .padding((0., 0., 6., 0.))
+                    .padding((6., 0.))
                     .color(theme::rgb(DANGER))
                     .font_size(12.5)
                     .child(e)
@@ -396,6 +539,11 @@ impl Component for RemotePanel {
                     ),
             );
         }
+        // "Is the other side up yet?" is asked before pressing Host or Join.
+        out = out.child(field(
+            "Partner",
+            rect().color(theme::rgb(if ready { SUCCESS } else { DANGER })).child(partner),
+        ));
         let stop_front = Arc::clone(&front);
         let stop_ctx = ctx.clone();
         let stop = Button::new()
@@ -406,7 +554,6 @@ impl Component for RemotePanel {
             .child("Stop Remote Desktop");
 
         if let Some(v) = view {
-            let s = v.stats;
             let role = if v.hosting {
                 "hosting: this PC runs both consoles, the second is streamed"
             } else {
@@ -414,16 +561,9 @@ impl Component for RemotePanel {
             };
             return out
                 .child(field("Session", rect().child(format!("{role} · peer {}", v.peer))))
-                .child(field(
-                    "Link",
-                    rect().color(theme::rgb(if s.peer_ready() { SUCCESS } else { WARNING })).child(
-                        format!(
-                            "{:.1} ms round trip · video {:.1} fps, {:.2} Mbit/s",
-                            s.rtt_ms,
-                            s.video_fps,
-                            s.video_megabits_per_second()
-                        ),
-                    ),
+                .child(stats_rows(&v.stats))
+                .child(note(
+                    "The client owns nothing: the game, its save and its speed are the host's.",
                 ))
                 .child(rect().margin((8., 0., 0., 0.)).child(stop));
         }
@@ -474,9 +614,145 @@ impl Component for RemotePanel {
                         .child("Join"),
                 ),
         ))
-        .child(note(
-            "The host runs both consoles (start the game there first) and streams the second \
-             one: smoother than LAN play over a slow link or VPN. The client needs no ROM.",
+        .child(TuningPart)
+    }
+}
+
+/// The live session's numbers (melon_egui's grid).
+fn stats_rows(s: &RemoteStats) -> Element {
+    let row = |label: &str, value: String| field(label, rect().font_size(12.5).child(value));
+    rect()
+        .width(Size::fill())
+        .child(section("session"))
+        // A press reaches the console in half a round trip, the picture comes
+        // back in the other half, plus the frame it was drawn in.
+        .child(row("Input latency", format!("{:.0} ms", s.rtt_ms + 16.7)))
+        .child(row("Round trip", format!("{:.1} ms", s.rtt_ms)))
+        .child(row(
+            "Video",
+            format!(
+                "{:.0} fps · {:.2} Mbit/s · last frame {} tiles, {} bytes",
+                s.video_fps,
+                s.video_megabits_per_second(),
+                s.last_frame_tiles,
+                s.last_frame_bytes
+            ),
         ))
+        .child(row(
+            "Audio",
+            format!(
+                "{} Hz · {:.2} Mbit/s (at 48 kHz: {:.2})",
+                s.audio_rate,
+                s.audio_megabits_per_second(),
+                RemoteStats::audio_megabits_per_second_raw()
+            ),
+        ))
+        .child(row("Frames skipped", format!("{} (to stay under the bit rate)", s.frames_skipped)))
+        .child(row(
+            "Frames",
+            format!(
+                "{} sent · {} datagrams · {} MiB · {} discarded",
+                s.frames,
+                s.video_datagrams,
+                s.video_bytes / (1024 * 1024),
+                s.discarded
+            ),
+        ))
+        .child(row(
+            "Audio delivered",
+            format!("{} sample pairs · {} dropped (late)", s.audio_pairs, s.audio_dropped),
+        ))
+        .child(row("Input samples", s.inputs.to_string()))
+        .into_element()
+}
+
+/// The knobs for the next session (folded by default, like melon_egui's).
+#[derive(PartialEq)]
+struct TuningPart;
+
+impl Component for TuningPart {
+    fn render(&self) -> impl IntoElement {
+        let ctx = use_consume::<Ctx>();
+        let open = use_state(|| false);
+        let tuning = use_state(|| ctx.front.remote_config().tuning);
+        let mut port = use_state(|| tuning.peek().port.to_string());
+        // Changes, clamps, saves and shows the knobs.
+        let set = {
+            let front = Arc::clone(&ctx.front);
+            Rc::new(move |change: &dyn Fn(&mut Tuning)| {
+                // A copy of the handle: `Fn`, so the `Rc` can call it.
+                let mut tuning = tuning;
+                let mut t = *tuning.peek();
+                change(&mut t);
+                t.normalize();
+                front.set_remote_tuning(t);
+                tuning.set(t);
+            })
+        };
+        let on = |change: fn(&mut Tuning)| {
+            let set = Rc::clone(&set);
+            move |_: Event<PressEventData>| set(&change)
+        };
+
+        let out = rect().width(Size::fill()).child(fold(open, "Remote Desktop settings"));
+        if !*open.read() {
+            return out;
+        }
+        let t = *tuning.read();
+        let port_set = Rc::clone(&set);
+        out.child(note("Applies to the next session."))
+            .child(field(
+                "Refresh period",
+                stepper(
+                    format!("{} frames", t.refresh_period),
+                    on(|t| t.refresh_period = t.refresh_period.saturating_sub(1)),
+                    on(|t| t.refresh_period = t.refresh_period.saturating_add(1)),
+                    "a lost tile is repainted within this many sent frames",
+                ),
+            ))
+            .child(field(
+                "Stream audio",
+                Switch::new().toggled(t.audio).on_toggle({
+                    let set = Rc::clone(&set);
+                    move |()| set(&|t: &mut Tuning| t.audio ^= true)
+                }),
+            ))
+            .child(field(
+                "Audio lag limit",
+                stepper(
+                    format!("{} ms", t.max_audio_lag_ms),
+                    on(|t| t.max_audio_lag_ms = t.max_audio_lag_ms.saturating_sub(10)),
+                    on(|t| t.max_audio_lag_ms = t.max_audio_lag_ms.saturating_add(10)),
+                    "older sound is dropped rather than drifting behind",
+                ),
+            ))
+            .child(field(
+                "Port",
+                rect()
+                    .horizontal()
+                    .spacing(10.)
+                    .cross_align(Alignment::Center)
+                    .child(Input::new(port).width(Size::px(90.)).on_validate(
+                        move |v: InputValidator| {
+                            let text = v.text().clone();
+                            let parsed = text.parse::<u16>().ok().filter(|p| *p > 0);
+                            v.set_valid(text.is_empty() || parsed.is_some());
+                            if let Some(p) = parsed {
+                                port_set(&move |t: &mut Tuning| t.port = p);
+                            }
+                        },
+                    ))
+                    .child(hint("for an address typed without one")),
+            ))
+            .child(
+                rect().margin((6., 0., 0., 0.)).child(
+                    Button::new()
+                        .on_press(move |_| {
+                            set(&|t: &mut Tuning| *t = Tuning::default());
+                            port.set(Tuning::default().port.to_string());
+                        })
+                        .child("Reset to defaults"),
+                ),
+            )
     }
 }

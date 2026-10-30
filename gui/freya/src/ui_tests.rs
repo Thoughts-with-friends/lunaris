@@ -295,7 +295,63 @@ fn upscaled_frames_have_the_internal_resolution() {
             run_frames(&front, 1);
         }
     }
+    // Changed while paused: the paused frame comes back the new way.
+    front.shared.set_paused(true);
+    std::thread::sleep(Duration::from_millis(50));
+    let paused_at = front.shared.frames();
+    front.shared.set_render(2, true);
+    let start = Instant::now();
+    while front.shared.frame_since(0).is_none_or(|(_, width, _)| width != 512) {
+        assert!(start.elapsed() < Duration::from_secs(5), "the paused frame was not redone");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // One republish, no emulated frames.
+    assert_eq!(front.shared.frames(), paused_at + 1, "still paused");
+    front.shared.set_paused(false);
     front.stop();
+}
+
+/// The Multiplayer dialog (melonDS): LAN by IP and Remote Desktop, each with
+/// its knobs folded away; a press on a knob is saved for the next session.
+#[cfg(feature = "melon")]
+#[test]
+fn multiplayer_dialog_shows_both_modes() {
+    let front = front("mp_dialog");
+    let app = App { front: Arc::clone(&front), dialog: Some(ds_common::menu::Window::Multiplayer) };
+    let (mut t, ()) =
+        TestingRunner::new(move || app.clone(), Size2D::new(1000., 1400.), |_| {}, 1.);
+    t.sync_and_update();
+    t.poll(Duration::from_millis(20), Duration::from_millis(300));
+    let shown = labels(&t);
+    for text in ["Host address", "Join host", "Partner", "VPN tuning", "Remote Desktop settings"] {
+        assert!(shown.iter().any(|l| l == text), "{text:?} in {shown:?}");
+    }
+    assert!(shown.iter().any(|l| l.starts_with("nobody hosts at")), "{shown:?}");
+
+    click(&mut t, "Remote Desktop settings");
+    click(&mut t, "VPN tuning");
+    let shown = labels(&t);
+    for text in ["Refresh period", "Audio lag limit", "Jitter factor", "Pace to the link"] {
+        assert!(shown.iter().any(|l| l == text), "{text:?} in {shown:?}");
+    }
+    if let Some(path) = std::env::var_os("FREYA_SNAPSHOT") {
+        t.render_to_file(PathBuf::from(path));
+    }
+    // The "+" right of the refresh period.
+    let plus = t
+        .find(|node, el| {
+            let label = (el as &dyn Any).downcast_ref::<LabelElement>()?;
+            (label.text == "8 frames").then(|| {
+                let a = node.layout().area;
+                (f64::from(a.max_x()) + 30., f64::from(a.center().y))
+            })
+        })
+        .expect("refresh period");
+    t.click_cursor(plus);
+    t.poll(Duration::from_millis(10), Duration::from_millis(150));
+    assert_eq!(front.remote_config().tuning.refresh_period, 9, "{:?}", labels(&t));
+    assert!(labels(&t).iter().any(|l| l == "9 frames"));
+    front.pause_remote_probe();
 }
 
 /// Remote Desktop (melonDS): one frontend hosts with a game running, the
@@ -308,8 +364,15 @@ fn remote_desktop_over_localhost() {
     let host = front("rd_host");
     let client = front("rd_client");
     host.start(&rom_dir().join("Newスーパーマリオブラザーズ.nds")).expect("ROM loads");
+    assert!(!client.remote_partner("127.0.0.1:47265").0, "nobody hosts yet");
     host.host_remote("127.0.0.1:47265").expect("hosting starts");
-    std::thread::sleep(Duration::from_millis(100));
+    // The client's probe sees the waiting host before it joins.
+    let start = Instant::now();
+    while !client.remote_partner("127.0.0.1:47265").0 {
+        assert!(start.elapsed() < Duration::from_secs(10), "the probe never saw the host");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(!host.remote_partner("127.0.0.1:47265").0, "a waiting host has no partner");
     client.join_remote("127.0.0.1:47265").expect("joining starts");
 
     let start = Instant::now();
@@ -333,6 +396,14 @@ fn remote_desktop_over_localhost() {
     }
     client.shared.set_keys(1);
     run_frames(&client, 30);
+    assert!(host.remote_partner("").0, "in a session, the session's pings answer");
+    // Video settings apply to the streamed picture too (xBRZ, 2x).
+    client.shared.set_render(2, true);
+    let start = Instant::now();
+    while client.shared.frame_since(0).is_none_or(|(_, width, _)| width != 512) {
+        assert!(start.elapsed() < Duration::from_secs(10), "the stream was not upscaled");
+        run_frames(&client, 1);
+    }
     let host_stats = host.remote_view().0.expect("hosting").stats;
     assert!(host_stats.frames > 0, "the host sent video: {host_stats:?}");
     let client_stats = client.remote_view().0.expect("joined").stats;

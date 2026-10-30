@@ -12,6 +12,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -19,6 +20,7 @@ use melon_lan::{LanGuest, LanHost, LinkPace, LinkStats, Tuning};
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use crate::dialogs::{fold, hint, stepper};
 
 /// The port when an address has none (melon_egui's).
 const LAN_PORT: u16 = 7064;
@@ -57,11 +59,17 @@ pub struct MelonLanConfig {
     pub bind: String,
     /// The host a guest joins.
     pub address: String,
+    /// The link's knobs for the next connection (melon_egui's VPN tuning).
+    pub tuning: Tuning,
 }
 
 impl Default for MelonLanConfig {
     fn default() -> Self {
-        Self { bind: format!("0.0.0.0:{LAN_PORT}"), address: format!("127.0.0.1:{LAN_PORT}") }
+        Self {
+            bind: format!("0.0.0.0:{LAN_PORT}"),
+            address: format!("127.0.0.1:{LAN_PORT}"),
+            tuning: Tuning::default(),
+        }
     }
 }
 
@@ -87,10 +95,12 @@ impl Frontend {
     }
 
     pub fn melon_lan_config(&self) -> MelonLanConfig {
-        std::fs::read_to_string(self.melon_lan_path())
+        let mut config: MelonLanConfig = std::fs::read_to_string(self.melon_lan_path())
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        config.tuning.normalize();
+        config
     }
 
     pub fn set_melon_lan_config(&self, config: &MelonLanConfig) {
@@ -121,6 +131,7 @@ impl Frontend {
             config.address = address.trim().to_owned();
         }
         self.set_melon_lan_config(&config);
+        let tuning = config.tuning;
         {
             let mut lan = lock(&self.lan);
             lan.error = None;
@@ -133,7 +144,6 @@ impl Frontend {
 
         let front = Arc::clone(self);
         let spawned = std::thread::Builder::new().name("melon-lan".to_owned()).spawn(move || {
-            let tuning = Tuning::default();
             let linked = if hosting {
                 LanHost::accept(addr, tuning).and_then(|link| {
                     Ok((
@@ -397,5 +407,109 @@ impl Component for LanPart {
             } else {
                 "Start a game first: the link restarts it on both consoles."
             }))
+            .child(LinkTuning)
+    }
+}
+
+/// The link's knobs for the next connection: what a VPN needs varies a lot,
+/// so they are editable, folded by default (melon_egui's VPN tuning).
+#[derive(PartialEq)]
+struct LinkTuning;
+
+impl Component for LinkTuning {
+    fn render(&self) -> impl IntoElement {
+        let ctx = use_consume::<Ctx>();
+        let open = use_state(|| false);
+        let tuning = use_state(|| ctx.front.melon_lan_config().tuning);
+        // Changes, clamps, saves and shows the knobs.
+        let set = {
+            let front = Arc::clone(&ctx.front);
+            Rc::new(move |change: &dyn Fn(&mut Tuning)| {
+                // A copy of the handle: `Fn`, so the `Rc` can call it.
+                let mut tuning = tuning;
+                let mut t = *tuning.peek();
+                change(&mut t);
+                t.normalize();
+                let mut config = front.melon_lan_config();
+                config.tuning = t;
+                front.set_melon_lan_config(&config);
+                tuning.set(t);
+            })
+        };
+        let on = |change: fn(&mut Tuning)| {
+            let set = Rc::clone(&set);
+            move |_: Event<PressEventData>| set(&change)
+        };
+
+        let out = rect().width(Size::fill()).child(fold(open, "VPN tuning"));
+        if !*open.read() {
+            return out;
+        }
+        let t = *tuning.read();
+        let pace_set = Rc::clone(&set);
+        out.child(note("Applies to the next connection."))
+            .child(field(
+                "Min reply budget",
+                stepper(
+                    format!("{} ms", t.min_budget_ms),
+                    on(|t| t.min_budget_ms = t.min_budget_ms.saturating_sub(1)),
+                    on(|t| t.min_budget_ms = t.min_budget_ms.saturating_add(1)),
+                    "the reply wait never goes below this",
+                ),
+            ))
+            .child(field(
+                "Max reply budget",
+                stepper(
+                    format!("{} ms", t.max_budget_ms),
+                    on(|t| t.max_budget_ms = t.max_budget_ms.saturating_sub(10)),
+                    on(|t| t.max_budget_ms = t.max_budget_ms.saturating_add(10)),
+                    "the worst link it still tries to play over",
+                ),
+            ))
+            .child(field(
+                "Jitter factor",
+                stepper(
+                    format!("× {}", t.jitter_factor),
+                    on(|t| t.jitter_factor = t.jitter_factor.saturating_sub(1)),
+                    on(|t| t.jitter_factor = t.jitter_factor.saturating_add(1)),
+                    "multiples of the jitter added to the wait",
+                ),
+            ))
+            .child(field(
+                "Reply copies",
+                stepper(
+                    t.reply_copies.to_string(),
+                    on(|t| t.reply_copies = t.reply_copies.saturating_sub(1)),
+                    on(|t| t.reply_copies = t.reply_copies.saturating_add(1)),
+                    "each reply and CMD goes out this many times",
+                ),
+            ))
+            .child(field(
+                "Batch window",
+                stepper(
+                    format!("{} ms", t.batch_window_ms),
+                    on(|t| t.batch_window_ms = t.batch_window_ms.saturating_sub(1)),
+                    on(|t| t.batch_window_ms = t.batch_window_ms.saturating_add(1)),
+                    "other frames wait this long to share a datagram (0: off)",
+                ),
+            ))
+            .child(field(
+                "Pace to the link",
+                rect()
+                    .horizontal()
+                    .spacing(10.)
+                    .cross_align(Alignment::Center)
+                    .child(Switch::new().toggled(t.pace_to_link).on_toggle(move |()| {
+                        pace_set(&|t: &mut Tuning| t.pace_to_link ^= true);
+                    }))
+                    .child(hint("off: 59.83 fps, rounds the link misses are dropped")),
+            ))
+            .child(
+                rect().margin((6., 0., 0., 0.)).child(
+                    Button::new()
+                        .on_press(move |_| set(&|t: &mut Tuning| *t = Tuning::default()))
+                        .child("Reset to defaults"),
+                ),
+            )
     }
 }

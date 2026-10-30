@@ -27,7 +27,7 @@ impl Component for Dialogs {
         rect().maybe_child(open.map(|window| {
             let (title, width) = match window {
                 Window::RomInfo => ("ROM info", 560.),
-                Window::Multiplayer => ("Multiplayer", 460.),
+                Window::Multiplayer => ("Multiplayer", 600.),
                 Window::EmuSettings => ("Emu settings", 600.),
                 Window::Input => ("Input and hotkeys", 560.),
                 Window::Audio => ("Audio settings", 420.),
@@ -208,5 +208,48 @@ pub fn note(text: &str) -> Element {
         .font_size(11.5)
         .color(theme::rgb(TEXT_FAINT))
         .child(text.to_owned())
+        .into_element()
+}
+
+/// A dim hint beside a control.
+#[cfg(feature = "melon")]
+pub fn hint(text: &str) -> Element {
+    rect().font_size(11.5).color(theme::rgb(TEXT_DIM)).child(text.to_owned()).into_element()
+}
+
+/// `−  value  +`, then a hint.
+#[cfg(feature = "melon")]
+pub fn stepper(
+    value: String,
+    down: impl FnMut(Event<PressEventData>) + 'static,
+    up: impl FnMut(Event<PressEventData>) + 'static,
+    text: &str,
+) -> Element {
+    rect()
+        .horizontal()
+        .spacing(8.)
+        .cross_align(Alignment::Center)
+        .child(Button::new().compact().on_press(down).child("−"))
+        .child(rect().width(Size::px(70.)).main_align(Alignment::Center).child(value))
+        .child(Button::new().compact().on_press(up).child("+"))
+        .child(hint(text))
+        .into_element()
+}
+
+/// A `▸ title` line that opens and closes what follows it.
+#[cfg(feature = "melon")]
+pub fn fold(mut open: State<bool>, title: &str) -> Element {
+    rect()
+        .horizontal()
+        .spacing(6.)
+        .margin((10., 0., 0., 0.))
+        .font_size(13.)
+        .color(theme::rgb(TEXT_DIM))
+        .on_press(move |_| {
+            let now = *open.peek();
+            open.set(!now);
+        })
+        .child(if *open.read() { "▾" } else { "▸" })
+        .child(title.to_owned())
         .into_element()
 }
