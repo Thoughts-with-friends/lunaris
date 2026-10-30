@@ -23,6 +23,11 @@ jobs:
             app_name: melon_egui
             features: release
 
+          # The block-design debugger (gui/designer).
+          - package: designer
+            app_name: designer
+            features: release
+
           # freya: the core is chosen at build time, one archive per core.
           # Cargo builds `lunaris_freya[.exe]` either way; the melonDS one is
           # renamed `melon_freya[.exe]` so the two never share a name.
