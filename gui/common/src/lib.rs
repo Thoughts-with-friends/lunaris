@@ -1,10 +1,11 @@
-//! Backend-neutral helpers shared by the `lunaris` (imgui) and `lunaris-egui`
-//! front ends: the savestate file container and screen framebuffer math.
-//!
-//! See `docs/design/egui-migration-design.md` §3.2.
+//! What the lunaris front ends (egui, freya) share on top of the core
+//! crates: [`console::Console`] (one running DS with its audio), boot,
+//! savestate files, cheats, config, input and screen math.
 
+pub mod audio;
 pub mod cheat_map;
 pub mod config;
+pub mod console;
 pub mod framebuffer;
 pub mod input;
 pub mod loader;

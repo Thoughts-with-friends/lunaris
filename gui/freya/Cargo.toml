@@ -31,19 +31,20 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
 
-# The Cogi backend: cogids-rs's DS core, plus the frontend helpers (menus,
-# view, instance folder, audio, gamepads) this GUI was written against.
-ds_common = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3" }
-ds_emu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3", features = [
-    "log",
-] }
-ds_gpu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3", optional = true }
-ds_spu = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "830add3", optional = true }
+# The frontend helpers (menus, view, instance folder, audio, gamepads) this
+# GUI was written against, from cogids-rs. Its core crates are patched to
+# this repository's `core/*` (root Cargo.toml), so they are the same crates
+# as the ones below.
+ds_common = { git = "https://github.com/Thoughts-with-friends/cogids-rs.git", rev = "c023f94" }
+ds_emu = { workspace = true, features = ["log"] }
+ds_gpu = { workspace = true, optional = true }
+ds_spu = { workspace = true, optional = true }
 
-# The Lunaris backend: this repository's core.
-nds-core = { workspace = true, optional = true }
+# The Lunaris backend: this repository's core (`core/*`) as the egui GUI
+# drives it.
 lunaris_gui_common = { workspace = true, optional = true }
-lunaris_net = { workspace = true, optional = true }
+ds_net = { workspace = true, optional = true }
+ds_net_gui = { workspace = true, optional = true }
 
 # The melonDS backend (same bindings as melon_egui). Building it compiles the
 # melonDS C++ core, which needs LLVM (see gui/melon_egui/src/main.rs).
@@ -61,12 +62,11 @@ xbrz-rs = { version = "0.1.0", optional = true }
 #
 #   cargo build --release -p lunaris_freya --features release                                  # Lunaris
 #   cargo build --release -p lunaris_freya --no-default-features --features melon,release      # melonDS
-#   cargo build --release -p lunaris_freya --no-default-features --features cogi,release       # Cogi
 #
-# or `cargo xtask build --gui freya --backend <lunaris|melon|cogi> --release`.
+# or `cargo xtask build --gui freya --backend <lunaris|melon> --release`.
 [features]
 default = ["lunaris"]
-lunaris = ["dep:nds-core", "dep:lunaris_gui_common", "dep:lunaris_net", "dep:xbrz-rs"]
+lunaris = ["dep:lunaris_gui_common", "dep:ds_net_gui", "dep:ds_gpu", "dep:ds_net"]
 melon = [
     "dep:melonds",
     "dep:chrono",
@@ -78,7 +78,6 @@ melon = [
     "dep:raw-window-handle",
     "dep:windows-sys",
 ]
-cogi = ["dep:ds_gpu"]
 # No console window (as melon_egui's `release`).
 release = []
 

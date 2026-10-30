@@ -92,28 +92,17 @@ impl Default for VideoConfig {
     }
 }
 
-/// Local multiplayer room settings. See
-/// `docs/design/design_lan.md` §12.
+/// LAN play settings (melonDS LAN through `ds_net`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LanConfig {
     pub player_name: String,
-    pub room_name: String,
-    /// Host address the guest join field is pre-filled with. Defaults to
-    /// [`DEFAULT_HOST_IP`] so the common case -- two `lunaris` processes on
-    /// one machine -- needs no typing.
+    /// Host address the guest join field is pre-filled with.
     pub last_host_ip: String,
-    pub control_port: u16,
-    pub mp_port: u16,
-    pub max_players: u8,
     /// Randomized on first run and persisted, so repeated launches on one
     /// machine keep a stable (and, across machines, very likely unique)
-    /// Wi-Fi MAC low-3-bytes suffix. See
-    /// `docs/design/design_lan.md` §7.3.
+    /// Wi-Fi MAC low-3-bytes suffix.
     pub mac_suffix: [u8; 3],
-    pub link_auto: bool,
-    pub runahead_us: u32,
-    pub recv_timeout_ms: u16,
 }
 
 impl Default for LanConfig {
@@ -127,19 +116,12 @@ impl Default for LanConfig {
             .unwrap_or(0);
         Self {
             player_name: "Luna".to_owned(),
-            room_name: "Lunaris Room".to_owned(),
             last_host_ip: DEFAULT_HOST_IP.to_owned(),
-            control_port: 7064,
-            mp_port: 7065,
-            max_players: 8,
             mac_suffix: [
                 (seed & 0xFF) as u8,
                 ((seed >> 8) & 0xFF) as u8,
                 ((seed >> 16) & 0xFF) as u8,
             ],
-            link_auto: true,
-            runahead_us: 1000,
-            recv_timeout_ms: 8,
         }
     }
 }
@@ -175,7 +157,7 @@ pub struct Config {
     pub joystick_id: JoystickId,
     /// Input binding configuration.
     ///
-    /// ```no_run
+    /// ```text
     /// // Example chord:
     /// // Ctrl + L -> Start
     /// InputBinding {
@@ -376,9 +358,6 @@ impl Config {
         } else {
             1.0
         };
-        config.lan.max_players = config.lan.max_players.clamp(1, 16);
-        config.lan.runahead_us = config.lan.runahead_us.clamp(250, 16_000);
-        config.lan.recv_timeout_ms = config.lan.recv_timeout_ms.clamp(2, 40);
     }
 
     pub fn save(&self) {

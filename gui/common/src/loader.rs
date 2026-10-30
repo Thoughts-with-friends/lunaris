@@ -1,203 +1,138 @@
+//! Boots a [`Console`] from the front end's [`Config`].
+//!
+//! ```text
+//!  Config (ROM, save dir, BIOS / firmware paths, LAN MAC suffix, volume)
+//!    |  load_rom_for_instance(config, instance)
+//!    |    1. no .sav yet but a DeSmuME .dsv: adopt it as the .sav
+//!    |    2. pick the Wi-Fi MAC (unique per process and instance)
+//!    v
+//!  Console::new(Boot)  -> ds_emu loads BIOS, firmware, ROM and .sav
+//! ```
 use std::{fs, path::PathBuf};
 
-use nds_core::{NDS, normalize_foreign_save};
+use ds_emu::normalize_foreign_save;
 
-use crate::config::Config;
+use crate::{
+    config::Config,
+    console::{Boot, Console},
+};
 
-/// Convenience constructor: loads BIOS / firmware / ROM from the filesystem
-/// and returns a ready-to-run [`NDS`].
-///
-/// Falls back to the bundled free BIOS / firmware when paths are `None`.
-/// The save file is created automatically next to the ROM if absent.
-pub fn load_rom(config: &Config) -> NDS {
+/// Boots the game in `config.last_rom_path` as instance 0. A ROM that cannot
+/// be booted is logged and gives [`Console::placeholder`].
+pub fn load_rom(config: &Config) -> Console {
     load_rom_for_instance(config, 0)
 }
 
-/// An [`NDS`] with a blank cartridge, for front ends that start on the
-/// ROM-picker screen before any game is chosen. It must never be stepped;
-/// it only fills the `nds` field until a real ROM is loaded.
-pub fn placeholder_nds() -> NDS {
-    let temp = std::env::temp_dir();
-    let pid = std::process::id();
-    let firmware = temp.join(format!("lunaris_placeholder_fw_{pid}.bin"));
-    let _ = fs::write(&firmware, free_bios::firmware::FIRMWARE_DS);
-    NDS::new(
-        free_bios::arm7::BIOS_ARM7_BIN.to_vec(),
-        free_bios::arm9::BIOS_ARM9_BIN.to_vec(),
-        firmware,
-        vec![0; 0x8000],
-        temp.join(format!("lunaris_placeholder_{pid}.sav")),
-    )
+/// A console without a game, for front ends that start on the ROM picker.
+/// Emulating it does nothing.
+pub fn placeholder_nds() -> Console {
+    Console::placeholder()
 }
 
-/// Like [`load_rom`], but for one of several [`NDS`] instances living in the
-/// **same process** (Thread Mode).
-///
-/// `instance` must be unique per live instance. It matters for two reasons:
-///
-/// * **MAC address.** The per-process MAC derivation below mixes in the process
-///   id, which is by definition identical for every instance in one process, so
-///   two of them would boot with the same Wi-Fi MAC. Two DS radios sharing a MAC
-///   can never complete 802.11 authentication with each other, so local wireless
-///   play would loop on auth forever without ever associating.
-/// * **Save file.** Instances past the first get their own `.sav`, so a
-///   verification run cannot have two emulators writing one file.
-///
-/// Instance `0` behaves exactly as [`load_rom`] always has, so the ordinary
-/// single-instance path is byte-for-byte unchanged.
-pub fn load_rom_for_instance(config: &Config, instance: u8) -> NDS {
-    let rom_path = config.last_rom_path.as_ref().unwrap();
-    let save_path = save_path_for_instance(config, instance).unwrap();
-
-    // DeSmuME workflow support: if no `.sav` exists yet but a DeSmuME
-    // `.dsv` does, adopt it as the starting point for the `.sav` this
-    // session writes. The `.dsv` itself is only ever read here, never
-    // modified. See `docs/design/ir-nand-foreign-sav-design.md` §3.3.
-    if !save_path.exists() {
-        let dsv_path = rom_path.with_extension("dsv");
-        if let Ok(dsv_bytes) = fs::read(&dsv_path) {
-            nds_core::log::info!(
-                target: "nds_core::savedata",
-                "No .sav found, but found a DeSmuME save at {}; adopting it",
-                dsv_path.display()
-            );
-            let normalized = normalize_foreign_save(&dsv_bytes);
-            if let Err(err) = fs::write(&save_path, &normalized) {
-                nds_core::log::warn!(
-                    target: "nds_core::savedata",
-                    "Failed to write .sav from adopted .dsv: {err}"
-                );
-            }
-        } else {
-            nds_core::log::info!(
-                target: "nds_core::savedata",
-                "Save file not found, one will be created on first write at {}",
-                save_path.display()
-            );
+/// Like [`load_rom`], for one of several consoles in the **same process**
+/// (Thread Mode). `instance` must be unique per live console: it picks the
+/// audio stream, and it makes the Wi-Fi MAC unique (two DS radios sharing a
+/// MAC can never complete 802.11 authentication with each other, so local
+/// play would loop on auth forever).
+pub fn load_rom_for_instance(config: &Config, instance: u8) -> Console {
+    match try_load_rom_for_instance(config, instance) {
+        Ok(console) => console,
+        Err(err) => {
+            log::error!(target: "ds_cartridge", "Cannot boot the ROM: {err}");
+            Console::placeholder()
         }
     }
+}
 
-    let bios7 = config
-        .bios7_path
-        .as_ref()
-        .and_then(|path| fs::read(path).ok())
-        .unwrap_or_else(|| free_bios::arm7::BIOS_ARM7_BIN.to_vec());
+/// [`load_rom_for_instance`] that reports why a ROM could not be booted.
+///
+/// # Errors
+/// If no ROM is set, or it or its save file cannot be read.
+pub fn try_load_rom_for_instance(config: &Config, instance: u8) -> Result<Console, String> {
+    let rom_path = config.last_rom_path.as_ref().ok_or("no ROM selected")?;
+    let save_path = save_path_for_instance(config, instance).ok_or("the ROM path has no name")?;
+    adopt_desmume_save(rom_path, &save_path);
 
-    let bios9 = config
-        .bios9_path
-        .as_ref()
-        .and_then(|path| fs::read(path).ok())
-        .unwrap_or_else(|| free_bios::arm9::BIOS_ARM9_BIN.to_vec());
+    let mac = wifi_mac(config, instance);
+    Console::new(&Boot {
+        rom: rom_path,
+        save_dir: &config.save_dir,
+        bios7: config.bios7_path.as_deref(),
+        bios9: config.bios9_path.as_deref(),
+        firmware: config.firmware_path.as_deref(),
+        mac,
+        audio_instance: Some(instance),
+        volume: config.audio_volume,
+    })
+}
 
-    let resolved_firmware_path = if let Some(path) = config.firmware_path.as_ref() {
-        // A user-configured path may hold a real firmware dump they placed
-        // there intentionally (touch calibration, console id, a real Wi-Fi
-        // config block); only fill it in if it's missing, never overwrite.
-        if !path.exists() {
-            fs::write(path, free_bios::firmware::FIRMWARE_DS).unwrap();
-        }
-        if instance == 0 {
-            path.to_path_buf()
-        } else {
-            // A dump is one console's image, so every instance booting it would
-            // share its MAC and none of them could associate with the others.
-            // Patch a per-instance copy instead -- never the user's file.
-            let patched = std::env::temp_dir()
-                .join(format!("lunaris_firmware_{}_{instance}.bin", std::process::id()));
-            match fs::read(path) {
-                Ok(image) => {
-                    fs::write(&patched, perturb_firmware_mac(image, instance)).unwrap();
-                    patched
-                }
-                Err(_) => path.to_path_buf(),
-            }
+/// DeSmuME workflow support: with no `.sav` yet but a `.dsv` beside the ROM,
+/// the `.dsv` (footer stripped) becomes the `.sav`. The `.dsv` itself is
+/// only read.
+fn adopt_desmume_save(rom_path: &std::path::Path, save_path: &std::path::Path) {
+    if save_path.exists() {
+        return;
+    }
+    let dsv_path = rom_path.with_extension("dsv");
+    if let Ok(dsv_bytes) = fs::read(&dsv_path) {
+        log::info!(
+            target: "ds_cartridge",
+            "No .sav found, but found a DeSmuME save at {}; adopting it",
+            dsv_path.display()
+        );
+        if let Err(err) = fs::write(save_path, normalize_foreign_save(&dsv_bytes)) {
+            log::warn!(target: "ds_cartridge", "Failed to write .sav from adopted .dsv: {err}");
         }
     } else {
-        // The default synthetic firmware is regenerated unconditionally,
-        // every launch -- it's a pure, instant `const fn` of the embedded
-        // `free_bios` crate, so there is nothing to gain by caching it
-        // across runs, and caching it is actively harmful: a `free_bios`
-        // update (e.g. a Wi-Fi calibration fix) would otherwise sit
-        // silently unused behind a stale temp-dir copy from a previous
-        // build, exactly as happened while diagnosing
-        // `docs/design/design_lan.md`'s Union-Room symptom.
-        // Per-process path *and* per-process MAC. Two `lunaris` instances on
-        // one machine read the same config file, so `config.lan.mac_suffix`
-        // alone would give them the same address -- and two DS radios that
-        // share a MAC can never complete 802.11 authentication with each
-        // other, so local wireless play would loop on auth forever without
-        // ever associating. Mixing the process id in guarantees they differ;
-        // a separate file keeps them from overwriting each other's copy.
-        let pid = std::process::id();
-        let cfg_suffix = config.lan.mac_suffix;
-        // `instance` is mixed in alongside the process id because Thread Mode
-        // runs several instances inside one process, where the pid is identical
-        // for all of them. melonDS perturbs the MAC per instance for exactly
-        // this reason (`EmuInstance.cpp:1751-1765`). The three bytes are
-        // perturbed differently so two instances never collide by cancelling
-        // out in a single byte.
-        let suffix = [
-            cfg_suffix[0] ^ (pid & 0xFF) as u8 ^ instance,
-            cfg_suffix[1] ^ ((pid >> 8) & 0xFF) as u8 ^ instance.wrapping_mul(0x44),
-            // Bit 0 of the first octet is the multicast flag and bit 1 the
-            // locally-administered flag; those live in byte `036h`, which is
-            // fixed at `00`, so the suffix bytes are free-form.
-            cfg_suffix[2] ^ ((pid >> 16) & 0xFF) as u8 ^ instance.wrapping_mul(0x10),
-        ];
-        let default_path =
-            std::env::temp_dir().join(format!("freebios_firmware_{pid}_{instance}.bin"));
-        fs::write(&default_path, free_bios::firmware::firmware_ds_with_mac_suffix(suffix)).unwrap();
-        default_path
-    };
-
-    let mut nds =
-        NDS::new(bios7, bios9, resolved_firmware_path, fs::read(rom_path).unwrap(), save_path);
-    nds.set_audio_volume(config.audio_volume);
-    nds
+        log::info!(
+            target: "ds_cartridge",
+            "Save file not found, one will be created on first write at {}",
+            save_path.display()
+        );
+    }
 }
 
-/// Perturbs a firmware image's MAC address (header `036h`) for instance
-/// `instance`, and repairs the Wi-Fi config checksum the MAC sits inside.
+/// The Wi-Fi MAC of instance `instance` (`None`: keep the firmware's).
 ///
-/// Follows melonDS's per-instance derivation
-/// (`docs/design/melonds/frontend/qt_sdl/EmuInstance.cpp:1751-1765`): add the
-/// instance index to byte 3, `index * 0x44` to byte 4 and `index * 0x10` to
-/// byte 5, then clear the low two bits of byte 0 so the result can never be a
-/// multicast or locally-administered address. Instance `0` is returned
-/// untouched, matching melonDS's `instanceID > 0` guard.
-///
-/// The Wi-Fi config block runs from `02Ch` for the length stored at
-/// `02Ch..02Eh`, and its CRC16 (seed `0000h`) lives at `02Ah`. The MAC is
-/// inside that range, so poking the bytes without recomputing the checksum
-/// leaves an image a driver's firmware validation rejects as corrupt --
-/// disabling Wi-Fi outright, with no register activity to diagnose from.
-fn perturb_firmware_mac(mut image: Vec<u8>, instance: u8) -> Vec<u8> {
-    if instance == 0 || image.len() < 0x03C {
-        return image;
+/// A user firmware dump keeps its MAC on instance 0 and gets a perturbed one
+/// on the others (melonDS `EmuInstance.cpp`). The built-in firmware gets the
+/// configured LAN suffix mixed with the process id and the instance, so two
+/// lunaris processes on one machine (same config file) still differ.
+fn wifi_mac(config: &Config, instance: u8) -> Option<[u8; 6]> {
+    let dump = config.firmware_path.as_ref().and_then(|p| fs::read(p).ok());
+    if let Some(dump) = dump.filter(|d| d.len() >= 0x3C) {
+        if instance == 0 {
+            return None;
+        }
+        let mut mac = [0; 6];
+        mac.copy_from_slice(&dump[0x36..0x3C]);
+        return Some(perturb_mac(mac, instance));
     }
-    image[0x039] = image[0x039].wrapping_add(instance);
-    image[0x03A] = image[0x03A].wrapping_add(instance.wrapping_mul(0x44));
-    image[0x03B] = image[0x03B].wrapping_add(instance.wrapping_mul(0x10));
-    image[0x036] &= 0xFC;
-
-    let len = u16::from_le_bytes([image[0x02C], image[0x02D]]) as usize;
-    if let Some(block) = image.get(0x02C..0x02C + len) {
-        let crc = crc16(block, 0x0000);
-        image[0x02A] = crc as u8;
-        image[0x02B] = (crc >> 8) as u8;
-    }
-    image
+    let pid = std::process::id();
+    let s = config.lan.mac_suffix;
+    let oui = &ds_bios::firmware::FIRMWARE_DS[0x36..0x39];
+    Some([
+        oui[0],
+        oui[1],
+        oui[2],
+        s[0] ^ (pid & 0xFF) as u8 ^ instance,
+        s[1] ^ ((pid >> 8) & 0xFF) as u8 ^ instance.wrapping_mul(0x44),
+        s[2] ^ ((pid >> 16) & 0xFF) as u8 ^ instance.wrapping_mul(0x10),
+    ])
 }
 
-/// CRC-16/ARC (poly `A001h`) with an explicit seed, as used throughout DS
-/// firmware. Mirrors `free_bios::firmware`'s `crc16_seeded`, which is private
-/// to that crate.
-fn crc16(data: &[u8], seed: u16) -> u16 {
-    data.iter().fold(seed, |crc, &byte| {
-        (0..8).fold(crc ^ u16::from(byte), |crc, _| {
-            if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 }
-        })
-    })
+/// melonDS's per-instance MAC: add the instance to byte 3, `* 0x44` to
+/// byte 4 and `* 0x10` to byte 5, and clear the multicast / locally
+/// administered bits. Instance 0 is unchanged.
+fn perturb_mac(mut mac: [u8; 6], instance: u8) -> [u8; 6] {
+    if instance == 0 {
+        return mac;
+    }
+    mac[3] = mac[3].wrapping_add(instance);
+    mac[4] = mac[4].wrapping_add(instance.wrapping_mul(0x44));
+    mac[5] = mac[5].wrapping_add(instance.wrapping_mul(0x10));
+    mac[0] &= 0xFC;
+    mac
 }
 
 /// The `.sav` path instance `instance` writes.
@@ -245,45 +180,21 @@ pub fn create_save_path(config: &Config) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// The local CRC16 must agree with the one `free_bios` used to stamp the
-    /// image, or every patched firmware would be rejected as corrupt. Checked
-    /// against the untouched synthetic image, whose stored checksum is known
-    /// good.
+    /// Two Thread Mode instances must not share a MAC, and the result is
+    /// never multicast / locally administered.
     #[test]
-    fn crc16_reproduces_the_stored_wifi_config_checksum() {
-        let fw = &free_bios::firmware::FIRMWARE_DS;
-        let len = u16::from_le_bytes([fw[0x02C], fw[0x02D]]) as usize;
+    fn per_instance_mac_differs() {
+        let base = [0x00, 0x09, 0xBF, 0x12, 0x34, 0x56];
+        let guest = perturb_mac(base, 1);
+        assert_ne!(guest, base, "instance 1 needs its own MAC");
+        assert_eq!(guest[0] & 0x03, 0);
+        assert_eq!(perturb_mac(base, 0), base);
 
-        let computed = crc16(&fw[0x02C..0x02C + len], 0x0000);
-
-        assert_eq!(computed.to_le_bytes(), [fw[0x02A], fw[0x02B]]);
+        let config = Config::default();
+        assert_ne!(wifi_mac(&config, 0), wifi_mac(&config, 1));
     }
 
-    /// Two Thread Mode instances must not share a MAC, and patching it has to
-    /// leave the Wi-Fi config checksum valid -- the MAC sits inside the
-    /// checksummed block, so a naive byte poke produces an image a driver's
-    /// firmware validation rejects, silently disabling Wi-Fi.
-    #[test]
-    fn per_instance_mac_differs_and_keeps_the_checksum_valid() {
-        let base = free_bios::firmware::FIRMWARE_DS.to_vec();
-
-        let guest = perturb_firmware_mac(base.clone(), 1);
-
-        assert_ne!(&guest[0x036..0x03C], &base[0x036..0x03C], "instance 1 needs its own MAC");
-        assert_eq!(guest[0x036] & 0x03, 0, "never multicast or locally administered");
-
-        let len = u16::from_le_bytes([guest[0x02C], guest[0x02D]]) as usize;
-        let crc = crc16(&guest[0x02C..0x02C + len], 0x0000);
-        assert_eq!(crc.to_le_bytes(), [guest[0x02A], guest[0x02B]], "checksum must be repaired");
-    }
-
-    /// Two instances must never write one another's `.sav` or savestate slots:
-    /// they run independent timelines of the same ROM, so a shared path means
-    /// one silently destroys the other's progress.
-    ///
-    /// Separation comes from the per-instance directory tree rather than from
-    /// decorated filenames, so this drives the two instance *configurations* —
-    /// the same thing the emulator does.
+    /// Two instances must never write one another's `.sav` or savestate slots.
     #[test]
     fn instances_get_separate_save_and_state_paths() {
         let instance_config = |instance: u8| {
@@ -308,9 +219,7 @@ mod tests {
         );
     }
 
-    /// Instances are numbered from 1 on disk, so the main window is
-    /// `instance1` and Thread Mode's guest is `instance2`. The directory names
-    /// read the way a person counts, not the way the code indexes.
+    /// Instances are numbered from 1 on disk.
     #[test]
     fn instance_directories_are_numbered_from_one() {
         assert!(Config::instance_dir(0).ends_with("instance1"));
@@ -318,19 +227,35 @@ mod tests {
         assert!(Config::instance_config_path(1).ends_with("instance2/config.json"));
     }
 
-    /// Instance 0 is the main window's emulator and must boot the image exactly
-    /// as a single-instance session always has.
+    /// Boots `LUNARIS_TEST_ROM` the way the egui GUI does, runs it, and
+    /// round-trips a savestate file.
     #[test]
-    fn instance_zero_is_left_untouched() {
-        let base = free_bios::firmware::FIRMWARE_DS.to_vec();
-        assert_eq!(perturb_firmware_mac(base.clone(), 0), base);
-    }
-}
+    #[ignore = "requires a ROM (LUNARIS_TEST_ROM)"]
+    fn boots_a_real_rom_and_round_trips_a_state() {
+        let rom = PathBuf::from(std::env::var("LUNARIS_TEST_ROM").expect("LUNARIS_TEST_ROM"));
+        let dir = std::env::temp_dir().join(format!("lunaris_loader_{}", std::process::id()));
+        let config =
+            Config { last_rom_path: Some(rom), save_dir: dir.join("saves"), ..Config::default() };
+        let mut console = try_load_rom_for_instance(&config, 7).expect("boots");
+        for _ in 0..120 {
+            console.emulate_frame();
+        }
+        assert!(console.get_screens().iter().any(|s| s.iter().any(|&px| px & 0xFF_FFFF != 0)));
 
-#[cfg(test)]
-mod placeholder_tests {
+        let state = dir.join("state_1.bin");
+        crate::savestate::save_to_file(&console, &state).expect("saves");
+        let before: Vec<u32> = console.get_screens()[0].to_vec();
+        for _ in 0..30 {
+            console.emulate_frame();
+        }
+        crate::savestate::load_from_file(&mut console, &state).expect("loads");
+        assert_eq!(console.get_screens()[0], before.as_slice());
+        console.emulate_frame();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
-    fn placeholder_nds_constructs() {
-        let _nds = super::placeholder_nds();
+    fn placeholder_has_no_rom() {
+        assert!(!placeholder_nds().has_rom());
     }
 }

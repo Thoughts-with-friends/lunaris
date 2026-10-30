@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!  main: Instance + Settings + logging -> Frontend (frontend.rs) -> launch
-//!        (the core is fixed at build time: feature lunaris / melon / cogi)
+//!        (the core is fixed at build time: feature lunaris / melon)
 //!  App (root)
 //!    ├─ Titlebar   logo, MenuBar (ds_common::menu), drag area, Appearance,
 //!    │             minimize / maximize / close

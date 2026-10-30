@@ -5,19 +5,15 @@
 //!     emulator thread: Loader() -> Box<dyn Core>
 //!       every frame: run_frame(keys, touch) -> take_audio -> frame / hd_job
 //!
-//!  Lunaris  nds-core (this repository)        plays its own audio, 1x only
-//!  MelonDs  melonds-rs (melonDS C++ core)     48 kHz audio resampled, 1x only
-//!  Cogi     cogids-rs ds_emu                  HD / xBRZ upscaling
+//!  Lunaris  this repository's core (ds_emu)   HD 3D / xBRZ, states, debug, LAN
+//!  MelonDs  melonds-rs (melonDS C++ core)     48 kHz audio resampled, GL hi-res
 //! ```
 //!
-//! A core is built on the emulator thread itself: the lunaris core opens
-//! its `cpal` stream when it is created, and on Windows a WASAPI stream made
-//! on the UI thread clashes with the window's COM setup.
+//! A core is built on the emulator thread itself (on Windows a WASAPI or GL
+//! context made on the UI thread clashes with the window's COM setup).
 //!
 //! The backend is fixed at build time by exactly one cargo feature
-//! (`lunaris` (default), `melon`, `cogi`); see `gui/freya/Cargo.toml`.
-#[cfg(feature = "cogi")]
-mod cogi;
+//! (`lunaris` (default) or `melon`); see `gui/freya/Cargo.toml`.
 #[cfg(feature = "lunaris")]
 mod lunaris;
 #[cfg(feature = "melon")]
@@ -25,19 +21,15 @@ pub mod melon;
 #[cfg(feature = "melon")]
 mod melon_gl;
 
-#[cfg(not(any(feature = "lunaris", feature = "melon", feature = "cogi")))]
+#[cfg(not(any(feature = "lunaris", feature = "melon")))]
 compile_error!(
     "lunaris_freya needs a backend: build with exactly one of the features \
-     `lunaris`, `melon` or `cogi` (e.g. `--no-default-features --features melon`)"
+     `lunaris` or `melon` (e.g. `--no-default-features --features melon`)"
 );
-#[cfg(any(
-    all(feature = "lunaris", feature = "melon"),
-    all(feature = "lunaris", feature = "cogi"),
-    all(feature = "melon", feature = "cogi"),
-))]
+#[cfg(all(feature = "lunaris", feature = "melon"))]
 compile_error!(
     "lunaris_freya takes exactly one backend feature; `lunaris` is the default, \
-     so add `--no-default-features` when choosing `melon` or `cogi` \
+     so add `--no-default-features` when choosing `melon` \
      (or use `cargo xtask build --gui freya --backend <name>`)"
 );
 
@@ -55,7 +47,6 @@ use ds_common::Settings;
 pub enum Backend {
     Lunaris,
     MelonDs,
-    Cogi,
 }
 
 /// The backend of this build.
@@ -63,24 +54,20 @@ pub enum Backend {
 pub const BACKEND: Backend = Backend::Lunaris;
 #[cfg(all(feature = "melon", not(feature = "lunaris")))]
 pub const BACKEND: Backend = Backend::MelonDs;
-#[cfg(all(feature = "cogi", not(any(feature = "lunaris", feature = "melon"))))]
-pub const BACKEND: Backend = Backend::Cogi;
 
 impl Backend {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Lunaris => "Lunaris",
             Self::MelonDs => "melonDS",
-            Self::Cogi => "Cogi",
         }
     }
 
     /// Whether frames can be rendered above 1x (View > Internal resolution):
-    /// Cogi in its own renderer, melonDS with its OpenGL renderer (else
-    /// xBRZ / pixel-doubled), Lunaris by post-processing (xBRZ, as its egui
-    /// GUI: the core draws at 256x192 only).
+    /// Lunaris in its own HD renderer, melonDS with its OpenGL renderer (else
+    /// xBRZ / pixel-doubled).
     pub const fn upscales(self) -> bool {
-        matches!(self, Self::Lunaris | Self::MelonDs | Self::Cogi)
+        matches!(self, Self::Lunaris | Self::MelonDs)
     }
 
     /// Whether the core draws the Debug menu's VRAM views.
@@ -90,7 +77,7 @@ impl Backend {
 
     /// Whether the core can save and load states.
     pub const fn has_states(self) -> bool {
-        !matches!(self, Self::Cogi)
+        matches!(self, Self::Lunaris | Self::MelonDs)
     }
 
     /// Where savestate slot `slot` of `rom` is kept under the instance's
@@ -104,7 +91,6 @@ impl Backend {
         match self {
             Self::Lunaris => Some(states.join(stem).join(format!("state_{slot}.bin"))),
             Self::MelonDs => Some(states.join(format!("{}.ml{slot}", stem.to_string_lossy()))),
-            Self::Cogi => None,
         }
     }
 }
@@ -121,8 +107,6 @@ pub fn loader(boot: Boot) -> Loader {
     return Box::new(move || lunaris::boot(&boot));
     #[cfg(all(feature = "melon", not(feature = "lunaris")))]
     return Box::new(move || melon::boot(&boot));
-    #[cfg(all(feature = "cogi", not(any(feature = "lunaris", feature = "melon"))))]
-    return Box::new(move || cogi::boot(&boot));
 }
 
 /// What every core needs to boot a game.
@@ -133,16 +117,14 @@ pub struct Boot {
     /// with another core keeps the progress.
     pub save: PathBuf,
     pub settings: Settings,
-    /// 0.0-1.0, for cores that play their own audio.
-    pub volume: f32,
     /// A LAN link the core is built on (melonDS: `crate::lan::MelonLink`),
     /// taken by the core's boot.
     pub link: std::sync::Mutex<Option<Box<dyn Any + Send>>>,
 }
 
 impl Boot {
-    pub fn new(rom: &Path, save: PathBuf, settings: Settings, volume: f32) -> Self {
-        Self { rom: rom.to_owned(), save, settings, volume, link: std::sync::Mutex::default() }
+    pub fn new(rom: &Path, save: PathBuf, settings: Settings) -> Self {
+        Self { rom: rom.to_owned(), save, settings, link: std::sync::Mutex::default() }
     }
 }
 
@@ -166,7 +148,7 @@ pub trait Core {
     fn set_render_scale(&mut self, _scale: usize, _xbrz: bool) {}
 
     /// Appends the frame's audio: interleaved stereo `i16` at
-    /// `ds_spu::OUTPUT_RATE_HZ`. Cores playing their own sound add nothing.
+    /// `ds_spu::OUTPUT_RATE_HZ`.
     fn take_audio(&mut self, out: &mut Vec<i16>);
 
     /// Both screens at 1x as RGBA (upper first) into `rgba`.
@@ -181,19 +163,11 @@ pub trait Core {
     /// Replaces the Action Replay codes (empty: cheats off).
     fn set_cheats(&mut self, codes: Vec<Vec<u32>>);
 
-    /// 0.0-1.0, for cores that play their own sound.
-    fn set_volume(&mut self, _volume: f32) {}
-
     /// Writes the save file if the game changed it.
     ///
     /// # Errors
     /// If the file cannot be written.
     fn flush_save(&mut self) -> Result<(), String>;
-
-    /// The loaded ROM's fingerprint (LAN rooms compare them).
-    fn rom_fingerprint(&self) -> Option<[u8; 16]> {
-        None
-    }
 
     /// Installs (`Some`) or removes the LAN link made by `crate::lan` for
     /// this core.
@@ -277,14 +251,14 @@ pub const NO_STATES: &str = "Savestates are not supported by this core";
 
 /// A 1x frame (both screens, RGBA, upper first) scaled on the HD worker:
 /// xBRZ, or pixels repeated (`xbrz` off), `scale` times.
-#[cfg(any(feature = "lunaris", feature = "melon"))]
+#[cfg(feature = "melon")]
 pub struct PostScale {
     pub rgba: Vec<u8>,
     pub scale: usize,
     pub xbrz: bool,
 }
 
-#[cfg(any(feature = "lunaris", feature = "melon"))]
+#[cfg(feature = "melon")]
 impl HdJob for PostScale {
     fn render(self: Box<Self>, rgba: &mut Vec<u8>) -> usize {
         let (w, h) = (256, 192);
@@ -319,8 +293,7 @@ impl HdJob for PostScale {
     }
 }
 
-#[cfg(any(feature = "melon", feature = "cogi", test))]
-/// 0xAARRGGBB (cogi and melonDS framebuffers) -> RGBA bytes appended to
+/// 0xAARRGGBB (lunaris and melonDS framebuffers) -> RGBA bytes appended to
 /// `dst`.
 pub fn push_rgba(src: &[u32], dst: &mut Vec<u8>) {
     let start = dst.len();
@@ -343,7 +316,7 @@ pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 mod tests {
     use super::*;
 
-    #[cfg(any(feature = "lunaris", feature = "melon"))]
+    #[cfg(feature = "melon")]
     #[test]
     fn post_scale_makes_both_screens_n_times_larger() {
         for xbrz in [false, true] {

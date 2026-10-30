@@ -12,9 +12,15 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-nds-core = { workspace = true }
-free_bios = { workspace = true }
+ds_cartridge = { workspace = true }
+ds_emu = { workspace = true, features = ["log"] }
+ds_gpu = { workspace = true }
+ds_peripherals = { workspace = true }
+ds_spu = { workspace = true }
+cpal = "0.15.3"
+log = { workspace = true, features = ["std"] }
 serde = { workspace = true }
 xbrz-rs = "0.1.0"
 zstd = "0.13"
 serde_json = "1.0.149"
+ds_bios = { workspace = true }

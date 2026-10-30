@@ -1,39 +1,31 @@
 //! LAN play (System > Multiplayer > Host / join LAN game): the egui GUI's
-//! LAN room on `lunaris_net`, for the Lunaris core.
+//! LAN play on melonDS's LAN backend (`ds_net` / `ds_net_gui`), for the
+//! Lunaris core.
 //!
 //! ```text
-//!  Host: Room::host(cfg)        Join: Room::join(cfg, ip)  (own thread)
-//!     Room { handle, transport }
-//!       transport --Command::SetLink--> emulator thread -> NDS::set_mp_transport
-//!       handle    kept in Frontend::lan: players, link speed, leave
-//!  every 0.5 s (input loop): room_tick -> MP-ready = same ROM as the host,
-//!                            left by the host -> link removed
-//!  stop / reset / another game: the link goes with the core, the room is left
+//!  Host: LanSession::host        Join: LanSession::join  (worker thread)
+//!  every 0.5 s (input loop): room_tick -> join result, ENet pump, and a
+//!     fresh ds_net::NetLink --Command::SetLink--> core when a session starts
+//!  stop / reset / another game: the link goes with the core, the session
+//!     is left
 //! ```
 //!
-//! Two windows on one PC play together over `127.0.0.1` (Launch new
-//! instance, then Host in one and Join in the other). Other cores have no
-//! LAN play here: [`REASON`] says why and the menu entries stay disabled.
+//! melonDS's LAN backend is one session per process: play with another PC
+//! (or another process on this PC, `Launch new instance`).
 use std::sync::Mutex;
 
-#[cfg(any(feature = "lunaris", feature = "melon"))]
 use ds_common::frontend::lock;
 use freya::prelude::*;
 
-use crate::{dialogs::note, frontend::Frontend};
-#[cfg(any(feature = "lunaris", feature = "melon"))]
 use crate::{
-    dialogs::{field, section},
+    dialogs::{field, note, section},
+    frontend::Frontend,
     state::Ctx,
     theme::{self, DANGER, SUCCESS, TEXT_DIM, WARNING},
 };
 
-/// Why this build has no LAN play (`None`: it has).
-#[cfg(any(feature = "lunaris", feature = "melon"))]
+/// Why this build has no LAN play (`None`: it has; every core has now).
 pub const REASON: Option<&str> = None;
-#[cfg(feature = "cogi")]
-pub const REASON: Option<&str> =
-    Some("LAN play needs the Lunaris or melonDS core (build with --backend lunaris or melon)");
 
 /// melonDS: melon_egui's two-console UDP link (`melon_lan`).
 #[cfg(feature = "melon")]
@@ -46,52 +38,64 @@ pub use melon::*;
 
 #[cfg(feature = "lunaris")]
 mod imp {
-    use std::{
-        net::IpAddr,
-        path::PathBuf,
-        sync::{Arc, mpsc},
-    };
+    use std::{path::PathBuf, time::Duration};
 
+    use ds_net_gui::{LanSession, PlayerStatus, SessionState};
     use lunaris_gui_common::config::LanConfig;
-    use lunaris_net::{LinkParams, PlayerView, Room, RoomConfig, RoomHandle};
 
     use super::*;
     use crate::frontend::Command;
 
-    /// The room this instance is in.
-    pub struct InRoom {
-        pub handle: RoomHandle,
-        /// MP-ready last told to the room.
-        ready: Option<bool>,
-    }
+    /// How long the console waits for its peers per frame before carrying
+    /// on without them (`ds_net::NetLink`).
+    const STALL_BUDGET: Duration = Duration::from_millis(100);
 
-    /// LAN state of the frontend.
+    /// LAN state of the frontend: melonDS's LAN session (`ds_net`, one per
+    /// process), made when first used.
     #[derive(Default)]
     pub struct Lan {
-        pub room: Option<InRoom>,
-        /// A join still connecting.
-        joining: bool,
+        session: Option<LanSession>,
+        /// Session generation the running core's link was made in.
+        linked: Option<u64>,
         pub error: Option<String>,
     }
 
-    /// What the dialog shows of the room.
-    #[derive(Debug, Clone, PartialEq)]
+    impl Lan {
+        fn session(&mut self) -> &mut LanSession {
+            self.session.get_or_insert_with(LanSession::new)
+        }
+
+        fn in_session(&self) -> bool {
+            self.session.as_ref().is_some_and(|s| s.state().in_session())
+        }
+    }
+
+    /// What the dialog shows of the session.
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct RoomView {
-        pub name: String,
         pub host: bool,
-        pub self_id: u8,
-        pub players: Vec<(u8, String, bool, bool, String, f32)>,
-        pub link: (bool, u32, u16),
-        pub dropped: u32,
+        /// The host's address (guest), or this machine's LAN address (host).
+        pub address: String,
+        /// Name, status, address, this console, ping.
+        pub players: Vec<(i32, String, &'static str, String, bool, u32)>,
     }
 
     fn config_path(front: &Frontend) -> PathBuf {
         front.instance.root().join("freya_lan.json")
     }
 
+    const fn status_label(status: PlayerStatus) -> &'static str {
+        match status {
+            PlayerStatus::Host => "host",
+            PlayerStatus::Client => "guest",
+            PlayerStatus::Connecting => "connecting",
+            PlayerStatus::Disconnected => "left",
+            PlayerStatus::None => "-",
+        }
+    }
+
     impl Frontend {
-        /// The LAN settings (`freya_lan.json`; defaults pick a random MAC
-        /// suffix, written on first use so it stays).
+        /// The LAN settings (`freya_lan.json`).
         pub fn lan_config(&self) -> LanConfig {
             std::fs::read_to_string(config_path(self))
                 .ok()
@@ -109,160 +113,140 @@ mod imp {
             }
         }
 
-        fn room_config(&self, config: &LanConfig) -> Result<RoomConfig, String> {
-            let fingerprint = self.shared.fingerprint().ok_or("Start a game first")?;
-            Ok(RoomConfig {
-                player_name: config.player_name.clone(),
-                room_name: config.room_name.clone(),
-                rom_fingerprint: fingerprint,
-                mac_suffix: config.mac_suffix,
-                max_players: config.max_players,
-                control_port: config.control_port,
-                mp_port: config.mp_port,
-            })
-        }
-
-        /// Hands the room's transport to the running core.
-        fn enter(&self, room: Room) -> Result<(), String> {
-            let Room { handle, transport } = room;
-            if let Err(e) = self.command(Command::SetLink(Some(Box::new(transport)))) {
-                handle.leave();
-                return Err(e);
-            }
-            lock(&self.lan).room = Some(InRoom { handle, ready: None });
-            Ok(())
-        }
-
-        /// Creates a room on this PC.
+        /// Hosts a session on this PC (UDP 7064).
         ///
         /// # Errors
-        /// If no game runs or the ports cannot be bound.
+        /// If no game runs or the port cannot be bound.
         pub fn host_room(&self) -> Result<(), String> {
-            let room = Room::host(&self.room_config(&self.lan_config())?)
-                .map_err(|e| format!("Cannot host: {e}"))?;
-            self.enter(room)
+            if !self.shared.is_running() {
+                return Err("Start a game first".to_owned());
+            }
+            let name = self.lan_config().player_name;
+            let _ = self.command(Command::SetLink(None));
+            let mut lan = lock(&self.lan);
+            lan.linked = None;
+            lan.session().host(&name).map_err(|e| format!("Cannot host: {e}"))
         }
 
-        /// Starts joining the room at `ip` (connecting runs on its own
-        /// thread; the result shows up in [`Lan::error`] / [`Lan::room`]).
-        pub fn join_room(self: &Arc<Self>, ip: &str) -> Result<(), String> {
-            let ip: IpAddr = ip.trim().parse().map_err(|_| "Not an IP address".to_owned())?;
+        /// Starts joining the session at `address` (connecting runs on a
+        /// worker; [`Self::room_tick`] picks the result up).
+        ///
+        /// # Errors
+        /// If no game runs.
+        pub fn join_room(&self, address: &str) -> Result<(), String> {
+            if !self.shared.is_running() {
+                return Err("Start a game first".to_owned());
+            }
+            let address = address.trim().to_owned();
             let mut config = self.lan_config();
-            config.last_host_ip = ip.to_string();
+            config.last_host_ip.clone_from(&address);
             self.set_lan_config(&config);
-            let cfg = self.room_config(&config)?;
-            lock(&self.lan).joining = true;
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(Room::join(&cfg, ip));
-            });
-            let front = Arc::clone(self);
-            std::thread::spawn(move || {
-                let result = rx
-                    .recv()
-                    .map_err(|_| "The join thread stopped".to_owned())
-                    .and_then(|r| r.map_err(|e| format!("Cannot join {ip}: {e}")))
-                    .and_then(|room| front.enter(room));
-                let mut lan = lock(&front.lan);
-                lan.joining = false;
-                lan.error = result.err();
-            });
+            // The LAN backend is driven by the join worker meanwhile.
+            let _ = self.command(Command::SetLink(None));
+            let mut lan = lock(&self.lan);
+            lan.linked = None;
+            lan.error = None;
+            lan.session().join(&config.player_name, &address);
+            drop(lan);
             Ok(())
         }
 
-        /// Leaves the room and removes the link from a running core.
+        /// Leaves the session and removes the link from a running core.
         pub fn leave_room(&self) {
-            let Some(room) = lock(&self.lan).room.take() else {
+            let mut lan = lock(&self.lan);
+            let Some(session) = &mut lan.session else {
                 return;
             };
-            room.handle.leave();
-            if self.shared.is_running() {
+            session.leave();
+            let linked = lan.linked.take().is_some();
+            drop(lan);
+            if linked && self.shared.is_running() {
                 let _ = self.command(Command::SetLink(None));
             }
         }
 
-        /// Loading a state in a room would desync the others.
+        /// Loading a state in a session would desync the others.
         ///
         /// # Errors
-        /// While in a room.
+        /// While in a session.
         pub fn refuse_in_room(&self) -> Result<(), String> {
-            if lock(&self.lan).room.is_some() {
+            if lock(&self.lan).in_session() {
                 return Err("Leave the LAN room before loading a state".to_owned());
             }
             Ok(())
         }
 
-        /// Keeps the room's MP-ready flag current and notices a closed room.
+        /// Services the session (join result, ENet while no core runs) and
+        /// gives the running core a fresh link whenever a session started
+        /// (melonDS only puts a console on a medium it powered its Wi-Fi on).
         pub fn room_tick(&self) {
+            let running = self.shared.is_running();
             let mut lan = lock(&self.lan);
-            let Some(room) = &mut lan.room else {
+            let pumped = running && lan.linked.is_some();
+            let Some(session) = &mut lan.session else {
                 return;
             };
-            if room.handle.has_left() {
-                lan.error =
-                    room.handle.last_error().or_else(|| Some("The room was closed".to_owned()));
-                lan.room = None;
-                drop(lan);
-                if self.shared.is_running() {
-                    let _ = self.command(Command::SetLink(None));
-                }
-                return;
+            session.tick(pumped);
+            if let SessionState::Failed(e) = session.state() {
+                let e = e.clone();
+                // Shown once; the session is offline again.
+                session.leave();
+                lan.error = Some(e);
             }
-            let ours = self.shared.fingerprint();
-            let host = room.handle.players().into_iter().find(|p| p.is_host);
-            let ready = ours.is_some() && host.map(|p| p.rom_fingerprint) == ours;
-            if room.ready != Some(ready) {
-                room.handle.set_mp_ready(ready);
-                room.ready = Some(ready);
+            let Some(session) = &lan.session else {
+                return;
+            };
+            let generation = session.generation();
+            let attach = session.state().in_session()
+                && !session.busy()
+                && running
+                && lan.linked != Some(generation);
+            if attach {
+                lan.linked = Some(generation);
+                drop(lan);
+                let link = ds_net::NetLink::new(0).with_stall_budget(Some(STALL_BUDGET));
+                if let Err(e) = self.command(Command::SetLink(Some(Box::new(link)))) {
+                    lock(&self.lan).error = Some(e);
+                }
             }
         }
 
-        /// The room for the dialog, the join state and the last error.
+        /// The session for the dialog, whether a join is connecting, and the
+        /// last error.
         pub fn room_view(&self) -> (Option<RoomView>, bool, Option<String>) {
             let lan = lock(&self.lan);
-            let view = lan.room.as_ref().map(|r| {
-                let h = &r.handle;
-                let ours = self.shared.fingerprint();
-                let hints = h.link_hints();
-                let params = h.link_params();
-                RoomView {
-                    name: h.room_name(),
-                    host: h.is_host(),
-                    self_id: h.self_id(),
-                    players: h
-                        .players()
-                        .iter()
-                        .map(|p: &PlayerView| {
-                            let same = Some(p.rom_fingerprint) == ours;
-                            let rtt =
-                                if p.rtt_ms > 0 { format!("{} ms", p.rtt_ms) } else { "-".into() };
-                            (
-                                p.id,
-                                p.name.clone(),
-                                p.is_host,
-                                p.mp_ready && same,
-                                rtt,
-                                f32::from(p.fps_x10) / 10.,
-                            )
-                        })
-                        .collect(),
-                    link: (params.auto, hints.runahead_us, hints.recv_timeout.as_millis() as u16),
-                    dropped: h.dropped_stale(),
-                }
+            let Some(session) = &lan.session else {
+                return (None, false, lan.error.clone());
+            };
+            let joining = matches!(session.state(), SessionState::Joining(_));
+            let view = match session.state() {
+                SessionState::Hosting => Some((
+                    true,
+                    ds_net_gui::local_ip()
+                        .map_or_else(|| "this PC".to_owned(), |ip| ip.to_string()),
+                )),
+                SessionState::Joined(address) => Some((false, address.clone())),
+                _ => None,
+            };
+            let view = view.map(|(host, address)| RoomView {
+                host,
+                address,
+                players: session
+                    .players()
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.id,
+                            p.name.clone(),
+                            status_label(p.status),
+                            p.address.to_string(),
+                            p.is_local,
+                            p.ping_ms,
+                        )
+                    })
+                    .collect(),
             });
-            (view, lan.joining, lan.error.clone())
-        }
-
-        /// Host only: automatic link speed, or fixed run-ahead / timeout.
-        pub fn set_link_speed(&self, auto: bool, runahead_us: u32, recv_timeout_ms: u16) {
-            if let Some(room) = &lock(&self.lan).room {
-                room.handle.set_link_params(LinkParams {
-                    auto,
-                    runahead_us,
-                    recv_timeout_ms,
-                    ..room.handle.link_params()
-                });
-            }
+            (view, joining, lan.error.clone())
         }
 
         pub fn clear_lan_error(&self) {
@@ -271,47 +255,12 @@ mod imp {
     }
 }
 
-#[cfg(feature = "cogi")]
-mod stub {
-    use super::*;
-
-    /// No LAN play on this core.
-    #[derive(Default)]
-    pub struct Lan;
-
-    #[allow(
-        clippy::unused_self,
-        clippy::missing_const_for_fn,
-        reason = "the same methods as with LAN play, doing nothing"
-    )]
-    impl Frontend {
-        pub fn leave_room(&self) {}
-
-        pub fn refuse_in_room(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        pub fn room_tick(&self) {}
-    }
-}
-#[cfg(feature = "cogi")]
-pub use stub::Lan;
-
 /// A lock on the frontend's LAN state (keeps the type name in one place).
 pub type LanState = Mutex<Lan>;
 
 /// The Multiplayer dialog.
 #[derive(PartialEq)]
 pub struct LanView;
-
-#[cfg(feature = "cogi")]
-impl Component for LanView {
-    fn render(&self) -> impl IntoElement {
-        rect().width(Size::fill()).spacing(8.).child(REASON.unwrap_or_default()).child(note(
-            "System > Multiplayer > Launch new instance starts another emulator window.",
-        ))
-    }
-}
 
 #[cfg(feature = "lunaris")]
 impl Component for LanView {
@@ -320,7 +269,6 @@ impl Component for LanView {
         let front = std::sync::Arc::clone(&ctx.front);
         let config = front.lan_config();
         let name = use_state(|| config.player_name.clone());
-        let room_name = use_state(|| config.room_name.clone());
         let host_ip = use_state(|| config.last_host_ip.clone());
         // Redraw twice a second for the player list.
         let mut tick = use_state(|| 0_u32);
@@ -341,7 +289,6 @@ impl Component for LanView {
             move || {
                 let mut c = front.lan_config();
                 c.player_name = name.peek().trim().to_owned();
-                c.room_name = room_name.peek().trim().to_owned();
                 front.set_lan_config(&c);
             }
         };
@@ -377,7 +324,6 @@ impl Component for LanView {
                     .child(section("you"))
                     .child(field("Player name", Input::new(name).width(Size::px(220.))))
                     .child(section("host a room"))
-                    .child(field("Room name", Input::new(room_name).width(Size::px(220.))))
                     .child(field(
                         "",
                         Button::new()
@@ -413,65 +359,55 @@ impl Component for LanView {
                             ),
                     ))
                     .child(note(if running {
-                        "Everyone runs the same game. On one PC: System > Multiplayer > Launch new instance, Create room in one window and Join 127.0.0.1 in the other."
+                        "Everyone runs the same game (melonDS LAN: UDP 7063-7064). One session per PC: play with another PC on the LAN."
                     } else {
-                        "Start a game first: the room compares everyone's ROM."
+                        "Start a game first."
                     }));
             }
             Some(room) => {
                 out = out
                     .child(field(
-                        "Room",
+                        "Session",
                         rect().child(format!(
                             "{} · {} player(s) · you are {}",
-                            room.name,
+                            room.address,
                             room.players.len(),
                             if room.host { "the host" } else { "a guest" }
                         )),
                     ))
                     .child(section("players"))
-                    .children(room.players.iter().map(|(id, pname, host, ready, rtt, fps)| {
-                        rect()
-                            .key(*id)
-                            .horizontal()
-                            .spacing(10.)
-                            .padding((3., 0.))
-                            .font_size(12.5)
-                            .child(rect().width(Size::px(24.)).child(id.to_string()))
-                            .child(rect().width(Size::px(170.)).child(format!(
-                                "{pname}{}{}",
-                                if *host { " ★" } else { "" },
-                                if *id == room.self_id { " (you)" } else { "" }
-                            )))
-                            .child(
-                                rect()
-                                    .width(Size::px(90.))
-                                    .color(theme::rgb(if *ready { SUCCESS } else { WARNING }))
-                                    .child(if *ready { "ready" } else { "other ROM" }),
-                            )
-                            .child(rect().width(Size::px(70.)).child(format!("{fps:.1} fps")))
-                            .child(rect().color(theme::rgb(TEXT_DIM)).child(rtt.clone()))
-                            .into_element()
-                    }))
-                    .child(section("link"));
-                let (auto, runahead, timeout) = room.link;
-                if room.host {
-                    let f = std::sync::Arc::clone(&front);
-                    out = out.child(field(
-                        "Auto link speed",
-                        Switch::new(WritableSetter::new(auto, move |on: bool| {
-                            f.set_link_speed(on, runahead, timeout);
-                        })),
+                    .children(room.players.iter().map(
+                        |(id, pname, status, address, local, ping)| {
+                            rect()
+                                .key(*id)
+                                .horizontal()
+                                .spacing(10.)
+                                .padding((3., 0.))
+                                .font_size(12.5)
+                                .child(rect().width(Size::px(24.)).child(id.to_string()))
+                                .child(rect().width(Size::px(170.)).child(format!(
+                                    "{pname}{}",
+                                    if *local { " (you)" } else { "" }
+                                )))
+                                .child(
+                                    rect()
+                                        .width(Size::px(90.))
+                                        .color(theme::rgb(
+                                            if *status == "connecting" || *status == "left" {
+                                                WARNING
+                                            } else {
+                                                SUCCESS
+                                            },
+                                        ))
+                                        .child(*status),
+                                )
+                                .child(rect().width(Size::px(110.)).child(address.clone()))
+                                .child(
+                                    rect().color(theme::rgb(TEXT_DIM)).child(format!("{ping} ms")),
+                                )
+                                .into_element()
+                        },
                     ));
-                }
-                out = out.child(note(&format!(
-                    "Run-ahead {runahead} µs · receive timeout {timeout} ms{}",
-                    if room.dropped > 0 {
-                        format!(" · {} stale frames dropped", room.dropped)
-                    } else {
-                        String::new()
-                    }
-                )));
                 let leave_front = std::sync::Arc::clone(&front);
                 let leave_ctx = ctx;
                 out = out.child(WifiStatus).child(

@@ -16,7 +16,7 @@ fn labeled_combo<T: Clone>(
     label: &str,
     selected: &mut usize,
     options: &[T],
-    label_of: impl Fn(&T) -> &str,
+    label_of: impl Fn(&T) -> &'static str,
 ) {
     egui::ComboBox::from_label(label).selected_text(label_of(&options[*selected])).show_ui(
         ui,

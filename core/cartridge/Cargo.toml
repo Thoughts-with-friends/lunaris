@@ -1,0 +1,27 @@
+[package]
+name = "ds_cartridge"
+description = "DS game card: ROM protocol, encryption and backup memory"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+
+[dependencies]
+serde = { workspace = true }
+serde-big-array = { workspace = true }
+snafu = { workspace = true }
+log = { workspace = true, optional = true }
+
+
+[features]
+log = ["dep:log"]
+
+
+[lints]
+workspace = true

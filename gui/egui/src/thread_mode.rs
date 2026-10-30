@@ -12,18 +12,17 @@
 //! See `docs/design/review_mp_local2.md` §7.1c.
 //!
 //! # Why a real thread
-//! [`LocalMp`] is a port of melonDS's `LocalMP`, which is built around a
-//! blocking semaphore rendezvous: a host waiting for client replies blocks
+//! The link is melonDS's `LocalMP` (`ds_net`, backend `Local`), which is
+//! built around a blocking semaphore rendezvous: a host waiting for client replies blocks
 //! until *the other instance's thread* posts. melonDS runs one instance per
 //! thread, and this arrangement reproduces that. Stepping both instances from
-//! one thread -- as `core/examples/local_mp_loopback.rs` does -- cannot satisfy
-//! that rendezvous, because the only thread that could produce the reply is the
+//! one thread cannot satisfy that rendezvous, because the only thread that could produce the reply is the
 //! one blocked waiting for it.
 //!
 //! # Layering
 //! ```text
 //! UI thread                                worker thread
-//!   main NDS (host)  <-- LocalMpHub -->      guest NDS (client)
+//!   main NDS (inst 0) <-- ds_net LocalMP -->  guest NDS (inst 1)
 //!   main viewport                                 |
 //!   guest viewport ---- input snapshot ---------->+
 //!                  <--- screens + diag -----------+
@@ -39,24 +38,21 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
+use ds_net::{MpBackend, NetLink};
 use lunaris_gui_common::{
     config::{Config, ScreenFilter},
+    console::{Console as NDS, MpDiag, assoc_trace},
     framebuffer::{
-        PlacementRect, ScreenLayout, abgr1555_to_rgba8, layout_screens, point_to_touch_coords,
+        PlacementRect, ScreenLayout, argb8888_to_rgba8, layout_screens, point_to_touch_coords,
     },
     input::enums::KeyboardKey,
     loader,
-};
-use nds_core::{
-    NDS,
-    nds::MpTransport,
-    net::{LocalMp, LocalMpHub, MpInterfaceTransport},
 };
 
 use crate::input::InputState;
@@ -115,9 +111,9 @@ pub struct GuestInput {
 /// What the worker publishes for the guest viewport to render.
 #[derive(Default)]
 pub struct GuestFrame {
-    /// Top and bottom screens, ABGR1555, `256 * 192` each. Empty until the
-    /// guest has produced its first frame.
-    screens: [Vec<u16>; 2],
+    /// Top and bottom screens, `0xAARRGGBB`, `256 * 192` each. Empty until
+    /// the guest has produced its first frame.
+    screens: [Vec<u32>; 2],
     /// Emulated frames completed so far.
     frames: u64,
     /// The guest's local-multiplayer diagnostic, already rendered to text.
@@ -132,23 +128,25 @@ pub struct GuestFrame {
     paused: bool,
 }
 
-/// Owns the Thread Mode guest: its worker thread, the shared local-MP hub, the
-/// frame it publishes, and the input it consumes.
+/// How long the host (run on the UI thread) waits for the guest per frame
+/// before carrying on (`ds_net::NetLink`).
+const HOST_STALL_BUDGET: Duration = Duration::from_millis(100);
+
+/// The host's link: melonDS instance 0, pumping the backend each frame.
+fn host_link() -> Box<NetLink> {
+    Box::new(NetLink::new(0).with_stall_budget(Some(HOST_STALL_BUDGET)))
+}
+
+/// Owns the Thread Mode guest: its worker thread, the frame it publishes,
+/// and the input it consumes.
 pub struct ThreadMode {
-    hub: Option<Arc<LocalMpHub>>,
+    /// The host is on the local MP medium.
+    linked: bool,
     worker: Option<JoinHandle<()>>,
     stop: Arc<AtomicBool>,
     frame: Arc<Mutex<GuestFrame>>,
     input: Arc<Mutex<GuestInput>>,
     commands: Arc<Mutex<Vec<GuestCommand>>>,
-    /// The host's wireless timebase, republished every repaint.
-    ///
-    /// The guest reads it whenever it boots — at start, and again on Reset or
-    /// Import Save, which rebuild the console from scratch. A console whose
-    /// uptime restarts has to be told where its peer's clock has got to, or it
-    /// starts stamping its frames from zero again. See
-    /// [`NDS::wifi_clock_reference`].
-    clock: Arc<AtomicU64>,
     /// Shown in the UI when [`ThreadMode::start`] could not boot the guest.
     last_error: Option<String>,
     /// Whether the control window is open. The guest's own viewport is tied to
@@ -160,7 +158,7 @@ pub struct ThreadMode {
     /// pointer position to touch coordinates.
     bottom_placement: Option<(egui::Pos2, PlacementRect)>,
     /// Mirrors the process-wide association trace flag. See
-    /// [`nds_core::net::set_assoc_trace`].
+    /// `assoc_trace::set`.
     assoc_trace: bool,
     /// The guest's own configuration (`instances/instance2/config.json`).
     ///
@@ -184,13 +182,12 @@ impl ThreadMode {
     #[must_use]
     pub fn new() -> Self {
         ThreadMode {
-            hub: None,
+            linked: false,
             worker: None,
             stop: Arc::new(AtomicBool::new(false)),
             frame: Arc::new(Mutex::new(GuestFrame::default())),
             input: Arc::new(Mutex::new(GuestInput::default())),
             commands: Arc::new(Mutex::new(Vec::new())),
-            clock: Arc::new(AtomicU64::new(0)),
             last_error: None,
             is_open: false,
             textures: None,
@@ -216,12 +213,8 @@ impl ThreadMode {
         }
     }
 
-    /// Boots a guest instance and links `host` to it over a shared
-    /// [`LocalMpHub`].
-    ///
-    /// `host` is the main window's emulator; it joins the same hub as instance
-    /// `0`. Both sides call `begin` immediately, because the Wi-Fi hardware
-    /// only does so on a radio power-on edge that may already have happened.
+    /// Boots a guest instance and links `host` to it on melonDS's local MP
+    /// medium (`host` is instance 0, the guest [`GUEST_INSTANCE`]).
     fn start(&mut self, host: &mut NDS, host_config: &Config) {
         if self.is_running() {
             return;
@@ -230,21 +223,22 @@ impl ThreadMode {
             self.last_error = Some("Load a ROM before starting Thread Mode".to_owned());
             return;
         }
+        if ds_net::backend() == MpBackend::Lan && host.has_mp_link() {
+            self.last_error = Some("Leave the LAN room before starting Thread Mode".to_owned());
+            return;
+        }
         self.last_error = None;
 
-        let hub = Arc::new(LocalMpHub::new());
-        let mut host_transport = MpInterfaceTransport::new(LocalMp::from_hub(Arc::clone(&hub)), 0);
-        host_transport.begin();
-        host.set_mp_transport(Some(Box::new(host_transport)));
+        // The backend is process-wide and must not change under a console
+        // on the medium: take the host off it first.
+        host.set_mp_link(None);
+        ds_net::init(MpBackend::Local);
+        host.set_mp_link(Some(host_link()));
 
-        // The guest boots now, while the host has been running for however
-        // long the player took to get here. Wi-Fi frames carry a microsecond
-        // timestamp and a receiver holds one back until its own clock reaches
-        // it, so two consoles counting from their own boots read each other's
-        // traffic as arriving from the future — or the distant past — and
-        // never associate. Handing the newcomer its peer's reference puts both
-        // on one timeline. See `NDS::wifi_clock_reference`.
-        self.clock = Arc::new(AtomicU64::new(host.wifi_clock_reference()));
+        // The guest boots while the host has been running for a while; their
+        // Wi-Fi clocks differ. The client adopts the host's clock when it
+        // accepts the association response (as melonDS), so nothing has to
+        // align them here.
 
         self.stop = Arc::new(AtomicBool::new(false));
         *self.frame.lock().unwrap_or_else(|e| e.into_inner()) = GuestFrame::default();
@@ -255,8 +249,6 @@ impl ThreadMode {
         let frame = Arc::clone(&self.frame);
         let input = Arc::clone(&self.input);
         let commands = Arc::clone(&self.commands);
-        let hub_for_worker = Arc::clone(&hub);
-        let clock = Arc::clone(&self.clock);
 
         // The guest runs from `instances/instance2/config.json`, not from a
         // copy of the host's: it owns its own saves, savestates, cheats, logs
@@ -274,32 +266,27 @@ impl ThreadMode {
         self.config = config.clone();
 
         self.worker = Some(std::thread::spawn(move || {
-            guest_main(&config, &hub_for_worker, &clock, &stop, &frame, &input, &commands);
+            guest_main(&config, &stop, &frame, &input, &commands);
             frame.lock().unwrap_or_else(|e| e.into_inner()).finished = true;
         }));
-        self.hub = Some(hub);
+        self.linked = true;
     }
 
-    /// Stops the guest and detaches the host from the hub, restoring the
-    /// emulator to a state where the LAN room can install its own transport.
+    /// Stops the guest and takes the host off the local medium, so the LAN
+    /// room can install its own link.
     fn stop_guest(&mut self, host: &mut NDS) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
-        self.hub = None;
+        self.linked = false;
         self.textures = None;
         self.bottom_placement = None;
-        host.set_mp_transport(None);
+        host.set_mp_link(None);
     }
 
     /// Draws the control panel and, while a guest is running, its viewport.
     pub fn show(&mut self, ctx: &egui::Context, config: &Config, host: &mut NDS) {
-        if self.is_running() {
-            // Kept current so a guest that reboots (Reset, Import Save) rejoins
-            // on the host's timeline rather than starting its clock over.
-            self.clock.store(host.wifi_clock_reference(), Ordering::Relaxed);
-        }
         self.control_panel(ctx, config, host);
         if self.is_running() {
             self.guest_viewport(ctx);
@@ -338,7 +325,7 @@ impl ThreadMode {
                 )
                 .changed()
             {
-                nds_core::net::set_assoc_trace(self.assoc_trace);
+                assoc_trace::set(self.assoc_trace);
             }
 
             // The trace also goes to stderr, which a GUI build started from
@@ -347,9 +334,9 @@ impl ThreadMode {
             if self.assoc_trace {
                 ui.horizontal(|ui| {
                     if ui.button("Clear trace").clicked() {
-                        nds_core::net::clear_assoc_trace();
+                        assoc_trace::clear();
                     }
-                    let lines = nds_core::net::assoc_trace_lines();
+                    let lines = assoc_trace::lines();
                     ui.weak(format!("{} lines", lines.len()));
                     if ui.button("Copy").clicked() {
                         ui.ctx().copy_text(lines.join("
@@ -359,7 +346,7 @@ impl ThreadMode {
                 egui::ScrollArea::vertical().max_height(220.0).stick_to_bottom(true).show(
                     ui,
                     |ui| {
-                        for line in nds_core::net::assoc_trace_lines() {
+                        for line in assoc_trace::lines() {
                             ui.label(egui::RichText::new(line).monospace().size(10.0));
                         }
                     },
@@ -373,25 +360,8 @@ impl ThreadMode {
             ui.add_space(4.0);
             ui.strong("host");
             ui.weak(diag_line(&host.wifi_diag_snapshot()));
-            ui.weak(host.wifi_diag_snapshot().verdict(true));
+            ui.weak(host.wifi_diag_snapshot().verdict());
 
-            // The medium itself, which neither console can see. A host that
-            // reports client failures while `stale` climbs is being answered
-            // -- just always about the previous round, which means the two
-            // wireless clocks have drifted apart rather than that the link is
-            // down. Both counters flat means nobody is replying at all.
-            if let Some(hub) = &self.hub {
-                let status = hub.status();
-                ui.add_space(4.0);
-                ui.strong("airwaves");
-                ui.weak(format!(
-                    "connected=0x{:04X} host_inst={} replies collected={} stale={}",
-                    status.connected_bitmask,
-                    status.mp_host_inst,
-                    status.collected_replies,
-                    status.stale_replies,
-                ));
-            }
         });
         self.is_open = open;
     }
@@ -468,7 +438,7 @@ impl ThreadMode {
             if let Some(worker) = self.worker.take() {
                 let _ = worker.join();
             }
-            self.hub = None;
+            self.linked = false;
             self.textures = None;
             self.bottom_placement = None;
         }
@@ -675,7 +645,7 @@ impl ThreadMode {
 
     /// Uploads the guest's screens and paints them using the same layout rules
     /// as the main window, so the two instances look and touch alike.
-    fn paint_screens(&mut self, ui: &mut egui::Ui, screens: &[Vec<u16>; 2]) {
+    fn paint_screens(&mut self, ui: &mut egui::Ui, screens: &[Vec<u32>; 2]) {
         // The *guest's* video settings, not the host's: each instance has its
         // own `config.json`.
         let video = self.config.video.clone();
@@ -693,8 +663,8 @@ impl ThreadMode {
             lunaris_gui_common::framebuffer::SCREEN_HEIGHT,
         ];
         let images = [
-            egui::ColorImage::from_rgba_unmultiplied(size, &abgr1555_to_rgba8(&screens[0])),
-            egui::ColorImage::from_rgba_unmultiplied(size, &abgr1555_to_rgba8(&screens[1])),
+            egui::ColorImage::from_rgba_unmultiplied(size, &argb8888_to_rgba8(&screens[0])),
+            egui::ColorImage::from_rgba_unmultiplied(size, &argb8888_to_rgba8(&screens[1])),
         ];
         // Honours the guest's own Video settings. Unscaled regardless: this
         // window exists to verify multiplayer, and an upscaler here would
@@ -778,32 +748,23 @@ impl Drop for ThreadMode {
 
 /// One line of the MP diagnostic counters, in the same shape both instances
 /// report so the two can be compared at a glance.
-fn diag_line(d: &nds_core::nds::MpDiag) -> String {
+fn diag_line(d: &MpDiag) -> String {
     // `rx_accepted` far below what the peer transmitted says frames are being
     // lost, but not where. The drop counters are the other half of that
-    // sentence, and omitting them made a real 88%-loss reading unactionable.
+    // sentence.
     let k = &d.drops;
     format!(
-        "channel {} (ever {}, changes {}, on-channel {}% of {}ms) · tx dropped off-channel {} · \
-         rf v{} idx {:?} now {:02X?} transfers {} \
-         last id 0x{:02X} cmd {} · is_mp {} / client {} / aid {} · rx {} of {} polls (empty {}) \
-         · loc {} beacon {} cmd {} reply {} · irq12 {}\nclassified: beacon {} mgmt {} cmd {} \
-         ack {} reply {} · last assoc-resp: aid {} mac_good {} ts {}\ndelivered: irq0 {} \
-         (masked {}) · driver reads: ring-RAM {} port {}\ndropped: rx_disabled {} powered_down {} \
-         ring_unconfigured {} too_short {} bad_length {} channel_mismatch {} foreign_mp {} \
-         filtered {} ring_full {} wep_off {}",
+        "channel {} (changes {}) · rf v{} transfers {} · tx dropped untuned {} · is_mp {} / \
+         client {} / aid {} · rx {} of {} polls (empty {}) · loc {} beacon {} cmd {} reply {} \
+         blank {} ack {}\nclassified: beacon {} mgmt {} data {} cmd {} ack {} reply {} · last \
+         assoc-resp: aid {} mac_good {} ts {}\ndelivered: irq0 {} (masked {}) · ring reads {}\n\
+         dropped: rx_disabled {} too_short {} bad_length {} channel_mismatch {} foreign_mp {} \
+         not_for_us {} filtered {}",
         d.channel,
-        d.channel_ever,
         d.channel_changes,
-        (d.channel_us * 100).checked_div(d.radio_us).unwrap_or(0),
-        d.radio_us / 1000,
-        d.tx_dropped_no_channel,
         d.rf_version,
-        d.rf_channel_index,
-        d.rf_regs_now,
         d.rf_transfers,
-        d.rf_last_id,
-        d.rf_last_cmd,
+        d.tx_dropped_no_channel,
         d.is_mp,
         d.is_mp_client,
         d.aid,
@@ -814,9 +775,11 @@ fn diag_line(d: &nds_core::nds::MpDiag) -> String {
         d.beacon_tx,
         d.cmd_tx,
         d.reply_tx,
-        d.irq12,
+        d.blank_reply_tx,
+        d.ack_tx,
         d.rxflags_beacon,
         d.rxflags_mgmt,
+        d.rxflags_data,
         d.rxflags_cmd,
         d.rxflags_ack,
         d.rxflags_reply,
@@ -825,33 +788,27 @@ fn diag_line(d: &nds_core::nds::MpDiag) -> String {
         d.last_assoc_timestamp,
         d.irq0_raised,
         d.irq0_masked,
-        d.rx_ram_reads,
         d.rx_ring_reads,
         k.rx_disabled,
-        k.rx_powered_down,
-        k.ring_unconfigured,
         k.too_short,
         k.bad_length,
         k.channel_mismatch,
         k.foreign_mp,
+        k.not_for_us,
         k.filtered,
-        k.ring_full,
-        k.wep_off,
     )
 }
 
-/// The guest thread's body: boot an instance, join the hub, then emulate at
+/// The guest thread's body: boot an instance, join the medium, then emulate at
 /// roughly DS speed until asked to stop.
 fn guest_main(
     config: &Config,
-    hub: &Arc<LocalMpHub>,
-    clock: &AtomicU64,
     stop: &AtomicBool,
     frame: &Mutex<GuestFrame>,
     input: &Mutex<GuestInput>,
     commands: &Mutex<Vec<GuestCommand>>,
 ) {
-    let mut nds = boot_guest(config, hub, clock.load(Ordering::Relaxed));
+    let mut nds = boot_guest(config);
 
     let mut next = Instant::now();
     let mut frames = 0u64;
@@ -861,8 +818,7 @@ fn guest_main(
     while !stop.load(Ordering::Relaxed) {
         let queued = std::mem::take(&mut *commands.lock().unwrap_or_else(|e| e.into_inner()));
         for command in queued {
-            let status =
-                apply_command(&mut nds, config, hub, clock, command, &mut paused, &mut speed);
+            let status = apply_command(&mut nds, config, command, &mut paused, &mut speed);
             let mut slot = frame.lock().unwrap_or_else(|e| e.into_inner());
             slot.status = status;
             slot.paused = paused;
@@ -888,9 +844,9 @@ fn guest_main(
         // still above any display's refresh rate.
         if frames.is_multiple_of(2) {
             let [top, bottom] = nds.get_screens();
-            let (top, bottom) = (top.clone(), bottom.clone());
+            let (top, bottom) = (top.to_vec(), bottom.to_vec());
             let diag = diag_line(&nds.wifi_diag_snapshot());
-            let verdict = nds.wifi_diag_snapshot().verdict(true);
+            let verdict = nds.wifi_diag_snapshot().verdict();
             let mut slot = frame.lock().unwrap_or_else(|e| e.into_inner());
             slot.screens = [top, bottom];
             slot.frames = frames;
@@ -914,21 +870,17 @@ fn guest_main(
     nds.flush_save();
 }
 
-/// Boots a guest instance and joins it to `hub`.
+/// Boots a guest instance on the local MP medium.
 ///
 /// Used both at thread start and by [`GuestCommand::Reset`] /
 /// [`GuestCommand::ImportSave`], which rebuild the emulator exactly as the main
-/// window's Reset and Import Save do. Re-joining the hub matters: a fresh `NDS`
-/// has no transport, so a reset instance would silently drop off the link.
-fn boot_guest(config: &Config, hub: &Arc<LocalMpHub>, clock_epoch: u64) -> NDS {
+/// window's Reset and Import Save do. Re-linking matters: a fresh `NDS` has
+/// no link, so a reset instance would silently drop off the medium.
+fn boot_guest(config: &Config) -> NDS {
     let mut nds = loader::load_rom_for_instance(config, GUEST_INSTANCE);
-    let mut transport =
-        MpInterfaceTransport::new(LocalMp::from_hub(Arc::clone(hub)), GUEST_INSTANCE);
-    transport.begin();
-    nds.set_mp_transport(Some(Box::new(transport)));
-    // Before the cart has a chance to turn the radio on, which is when the
-    // wireless clock takes its epoch.
-    nds.set_wifi_clock_epoch(clock_epoch);
+    // Its own thread: waits like melonDS; the host pumps the backend.
+    let link = NetLink::new(usize::from(GUEST_INSTANCE)).with_pump(false);
+    nds.set_mp_link(Some(Box::new(link)));
     nds
 }
 
@@ -937,8 +889,6 @@ fn boot_guest(config: &Config, hub: &Arc<LocalMpHub>, clock_epoch: u64) -> NDS {
 fn apply_command(
     nds: &mut NDS,
     config: &Config,
-    hub: &Arc<LocalMpHub>,
-    clock: &AtomicU64,
     command: GuestCommand,
     paused: &mut bool,
     speed: &mut f32,
@@ -977,7 +927,7 @@ fn apply_command(
             nds.flush_save();
             match std::fs::copy(&src, &dst) {
                 Ok(_) => {
-                    *nds = boot_guest(config, hub, clock.load(Ordering::Relaxed));
+                    *nds = boot_guest(config);
                     *paused = false;
                     format!("imported {}", src.display())
                 }
@@ -990,7 +940,7 @@ fn apply_command(
         },
         GuestCommand::Reset => {
             nds.flush_save();
-            *nds = boot_guest(config, hub, clock.load(Ordering::Relaxed));
+            *nds = boot_guest(config);
             *paused = false;
             "reset".to_owned()
         }

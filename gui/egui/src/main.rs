@@ -20,12 +20,13 @@ use debug::{
 };
 use eframe::egui;
 use lunaris_gui_common::{
+    cheat_map::CheatMap,
     config::{Config, ScreenFilter},
+    console::Console as NDS,
     framebuffer::{PlacementRect, ScreenLayout, layout_screens, point_to_touch_coords},
     input::stylus::StylusQueue,
     loader::create_save_path,
 };
-use nds_core::{CheatMap, nds::NDS};
 use screens::ScreenTextures;
 
 use crate::{cheat_editor::CheatEditorState, input_settings::InputSettingsState};
@@ -106,7 +107,7 @@ fn read_cheat_map(config: &Config) -> (CheatMap, String) {
                 (map, map_str)
             }
             Err(err) => {
-                nds_core::log::error!("{err}");
+                log::error!("{err}");
                 let _ = std::fs::create_dir_all(cheat_dir);
                 let _ = std::fs::write(cheat_file, "");
                 (CheatMap::new(), String::new())
@@ -147,7 +148,7 @@ fn save_state_to_slot(nds: &mut NDS, config: &Config, slot: usize) {
         let path = lunaris_gui_common::savestate::slot_path(state_dir, slot);
 
         if let Err(e) = lunaris_gui_common::savestate::save_to_file(nds, &path) {
-            nds_core::log::error!(target: "nds_core::savedata", "Failed to save state {slot}: {e}");
+            log::error!(target: "ds_cartridge", "Failed to save state {slot}: {e}");
         }
     }
 }
@@ -162,11 +163,11 @@ fn load_state_from_slot(nds: &mut NDS, config: &Config, slot: usize) -> bool {
 
         match lunaris_gui_common::savestate::load_from_file(nds, &path) {
             Ok(()) => {
-                nds_core::log::info!(target: "nds_core::savedata", "loaded state. {}", path.display());
+                log::info!(target: "ds_cartridge", "loaded state. {}", path.display());
                 true
             }
             Err(e) => {
-                nds_core::log::error!(target: "nds_core::savedata", "Failed to load state {slot}: {e}");
+                log::error!(target: "ds_cartridge", "Failed to load state {slot}: {e}");
                 false
             }
         }

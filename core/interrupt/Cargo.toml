@@ -1,0 +1,19 @@
+[package]
+name = "ds_interrupt"
+description = "Interrupt controller implementation for the Nintendo DS"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde-big-array = { workspace = true }
+
+[lints]
+workspace = true

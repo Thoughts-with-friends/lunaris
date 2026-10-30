@@ -150,59 +150,42 @@ fn debug_panel_shows_views() {
     front.stop();
 }
 
-/// Two frontends in one process join one room over 127.0.0.1, both on the
-/// same ROM: each sees two ready players, and the host sees the guest leave.
+/// Hosting a melonDS LAN session (one per process, so no guest here): the
+/// running core gets a link, keeps running on it, state loads are refused
+/// until the session is left.
 #[cfg(feature = "lunaris")]
 #[test]
 #[ignore = "requires ROMs on disk"]
-fn lan_room_over_localhost() {
+fn lan_session_hosting() {
     let rom = rom_dir().join("Newスーパーマリオブラザーズ.nds");
     let host = front("lan_host");
-    let guest = front("lan_guest");
-    for (front, name) in [(&host, "Host"), (&guest, "Guest")] {
-        let mut config = front.lan_config();
-        config.player_name = name.to_owned();
-        (config.control_port, config.mp_port) = (27164, 27165);
-        front.set_lan_config(&config);
-        front.start(&rom).expect("ROM loads");
-    }
+    let mut config = host.lan_config();
+    config.player_name = "Host".to_owned();
+    host.set_lan_config(&config);
+    host.start(&rom).expect("ROM loads");
     run_frames(&host, 20);
     host.host_room().expect("host");
-    guest.join_room("127.0.0.1").expect("join starts");
 
     let start = Instant::now();
-    let both_ready = || {
+    loop {
         host.room_tick();
-        guest.room_tick();
-        [&host, &guest].iter().all(|f| {
-            let (room, _, _) = f.room_view();
-            room.is_some_and(|r| r.players.len() == 2 && r.players.iter().all(|p| p.3))
-        })
-    };
-    while !both_ready() {
-        let (_, _, error) = guest.room_view();
+        let (room, _, error) = host.room_view();
         assert!(error.is_none(), "{error:?}");
+        if room.is_some_and(|r| r.host && r.players.len() == 1 && r.players[0].4) {
+            break;
+        }
         assert!(start.elapsed() < Duration::from_secs(10), "{:?}", host.room_view());
         std::thread::sleep(Duration::from_millis(50));
     }
-    // Both cores keep running with the link installed.
+    // The core keeps running with the link installed.
     run_frames(&host, 30);
-    run_frames(&guest, 30);
-    assert!(guest.refuse_in_room().is_err(), "no state loads in a room");
+    assert!(host.refuse_in_room().is_err(), "no state loads in a session");
 
-    // The guest leaves; the host sees one player again. (A host leaving
-    // is noticed by guests when its connections close, i.e. its process
-    // ends: lunaris_net sends them no message.)
-    guest.leave_room();
-    assert!(guest.refuse_in_room().is_ok());
-    let start = Instant::now();
-    while host.room_view().0.is_some_and(|r| r.players.len() != 1) {
-        assert!(start.elapsed() < Duration::from_secs(10), "host never saw the guest leave");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    run_frames(&guest, 10);
+    host.leave_room();
+    assert!(host.refuse_in_room().is_ok());
+    assert!(host.room_view().0.is_none());
+    run_frames(&host, 10);
     host.stop();
-    guest.stop();
 }
 
 /// melonDS: one frontend hosts on 127.0.0.1, another joins; both restart

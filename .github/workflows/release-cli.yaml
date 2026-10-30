@@ -37,12 +37,6 @@ jobs:
             features: melon,release
             no_default_features: true
 
-          - package: lunaris_freya
-            app_name: lunaris_freya
-            asset: freya-cogi
-            features: cogi,release
-            no_default_features: true
-
         target:
           - target: aarch64-apple-darwin
             os: macos-latest

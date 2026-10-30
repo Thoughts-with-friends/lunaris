@@ -1,0 +1,27 @@
+[package]
+name = "ds_net"
+description = "Connects the emulated Wi-Fi controller to other consoles through melonDS's MP layer (melonds_net)"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log = { workspace = true }
+melonds_net = { workspace = true }
+
+# workspace members
+ds_peripherals = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+ds_bios = { workspace = true }
+ds_emu = { workspace = true }
+image = { version = "0.25.9", default-features = false, features = ["png"] }

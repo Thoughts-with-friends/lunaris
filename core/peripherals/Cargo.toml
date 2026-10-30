@@ -1,0 +1,28 @@
+[package]
+name = "ds_peripherals"
+description = "Small DS I/O devices: timers, IPC, RTC, Wi-Fi stub and the SPI devices"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde-big-array = { workspace = true }
+chrono = { version = "0.4.44", features = ["serde"] }
+log = { workspace = true, optional = true }
+
+# workspace members
+ds_interrupt = { workspace = true }
+ds_mem_addr = { workspace = true }
+
+[features]
+log = ["dep:log"]
+
+[lints]
+workspace = true

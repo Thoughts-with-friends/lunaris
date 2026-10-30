@@ -9,8 +9,10 @@
 mod windows;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
-use lunaris_gui_common::framebuffer::abgr1555_to_rgba8;
-use nds_core::nds::{Engine, GraphicsType, NDS};
+use lunaris_gui_common::{
+    console::{Console as NDS, Engine, GraphicsType},
+    framebuffer::abgr1555_to_rgba8,
+};
 pub use windows::{
     MapsWindowState, PalettesWindowState, StatsWindow, TilesWindowState, VRAMWindowState,
 };

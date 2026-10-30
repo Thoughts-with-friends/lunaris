@@ -8,15 +8,15 @@ use std::{
 };
 
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
-use nds_core::log;
 
+/// Targets are the core crates' module paths (`ds_cpu::...`,
+/// `ds_cartridge::...`, `ds_peripherals::wifi::...`).
+///
 /// # Examples
 ///
 /// ```ignore
-/// # use nds_core::log;
-/// log::warn!(target: "nds_core::arm7", "hello {world}");
-/// log::warn!(target: "nds_core::savedata", "hello {world}");
-/// log::warn!(target: "nds_core", "hello {world}");
+/// log::warn!(target: "ds_cpu", "hello {world}");
+/// log::warn!(target: "ds_cartridge", "hello {world}");
 /// ```
 pub fn setup_logging() -> Result<(), SetLoggerError> {
     setup_logging_in(std::path::Path::new("logs"))
@@ -36,7 +36,7 @@ pub fn setup_logging_in(dir: &std::path::Path) -> Result<(), SetLoggerError> {
         |name: &str| File::create(dir.join(name)).ok().map(|f| Mutex::new(BufWriter::new(f)));
 
     let logger =
-        Logger { arm7: open("arm7.log"), arm9: open("arm9.log"), savedata: open("savedata.log") };
+        Logger { cpu: open("cpu.log"), wifi: open("wifi.log"), savedata: open("savedata.log") };
 
     log::set_boxed_logger(Box::new(logger))?;
     // NOTE: `LevelFilter::Trace` causes severe emulator slowdown.
@@ -49,15 +49,15 @@ pub fn setup_logging_in(dir: &std::path::Path) -> Result<(), SetLoggerError> {
 }
 
 struct Logger {
-    arm7: Option<Mutex<BufWriter<File>>>,
-    arm9: Option<Mutex<BufWriter<File>>>,
+    cpu: Option<Mutex<BufWriter<File>>>,
+    wifi: Option<Mutex<BufWriter<File>>>,
     savedata: Option<Mutex<BufWriter<File>>>,
 }
 
 impl Logger {
     #[inline(always)]
     fn write(writer: &Mutex<BufWriter<File>>, record: &Record) {
-        let mut writer = writer.lock().unwrap();
+        let mut writer = writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let file = record.file().unwrap_or("<unknown>");
         let line = record.line().unwrap_or(0);
@@ -106,40 +106,26 @@ impl Log for Logger {
             return;
         }
 
-        match record.target() {
-            "nds_core::arm7" => {
-                // if let Some(writer) = &self.arm7 {
-                //     Self::write(writer, record);
-                // }
-            }
-            "nds_core::arm9" => {
-                if let Some(writer) = &self.arm9 {
-                    Self::write(writer, record);
-                }
-            }
-            "nds_core::savedata" => {
-                if let Some(writer) = &self.savedata {
-                    Self::write(writer, record);
-                }
-            }
-
-            _ => {}
+        let target = record.target();
+        let file = if target.starts_with("ds_cpu") || target.starts_with("ds_emu::cpu") {
+            &self.cpu
+        } else if target.starts_with("ds_peripherals::wifi") || target.starts_with("ds_net") {
+            &self.wifi
+        } else if target.starts_with("ds_cartridge") {
+            &self.savedata
+        } else {
+            &None
+        };
+        if let Some(writer) = file {
+            Self::write(writer, record);
         }
 
         Self::stderr(record);
     }
 
     fn flush(&self) {
-        if let Some(writer) = &self.arm7 {
-            let _ = writer.lock().unwrap().flush();
-        }
-
-        if let Some(writer) = &self.arm9 {
-            let _ = writer.lock().unwrap().flush();
-        }
-
-        if let Some(writer) = &self.savedata {
-            let _ = writer.lock().unwrap().flush();
+        for writer in [&self.cpu, &self.wifi, &self.savedata].into_iter().flatten() {
+            let _ = writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).flush();
         }
     }
 }
@@ -160,12 +146,17 @@ mod color {
     #[inline]
     pub(super) fn target_group(target: &str) -> Option<(&str, &'static str)> {
         Some(match target {
-            "nds_core" => ("NDS Any log", COLOR_BLUE),
-            t if t.starts_with("nds_core::arm7") => ("ARM7", COLOR_CYAN),
-            t if t.starts_with("nds_core::arm9") => ("ARM9", COLOR_MAGENTA),
-            t if t.starts_with("nds_core::gpu") => ("GPU", COLOR_GREEN),
-            t if t.starts_with("nds_core::dma") => ("DMA", COLOR_BLUE),
-            t if t.starts_with("nds_core::savedata") => ("SAVEDATA", COLOR_YELLOW),
+            t if t.starts_with("ds_cpu") || t.starts_with("ds_emu::cpu") => ("CPU", COLOR_CYAN),
+            t if t.starts_with("ds_emu::emulator::dma") || t.starts_with("ds_emu::dma") => {
+                ("DMA", COLOR_BLUE)
+            }
+            t if t.starts_with("ds_emu") || t.starts_with("ds_bios") => ("NDS", COLOR_BLUE),
+            t if t.starts_with("ds_gpu") => ("GPU", COLOR_GREEN),
+            t if t.starts_with("ds_cartridge") => ("SAVEDATA", COLOR_YELLOW),
+            t if t.starts_with("ds_peripherals::wifi") || t.starts_with("ds_net") => {
+                ("WIFI", COLOR_MAGENTA)
+            }
+            t if t.starts_with("ds_peripherals") || t.starts_with("ds_spu") => ("IO", COLOR_WHITE),
             _ => return None,
         })
     }

@@ -1,0 +1,27 @@
+[package]
+name = "ds_gpu"
+description = "DS video: VRAM, 2D engines A/B and the 3D engine"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde-big-array = { workspace = true }
+log = { workspace = true, optional = true }
+
+# workspace members
+ds_interrupt = { workspace = true }
+ds_mem_addr = { workspace = true }
+rayon = "1.12.0"
+xbrz-rs = "0.1.0"
+
+[features]
+default = ["log"]
+log = ["dep:log"]

@@ -95,16 +95,12 @@ pub struct Shared {
     speed: AtomicU32,
     /// Internal resolution factor (bits 0-7, 0 = 1x) and xBRZ (bit 8).
     render: AtomicU32,
-    /// Volume (0.0-1.0, `f32` bits) for cores playing their own sound.
-    volume: AtomicU32,
     /// Cheat codes to hand to the core at the next frame.
     cheats: Mutex<Option<Vec<Vec<u32>>>>,
     /// Commands for the emulator thread, carried out even while paused.
     commands: Mutex<Vec<Pending>>,
     /// Why the core stopped on its own (a panic), until the UI shows it.
     crash: Mutex<Option<String>>,
-    /// The running ROM's fingerprint, once the core is up.
-    fingerprint: Mutex<Option<[u8; 16]>>,
     /// The open Debug view, drawn by the emulator thread.
     debug_view: Mutex<Option<DebugView>>,
     /// Its latest picture and a sequence number.
@@ -160,10 +156,6 @@ impl Shared {
         self.render.store(bits, Ordering::Relaxed);
     }
 
-    pub fn set_volume(&self, volume: f32) {
-        self.volume.store(volume.to_bits(), Ordering::Relaxed);
-    }
-
     /// Replaces the running game's cheat codes (from the next frame).
     pub fn set_cheats(&self, codes: Vec<Vec<u32>>) {
         *lock(&self.cheats) = Some(codes);
@@ -216,12 +208,6 @@ impl Shared {
             let seq = slot.as_ref().map_or(1, |(s, _)| s + 1);
             *slot = Some((seq, image));
         }
-    }
-
-    /// The running ROM's fingerprint (`None` before it boots).
-    #[cfg_attr(not(feature = "lunaris"), allow(dead_code, reason = "LAN play is Lunaris-only"))]
-    pub fn fingerprint(&self) -> Option<[u8; 16]> {
-        *lock(&self.fingerprint)
     }
 
     /// The message of a core crash, once.
@@ -285,7 +271,6 @@ impl EmuThread {
                     .unwrap_or_else(|panic| Err(panic_message(&*panic)));
                 match core {
                     Ok(core) => {
-                        *lock(&thread_shared.fingerprint) = core.rom_fingerprint();
                         let _ = loaded.send(Ok(()));
                         run(core, &thread_shared, &audio);
                     }
@@ -411,7 +396,6 @@ fn emulate(
     let mut meter = speed::SpeedMeter::new(speed::NORMAL);
     // Speed the meter was started for (0: start again).
     let mut metered = 0;
-    let mut volume = f32::NAN;
 
     let mut next = Instant::now();
     let mut last_frame = Instant::now();
@@ -480,11 +464,6 @@ fn emulate(
         if let Some(codes) = codes {
             core.set_cheats(codes);
         }
-        let new_volume = f32::from_bits(shared.volume.load(Ordering::Relaxed));
-        if new_volume.to_bits() != volume.to_bits() {
-            core.set_volume(new_volume);
-            volume = new_volume;
-        }
 
         let touch = shared.take_touch();
         core.run_frame(shared.keys.load(Ordering::Relaxed), touch);
@@ -551,7 +530,6 @@ pub struct Frontend {
     /// The running game's ROM.
     pub rom: Mutex<Option<PathBuf>>,
     /// The LAN room (`crate::lan`).
-    #[cfg_attr(feature = "cogi", allow(dead_code, reason = "no LAN play on Cogi"))]
     pub lan: crate::lan::LanState,
 }
 
@@ -569,7 +547,6 @@ impl Frontend {
         let audio = AudioOutput::new(volume);
         let shared = Arc::new(Shared::default());
         shared.set_limit_framerate(config.limit_framerate);
-        shared.set_volume(volume);
         Self::apply_view(&shared, &config.view);
         Self {
             instance,
@@ -612,7 +589,6 @@ impl Frontend {
     pub fn set_config(&self, config: GuiConfig) {
         let volume = f32::from(config.volume.min(100)) / 100.0;
         self.audio.set_volume(volume);
-        self.shared.set_volume(volume);
         self.shared.set_limit_framerate(config.limit_framerate);
         Self::apply_view(&self.shared, &config.view);
         self.save_config(&config);
@@ -626,7 +602,6 @@ impl Frontend {
             thread.stop();
         }
         *lock(&self.rom) = None;
-        *lock(&self.shared.fingerprint) = None;
         // An undo point belongs to the game that made it.
         let _ = std::fs::remove_file(self.undo_path());
         self.shared.set_paused(false);
@@ -655,12 +630,7 @@ impl Frontend {
         self.stop();
 
         self.instance.import_legacy_save(rom);
-        let boot = Boot::new(
-            rom,
-            self.instance.save_path(rom),
-            lock(&self.settings).clone(),
-            f32::from(lock(&self.config).volume.min(100)) / 100.0,
-        );
+        let boot = Boot::new(rom, self.instance.save_path(rom), lock(&self.settings).clone());
         *lock(&boot.link) = link;
         self.run_core(rom, backend::loader(boot))?;
 
@@ -876,7 +846,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let rom = rom();
         let save = dir.join(rom.with_extension("sav").file_name().expect("name"));
-        let boot = Boot::new(&rom, save, Settings::default(), 0.0);
+        let boot = Boot::new(&rom, save, Settings::default());
         let shared = Arc::new(Shared::default());
         let thread =
             EmuThread::start(backend::loader(boot), Arc::clone(&shared), AudioOutput::new(0.0))
@@ -910,7 +880,6 @@ mod tests {
                 Path::new("does/not/exist.nds"),
                 std::env::temp_dir().join("freya-missing.sav"),
                 Settings::default(),
-                0.0,
             );
             let shared = Arc::new(Shared::default());
             let result =

@@ -193,7 +193,7 @@ master-clock count that only ever grows:
    ARM9 counter @ 67,027,964 Hz  ─►  u32 overflow after  ~64 s of play
 ```
 
-`emu-utils` stores a `usize` as `u32`. Left alone, that silently truncates a
+`serde` stores a `usize` as `u32`. Left alone, that silently truncates a
 savestate taken after a minute of play, and the emulator freezes on load
 because every scheduled event is suddenly in the distant past. Lunaris
 overrides the storage type at each counter ([arm.rs:42-54](core/src/arm.rs#L42-L54)):

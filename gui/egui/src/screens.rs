@@ -33,17 +33,18 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use egui::{ColorImage, Context, TextureHandle, TextureOptions};
 use lunaris_gui_common::{
-    framebuffer::{SCREEN_HEIGHT, SCREEN_WIDTH, abgr1555_to_rgba8},
+    console::Console as NDS,
+    framebuffer::{SCREEN_HEIGHT, SCREEN_WIDTH, argb8888_to_rgba8},
     upscale::{self, UpscaleMethod},
 };
-use nds_core::nds::NDS;
 
 /// One request to convert and upscale a single screen's raw pixels. Builds
 /// the final [`ColorImage`] on the worker too (not just the raw upscale),
 /// so the only work left for the main thread is staging the already-built
 /// image into the texture.
 struct ScreenJob {
-    pixels: Vec<u16>,
+    /// `0xAARRGGBB` per pixel.
+    pixels: Vec<u32>,
     method: UpscaleMethod,
     factor: u8,
 }
@@ -116,7 +117,7 @@ impl ScreenWorker {
                 }
             };
 
-            let rgba = abgr1555_to_rgba8(&job.pixels);
+            let rgba = argb8888_to_rgba8(&job.pixels);
             let (buf, w, h) =
                 upscale::upscale(rgba, SCREEN_WIDTH, SCREEN_HEIGHT, job.method, job.factor);
             let image = ColorImage::from_rgba_unmultiplied([w, h], &buf);
@@ -220,8 +221,8 @@ impl ScreenTextures {
             self.last_effective_factor = factor;
 
             let [top_pixels, bottom_pixels] = nds.get_screens();
-            self.top_worker.submit(ScreenJob { pixels: top_pixels.clone(), method, factor });
-            self.bottom_worker.submit(ScreenJob { pixels: bottom_pixels.clone(), method, factor });
+            self.top_worker.submit(ScreenJob { pixels: top_pixels.to_vec(), method, factor });
+            self.bottom_worker.submit(ScreenJob { pixels: bottom_pixels.to_vec(), method, factor });
         }
 
         if let Some(image) = self.top_worker.try_take_result() {

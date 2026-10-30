@@ -63,7 +63,7 @@ where
         fonts.families.entry(family).or_default().push("cjk".to_owned());
     }
     ctx.set_fonts(fonts);
-    nds_core::log::info!("fonts: CJK fallback from {}", path.display());
+    log::info!("fonts: CJK fallback from {}", path.display());
     Some(path)
 }
 
@@ -75,7 +75,7 @@ fn load(preferred: Option<&Path>) -> Option<(PathBuf, Vec<u8>)> {
         match std::fs::read(&path) {
             Ok(bytes) => return Some((path, bytes)),
             Err(e) => {
-                nds_core::log::error!("fonts: cannot read {}: {e}", path.display());
+                log::error!("fonts: cannot read {}: {e}", path.display());
                 // Fall through to the candidates rather than leaving the UI
                 // unable to draw anything but Latin.
             }

@@ -2,7 +2,7 @@
 //!
 //! Cargo has no native syntax for a custom `--gui <name>` flag on `build`/
 //! `run`, so this crate provides it: `cargo xtask <build|run> [--gui
-//! egui|imgui|melon|freya] [--backend lunaris|melon|cogi] [cargo args...]
+//! egui|melon|freya] [--backend lunaris|melon] [cargo args...]
 //! [-- <args passed to the emulator>]` simply re-invokes
 //! `cargo <build|run> -p <package for that GUI> ...`.
 //!
@@ -27,22 +27,19 @@ use std::{
 #[derive(Clone, Copy)]
 enum Gui {
     Egui,
-    Imgui,
     /// The melonDS-core reference front end, `gui/melon_egui`.
     Melon,
-    /// The freya front end, `gui/freya`; its core (Lunaris, melonDS or Cogi)
-    /// is chosen at build time with `--backend`.
+    /// The freya front end, `gui/freya`; its core (Lunaris or melonDS) is
+    /// chosen at build time with `--backend`.
     Freya,
 }
 
 impl Gui {
     /// Workspace package implementing this GUI. See `Cargo.toml`
-    /// `[workspace] members` (`gui/egui` = `lunaris`, `gui/imgui` =
-    /// `lunaris`, the original front end's package name, left unrenamed).
+    /// `[workspace] members` (`gui/egui` = `lunaris`).
     const fn package(self) -> &'static str {
         match self {
             Gui::Egui => "lunaris",
-            Gui::Imgui => "lunaris_imgui",
             Gui::Melon => "melon_egui",
             Gui::Freya => "lunaris_freya",
         }
@@ -51,7 +48,7 @@ impl Gui {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <build|run> [--gui egui|imgui|melon|freya] [--backend lunaris|melon|cogi] [cargo args...] [-- <emulator args>]"
+        "usage: cargo xtask <build|run> [--gui egui|melon|freya] [--backend lunaris|melon] [cargo args...] [-- <emulator args>]"
     );
     eprintln!("       --gui defaults to `egui` when omitted");
     eprintln!("       --gui melon builds gui/melon_egui (the melonDS-core reference front end)");
@@ -81,12 +78,11 @@ fn main() -> ExitCode {
             "--gui" => {
                 gui = match rest.get(i + 1).map(String::as_str) {
                     Some("egui") => Gui::Egui,
-                    Some("imgui") => Gui::Imgui,
                     Some("melon") => Gui::Melon,
                     Some("freya") => Gui::Freya,
                     other => {
                         eprintln!(
-                            "invalid --gui value: {other:?} (expected `egui`, `imgui`, `melon` or `freya`)"
+                            "invalid --gui value: {other:?} (expected `egui`, `melon` or `freya`)"
                         );
                         return ExitCode::FAILURE;
                     }
@@ -97,10 +93,9 @@ fn main() -> ExitCode {
                 backend = match rest.get(i + 1).map(String::as_str) {
                     Some("lunaris") => Some("lunaris"),
                     Some("melon" | "melonds") => Some("melon"),
-                    Some("cogi") => Some("cogi"),
                     other => {
                         eprintln!(
-                            "invalid --backend value: {other:?} (expected `lunaris`, `melon` or `cogi`)"
+                            "invalid --backend value: {other:?} (expected `lunaris` or `melon`)"
                         );
                         return ExitCode::FAILURE;
                     }

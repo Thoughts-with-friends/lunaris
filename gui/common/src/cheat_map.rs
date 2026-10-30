@@ -1,6 +1,14 @@
 use std::fmt::{self, Write};
 
-use nds_core::{ArCode, CheatMap};
+/// The cheat editor's codes; the enabled ones run every frame.
+pub type CheatMap = Vec<ArCode>;
+
+/// One Action Replay code: its words (address/opcode, value) in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArCode {
+    pub code: Vec<u32>,
+    pub enabled: bool,
+}
 
 /// Parses a sequence of Action Replay style cheat codes.
 ///

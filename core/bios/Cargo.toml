@@ -1,0 +1,22 @@
+[package]
+name = "ds_bios"
+description = "Built-in replacement BIOS/firmware images and the high-level BIOS (SWI) implementation"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+log = { workspace = true, optional = true }
+
+[features]
+log = ["dep:log"]
+
+[lints]
+workspace = true

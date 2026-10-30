@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.7.1" # NOTE: <- fixed ordering first(To release)
+version = "0.8.0" # NOTE: <- fixed ordering first(To release)
 authors = ["DiaSird"]
 categories = ["encoding"]
 description = "A modern Nintendo DS emulator written in Rust"
@@ -13,13 +13,25 @@ rust-version = "1.91"
 [workspace]
 default-members = ["gui/egui"]
 members = [
-  "bitfield",
-  "core",
+  "core/*",
   "free_bios",
   "gui/*",
   "xtask",
 ]
 resolver = "3"
+
+# cogids-rs's front-end helpers (`ds_common`, used by gui/freya) are built
+# on this repository's core instead of their own copy.
+[patch."https://github.com/Thoughts-with-friends/cogids-rs.git"]
+ds_bios = { path = "./core/bios" }
+ds_cartridge = { path = "./core/cartridge" }
+ds_cpu = { path = "./core/cpu" }
+ds_emu = { path = "./core/system" }
+ds_gpu = { path = "./core/gpu" }
+ds_interrupt = { path = "./core/interrupt" }
+ds_mem_addr = { path = "./core/mem_addr" }
+ds_peripherals = { path = "./core/peripherals" }
+ds_spu = { path = "./core/spu" }
 
 [profile.release]
 debug = true
@@ -27,11 +39,30 @@ debug = true
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-nds-core = { path = "./core" }
+log = "0.4.34"
+serde-big-array = "0.5.1"
+snafu = "0.9.0"
+
+# Nintendo DS networking (melonDS LocalMP / LAN) over FFI, used by `ds_net`.
+# Its build compiles melonDS's C++ net layer (needs clang on Windows).
+melonds_net = { git = "https://github.com/Thoughts-with-friends/MelonDS-net", rev = "5e6b69d" }
+
+# core crates (cogids-rs's DS core, split per hardware block)
+ds_bios = { path = "./core/bios" }
+ds_cartridge = { path = "./core/cartridge" }
+ds_cpu = { path = "./core/cpu" }
+ds_emu = { path = "./core/system" }
+ds_gpu = { path = "./core/gpu" }
+ds_interrupt = { path = "./core/interrupt" }
+ds_mem_addr = { path = "./core/mem_addr" }
+ds_net = { path = "./core/net" }
+ds_peripherals = { path = "./core/peripherals" }
+ds_spu = { path = "./core/spu" }
+
 free_bios = { path = "./free_bios" }
 lunaris_gui_common = { path = "./gui/common" }
 lunaris_rom_library = { path = "./gui/rom_library" }
-lunaris_net = { path = "./gui/net" }
+ds_net_gui = { path = "./gui/net" }
 
 
 [workspace.lints.clippy]

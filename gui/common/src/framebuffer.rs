@@ -7,11 +7,21 @@
 /// Native pixel dimensions of a single NDS LCD.
 ///
 /// GBATEK "DS Video": <https://problemkaputt.de/gbatek.htm#dsvideo>
-pub const SCREEN_WIDTH: usize = nds_core::nds::WIDTH;
-pub const SCREEN_HEIGHT: usize = nds_core::nds::HEIGHT;
+pub const SCREEN_WIDTH: usize = crate::console::WIDTH;
+pub const SCREEN_HEIGHT: usize = crate::console::HEIGHT;
 
-/// Converts one NDS screen buffer (15-bit BGR + 1-bit alpha, as produced by
-/// [`nds_core::nds::NDS::get_screens`]) into interleaved RGBA8 bytes.
+/// Converts one screen of [`crate::console::Console::get_screens`]
+/// (`0xAARRGGBB`) into opaque RGBA8 bytes.
+pub fn argb8888_to_rgba8(pixels: &[u32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(pixels.len() * 4);
+    for &p in pixels {
+        out.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8, 0xFF]);
+    }
+    out
+}
+
+/// Converts a BGR555 image with bit 15 = opaque (the core's debug views,
+/// `ds_gpu::debug`) into interleaved RGBA8 bytes.
 ///
 /// GBATEK "LCD Color Palettes" (5 bits per channel, bit 15 unused/alpha
 /// here): <https://problemkaputt.de/gbatek.htm#lcdcolorpalettes>

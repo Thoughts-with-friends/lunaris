@@ -1,0 +1,40 @@
+[package]
+name = "ds_emu"
+description = "The DS system: CPUs, memory bus, DMA and scheduler wiring every component"
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde-big-array = { workspace = true }
+log = { workspace = true, optional = true }
+snafu = { workspace = true }
+bincode = { version = "2.0.1", features = ["serde"] }
+
+# workspace members
+ds_bios = { workspace = true }
+ds_cartridge = { workspace = true }
+ds_cpu = { workspace = true }
+ds_gpu = { workspace = true }
+ds_interrupt = { workspace = true }
+ds_mem_addr = { workspace = true }
+ds_peripherals = { workspace = true }
+ds_spu = { workspace = true }
+
+[dev-dependencies]
+image = { version = "0.25.9" }
+
+[features]
+default = []
+log = ["dep:log", "ds_bios/log", "ds_cartridge/log", "ds_peripherals/log"]
+
+# TODO:
+[lints]
+workspace = true

@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use gilrs::Button;
-use lunaris_gui_common::input::enums::{
-    AxisDirection, BindKey, GamepadAxis, GamepadButton, InputBinding, InputSource, JoystickId,
-    KeyboardKey,
-};
-use nds_core::{
-    log::warn,
-    nds::{self, NDS},
+use log::warn;
+use lunaris_gui_common::{
+    console::{self as nds, Console as NDS},
+    input::enums::{
+        AxisDirection, BindKey, GamepadAxis, GamepadButton, InputBinding, InputSource, JoystickId,
+        KeyboardKey,
+    },
 };
 
 const DEAD_ZONE: f32 = 0.3;
@@ -381,7 +381,7 @@ fn egui_to_config_axis(axis: gilrs::Axis) -> GamepadAxis {
         gilrs::Axis::DPadX => GamepadAxis::AxisRightX,        // unkown
         gilrs::Axis::DPadY => GamepadAxis::AxisRightY,        // unkown
         gilrs::Axis::Unknown => {
-            nds_core::log::warn!("unknown axis!");
+            log::warn!("unknown axis!");
             GamepadAxis::AxisLeftTrigger
         }
     }

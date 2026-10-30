@@ -1,18 +1,21 @@
-# Room hosting/joining and MP frame relay over TCP+UDP. See
-# docs/design/design_lan.md.
 [package]
-name = "lunaris_net"
-version.workspace = true
+name = "ds_net_gui"
+description = "LAN session control and the readiness (ping) probe for the multiplayer GUI"
 authors.workspace = true
 categories.workspace = true
-description = "LAN room hosting/joining and Wi-Fi MP frame relay for lunaris"
 edition.workspace = true
 keywords.workspace = true
 license.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+version.workspace = true
 
 [dependencies]
-nds-core = { workspace = true }
-rusty_enet = "0.4"
+log = { workspace = true }
+
+# workspace members
+ds_net = { workspace = true }
+
+[lints]
+workspace = true
