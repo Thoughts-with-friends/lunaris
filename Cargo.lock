@@ -1293,7 +1293,7 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
 name = "designer"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ds_emu",
  "ds_fpga",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "ds_bios"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "serde",
@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "ds_cartridge"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "serde",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "ds_cpu"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "serde",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "ds_emu"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bincode",
  "ds_bios",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "ds_fpga"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ds_emu",
  "serde",
@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "ds_gpu"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ds_interrupt",
  "ds_mem_addr",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "ds_interrupt"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde-big-array",
@@ -1513,14 +1513,14 @@ dependencies = [
 
 [[package]]
 name = "ds_mem_addr"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "ds_net"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ds_bios",
  "ds_emu",
@@ -1532,7 +1532,7 @@ dependencies = [
 
 [[package]]
 name = "ds_net_gui"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ds_net",
  "log",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "ds_peripherals"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "ds_interrupt",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "ds_spu"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde-big-array",
@@ -2567,7 +2567,7 @@ checksum = "08c0a42eb299ebb7ec6b9161489e5bf132603a34ca12cecadb8490937aa0492a"
 
 [[package]]
 name = "i18n_derive"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -3084,9 +3084,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "loop9"
@@ -3099,7 +3099,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "cpal 0.13.5",
  "eframe",
@@ -3127,7 +3127,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_freya"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-io",
  "bytes",
@@ -3158,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_gui_common"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "cpal 0.15.3",
  "ds_bios",
@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_melon_lan"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "lunaris_melonds",
@@ -3185,7 +3185,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_melonds"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ds_emu",
  "ds_gpu",
@@ -3196,7 +3196,7 @@ dependencies = [
 
 [[package]]
 name = "lunaris_rom_library"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "egui",
 ]
@@ -3240,7 +3240,7 @@ dependencies = [
 
 [[package]]
 name = "melon_egui"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "cpal 0.13.5",
  "eframe",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "melon_lan"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "melonds",
@@ -4871,7 +4871,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remote"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "serde",
@@ -6095,9 +6095,9 @@ dependencies = [
 
 [[package]]
 name = "webbrowser"
-version = "1.2.5"
+version = "1.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c8ddfbbf66e501434657400268cefe51b95140a0266236415cda7627732df7"
+checksum = "fe8d20d0214027baf11b8b0cc307c1da7657d8f4db9aa956f7de27a6fb1acbd5"
 dependencies = [
  "jni 0.22.4",
  "log",
@@ -6875,7 +6875,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.10.0"
+version = "0.11.0"
 
 [[package]]
 name = "y4m"
