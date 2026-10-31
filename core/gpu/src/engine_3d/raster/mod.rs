@@ -288,7 +288,7 @@ impl Raster {
         // its own part of the buffers); polygon edges are set up directly at
         // the band's first line. Scaled rasters use more bands than threads
         // so that bands crowded with polygons do not hold the others up.
-        let threads = rayon::current_num_threads();
+        let threads = crate::threads::render_threads();
         let count = if d.scale == 1 { threads.clamp(1, 8) } else { (threads * 2).clamp(1, 32) };
         let lines = d.height.div_ceil(count);
         self.bands.resize_with(count, Band::default);
@@ -297,16 +297,22 @@ impl Raster {
             .zip(band_rows(&mut self.depth, d, count, lines))
             .zip(band_rows(&mut self.attr, d, count, lines))
             .collect();
-        self.bands.par_iter_mut().zip(rows).enumerate().for_each(
-            |(i, (band, ((mut color, mut depth), mut attr)))| {
+        type Rows<'a> = (([&'a mut [u32]; 2], [&'a mut [i32]; 2]), [&'a mut [u32]; 2]);
+        let job =
+            |(i, (band, ((mut color, mut depth), mut attr))): (usize, (&mut Band, Rows<'_>))| {
                 let y0 = (i * lines).min(d.height);
                 let y1 = ((i + 1) * lines).min(d.height);
                 band.load(d, f, color[1], depth[1], attr[1], y0, y1);
                 band.render(f);
                 band.final_pass(f.st);
                 band.store(&mut color, &mut depth, &mut attr);
-            },
-        );
+            };
+        if crate::threads::parallel() {
+            let bands = &mut self.bands;
+            crate::threads::run(|| bands.par_iter_mut().zip(rows).enumerate().for_each(job));
+        } else {
+            self.bands.iter_mut().zip(rows).enumerate().for_each(job);
+        }
 
         // Edge marking reads the lines above and below: the first and last
         // line of each band are finished here, with all bands in place.

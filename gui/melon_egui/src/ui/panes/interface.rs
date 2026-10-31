@@ -85,7 +85,7 @@ pub(super) fn language_picker(app: &mut MelonEgui, ui: &mut egui::Ui) {
 
 pub(super) fn about(app: &MelonEgui, ui: &mut egui::Ui) {
     let tr = app.i18n();
-    ui.label("melon_egui");
+    ui.label(crate::backend::APP_NAME);
     ui.label(tr.f(K::Version, &[&env!("CARGO_PKG_VERSION")]));
     ui.separator();
     ui.label(tr.t(K::AboutText));

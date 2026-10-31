@@ -15,6 +15,7 @@ use std::path::Path;
 
 mod auxspi;
 pub mod backup;
+mod dldi_driver;
 mod error;
 mod fingerprint;
 mod foreign;
@@ -22,8 +23,9 @@ pub mod game_db;
 mod key1;
 mod key2;
 mod protocol;
+pub mod sd;
 
-pub use backup::{BackupMemory, SaveChip, SaveMemType};
+pub use backup::{BackupMemory, NandCommand, SaveChip, SaveMemType};
 pub use error::CartridgeError;
 pub use fingerprint::RomFingerprint;
 pub use foreign::normalize_foreign_save;
@@ -85,6 +87,10 @@ pub struct NDSCart {
 
     /// Keycode for encryption (3 words)
     pub keycode: [u32; 3],
+
+    /// SD card image for homebrew (host data, see [`sd`]).
+    #[serde(skip)]
+    pub sd: Option<sd::SdCard>,
 }
 
 impl Default for NDSCart {
@@ -120,6 +126,7 @@ impl NDSCart {
             encrypt_seed0: 0,
             encrypt_seed1: 0,
             keycode: [0_u32; 3],
+            sd: None,
         }
     }
 

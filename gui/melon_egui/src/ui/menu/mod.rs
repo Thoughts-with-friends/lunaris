@@ -62,6 +62,8 @@ pub enum Action {
     InsertCart,
     EjectCart,
     ImportSavefile,
+    /// Write the cart's backup memory to a file of the user's choosing.
+    ExportSavefile,
     /// `Some(slot)` for one of the numbered slots, `None` for "File...".
     SaveState(Option<u8>),
     LoadState(Option<u8>),

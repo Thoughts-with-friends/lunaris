@@ -7,6 +7,7 @@
 use crate::engine_2d::Gpu2DEngine;
 use crate::{
     display::{
+        fifo::DisplayFifo,
         hires::HdLine,
         regs::{DispStatReg, PowerCtrlReg},
     },
@@ -61,6 +62,8 @@ pub struct Gpu {
     /// Engine A, per line: display mode, brightness and BG0 scroll.
     #[serde(with = "serde_big_array::BigArray")]
     pub(crate) hd_lines: [HdLine; ds_mem_addr::SCANLINES],
+    /// Main memory display FIFO (display mode 3, capture source B).
+    pub display_fifo: DisplayFifo,
 }
 
 impl Default for Gpu {
@@ -98,6 +101,7 @@ impl Gpu {
 
             hd_3d: vec![0; ds_mem_addr::PIXELS_PER_LINE * ds_mem_addr::SCANLINES],
             hd_lines: [HdLine::default(); ds_mem_addr::SCANLINES],
+            display_fifo: DisplayFifo::default(),
         }
     }
 }

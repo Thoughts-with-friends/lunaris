@@ -75,6 +75,25 @@ impl PowerMan {
         out
     }
 
+    /// Register 1 bit 0: battery low.
+    pub const fn set_battery_low(&mut self, low: bool) {
+        self.registers[1] = low as u8;
+    }
+
+    pub const fn battery_low(&self) -> bool {
+        self.registers[1] & 1 != 0
+    }
+
+    /// Register 0 bit 6: system power off requested.
+    pub const fn power_off(&self) -> bool {
+        self.registers[0] & 0x40 != 0
+    }
+
+    /// Register 0 bits 3 (top) and 2 (bottom): backlights on.
+    pub const fn backlights(&self) -> (bool, bool) {
+        (self.registers[0] & 0x08 != 0, self.registers[0] & 0x04 != 0)
+    }
+
     /// Chip select released: the next byte is a register index again.
     pub const fn release(&mut self) {
         self.selected = false;

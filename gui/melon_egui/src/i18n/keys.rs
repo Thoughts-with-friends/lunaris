@@ -65,6 +65,10 @@ pub enum I18nKey {
     #[i18n(ja = "セーブデータを読み込む")]
     ImportSavefile,
 
+    /// Export savefile
+    #[i18n(ja = "セーブデータを書き出す")]
+    ExportSavefile,
+
     /// Save state
     #[i18n(ja = "ステートセーブ")]
     SaveState,
@@ -81,8 +85,8 @@ pub enum I18nKey {
     #[i18n(ja = "ファイルを指定...")]
     FromFile,
 
-    /// Open melon_egui directory
-    #[i18n(ja = "melon_egui のフォルダを開く")]
+    /// Open instance folder
+    #[i18n(ja = "instance フォルダを開く")]
     OpenDirectory,
 
     /// Quit
@@ -931,6 +935,18 @@ pub enum I18nKey {
     #[i18n(ja = "{0} を読み込みました ({1}) — 本体を再起動しました")]
     Imported,
 
+    /// exported the save to {0} ({1} bytes)
+    #[i18n(ja = "セーブデータを {0} に書き出しました ({1} バイト)")]
+    Exported,
+
+    /// export failed: {0}
+    #[i18n(ja = "書き出せませんでした: {0}")]
+    ExportFailed,
+
+    /// cannot export: no cart is running. Open a ROM first
+    #[i18n(ja = "書き出せません: カートリッジが動いていません。先に ROM を開いてください")]
+    ExportNoCart,
+
     /// cannot read {0}: {1}
     #[i18n(ja = "{0} を読めません: {1}")]
     CannotRead,
@@ -1122,6 +1138,14 @@ pub enum I18nKey {
     /// Import a save into instance 2
     #[i18n(ja = "2 台目にセーブデータを読み込む")]
     PickImportGuestSave,
+
+    /// Export the save file
+    #[i18n(ja = "セーブデータを書き出す")]
+    PickExportSave,
+
+    /// Export instance 2's save file
+    #[i18n(ja = "2 台目のセーブデータを書き出す")]
+    PickExportGuestSave,
 
     /// Open melonDS cheats
     #[i18n(ja = "melonDS のチートファイルを開く")]

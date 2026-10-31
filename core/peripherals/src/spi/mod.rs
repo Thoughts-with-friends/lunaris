@@ -147,6 +147,36 @@ impl SPIBus {
         self.touchscreen.power_on();
     }
 
+    /// Microphone samples for the next frame (see
+    /// [`TouchScreen::set_mic_frame`]).
+    pub fn set_mic_frame(&mut self, samples: &[i16]) {
+        self.touchscreen.set_mic_frame(samples);
+    }
+
+    /// Bus cycles since the start of the frame, for the mic position.
+    pub const fn set_frame_pos(&mut self, cycles: u64) {
+        self.touchscreen.set_frame_pos(cycles);
+    }
+
+    /// Power management chip: battery low indicator (register 1 bit 0).
+    pub const fn set_battery_low(&mut self, low: bool) {
+        self.powerman.set_battery_low(low);
+    }
+
+    pub const fn battery_low(&self) -> bool {
+        self.powerman.battery_low()
+    }
+
+    /// Power management chip: power off requested (register 0 bit 6).
+    pub const fn power_off_requested(&self) -> bool {
+        self.powerman.power_off()
+    }
+
+    /// Power management chip: (top, bottom) backlights on.
+    pub const fn backlights(&self) -> (bool, bool) {
+        self.powerman.backlights()
+    }
+
     /// Latches the stylus position in the TSC (from ds_emu touchscreen_press).
     pub const fn touchscreen_press(&mut self, x: i32, y: i32) {
         self.touchscreen.press_event(x, y);

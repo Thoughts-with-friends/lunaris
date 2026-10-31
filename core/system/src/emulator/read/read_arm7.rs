@@ -175,7 +175,8 @@ impl Emulator {
             // GBA Keypad Input: https://problemkaputt.de/gbatek.htm#gbakeypadinput
             0x04000130 => self.key_input.get_value(), // KEYINPUT - Key Status
             // DS I/O Maps: https://problemkaputt.de/gbatek.htm#dsiomaps
-            0x04000134 => self.r_cnt, // Debug RCNT
+            0x04000132 => self.key_cnt[1], // KEYCNT - Key Interrupt Control
+            0x04000134 => self.r_cnt,      // Debug RCNT
             // DS Keypad: https://problemkaputt.de/gbatek.htm#dskeypad
             0x04000136 => self.ext_key_in.get_value(), // EXTKEYIN - Key X/Y Input
             // DS Real-Time Clock (RTC): https://problemkaputt.de/gbatek.htm#dsrealtimeclockrtc
@@ -194,6 +195,7 @@ impl Emulator {
             0x040001C2 => self.spi.read_spidata().into(), // SPIDATA - SPI Bus Data/Strobe Register
 
             // DS Interrupts: https://problemkaputt.de/gbatek.htm#dsinterrupts
+            0x04000206 => self.wifi_wait_cnt,       // WIFIWAITCNT
             0x04000208 => self.int7_reg.ime as u16, // IME - Interrupt Master Enable Register
             // DS Power Control: https://problemkaputt.de/gbatek.htm#dspowercontrol
             0x04000300 => self.postflg7.into(), // POSTFLG - Post Boot Flag

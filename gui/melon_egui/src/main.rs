@@ -96,6 +96,7 @@ mod i18n;
 use melon_lan as lan;
 mod logger;
 use melon_lan::mp;
+mod backend;
 mod pad;
 mod selftest;
 mod speed;
@@ -172,7 +173,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([json_config.window.width, json_config.window.height])
             .with_position([json_config.window.pos_x, json_config.window.pos_y])
-            .with_title("melon_egui")
+            .with_title(backend::APP_NAME)
             // Interface > Window opacity lets the desktop show through.
             .with_transparent(true)
             .with_icon(lunaris_icon()),
@@ -182,7 +183,7 @@ fn main() -> eframe::Result<()> {
 
     // MelonEgui App is created here
     eframe::run_native(
-        "melon_egui",
+        backend::APP_NAME,
         options,
         Box::new(move |cc| Ok(Box::new(app::MelonEgui::new(cc, rom, shot, renderer, mp)))),
     )

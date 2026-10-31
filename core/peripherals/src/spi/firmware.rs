@@ -27,6 +27,33 @@
 //! valid user settings block and patches it on load.
 //! See GBATEK "DS Firmware Serial Flash Memory".
 
+/// Firmware user settings a frontend may override (GBATEK "DS Firmware
+/// User Settings"). Strings are cut to 10 / 26 UTF-16 units.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserSettings {
+    pub nickname: String,
+    pub message: String,
+    /// Favorite color 0-15.
+    pub favorite_color: u8,
+    pub birthday_month: u8,
+    pub birthday_day: u8,
+    /// 0 Japanese, 1 English, 2 French, 3 German, 4 Italian, 5 Spanish.
+    pub language: u8,
+}
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self {
+            nickname: "lunaris".into(),
+            message: String::new(),
+            favorite_color: 0,
+            birthday_month: 1,
+            birthday_day: 1,
+            language: 0,
+        }
+    }
+}
+
 /// SPI flash holding the DS firmware / user settings.
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Firmware {
@@ -191,6 +218,38 @@ impl Firmware {
         let len = usize::from(self.read_u16(0x2C)).min(self.raw_firmware.len() - 0x2C); // header data length at 2Ch
         let crc = Self::create_crc(&self.raw_firmware[0x2C..], len, 0x0000); // header CRC16 over the data starting at 2Ch
         self.write_u16(0x2A, crc); // header CRC16 at offset 2Ah
+    }
+
+    /// Writes `s` into both user settings copies (the last 200h bytes:
+    /// 3FE00h and 3FF00h) and fixes their CRCs (at +72h over 70h bytes).
+    ///
+    /// ```text
+    ///  +02 color  +03 month  +04 day  +06 nickname (10 x UTF-16)  +1A length
+    ///  +1C message (26 x UTF-16)  +50 length  +64 language (bits 0-2)
+    /// ```
+    pub fn set_user_settings(&mut self, s: &UserSettings) {
+        for base in [0x3FE00_usize, 0x3FF00] {
+            if self.raw_firmware.len() < base + 0x100 {
+                return;
+            }
+            let fw = &mut self.raw_firmware[base..base + 0x100];
+            fw[0x02] = s.favorite_color & 0xF;
+            fw[0x03] = s.birthday_month.clamp(1, 12);
+            fw[0x04] = s.birthday_day.clamp(1, 31);
+            let mut put = |off: usize, len_off: usize, max: usize, text: &str| {
+                let units: Vec<u16> = text.encode_utf16().take(max).collect();
+                fw[off..off + max * 2].fill(0);
+                for (i, u) in units.iter().enumerate() {
+                    fw[off + i * 2..off + i * 2 + 2].copy_from_slice(&u.to_le_bytes());
+                }
+                fw[len_off..len_off + 2].copy_from_slice(&(units.len() as u16).to_le_bytes());
+            };
+            put(0x06, 0x1A, 10, &s.nickname);
+            put(0x1C, 0x50, 26, &s.message);
+            fw[0x64] = (fw[0x64] & !0x07) | (s.language & 0x07);
+            let crc = Self::create_crc(fw, 0x70, 0xFFFF);
+            fw[0x72..0x74].copy_from_slice(&crc.to_le_bytes());
+        }
     }
 
     /// The Wi-Fi MAC address (header 0x36..0x3B).
@@ -379,5 +438,22 @@ impl Firmware {
 impl Default for Firmware {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod user_settings_tests {
+    use super::*;
+
+    #[test]
+    fn user_settings_are_written_with_a_valid_crc() {
+        let mut fw = Firmware::new();
+        let s =
+            UserSettings { nickname: "あいう".into(), language: 1, ..UserSettings::default() };
+        fw.set_user_settings(&s);
+        assert_eq!(fw.read_u16(0x3FE00 + 0x06), u16::from(b'\0') | 0x3042); // 'あ'
+        assert_eq!(fw.read_u16(0x3FE00 + 0x1A), 3);
+        assert_eq!(fw.raw_firmware[0x3FF00 + 0x64] & 7, 1);
+        assert!(fw.verify_crc(0xFFFF, 0x3FE00, 0x70, 0x3FE72));
     }
 }

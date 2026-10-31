@@ -24,6 +24,27 @@
 //! The TSC is an ADC: a control byte selects a channel (touch X/Y, pressure,
 //! microphone, temperature) and the next two bytes return the 12-bit
 //! result. See GBATEK "DS Touch Screen Controller (TSC)".
+//!
+//! ```text
+//!  channel  0 TEMP0   1 Y   2 battery   3 Z1   4 Z2   5 X   6 AUX (mic)   7 TEMP1
+//!
+//!  mic: the frontend hands over one video frame of samples
+//!       (set_mic_frame); a read at cycle c of the frame returns
+//!       sample[c * len / FRAME_CYCLES] as an unsigned 12-bit value
+//!       (no samples: 800h, silence)
+//! ```
+
+/// Bus cycles in one video frame (263 lines of 2130 cycles).
+pub const FRAME_CYCLES: u64 = 560_190;
+
+/// Pressure readings while the pen is down (Z1 low, Z2 high = light
+/// touch; GBATEK: R = Rx * X / 4096 * (Z2 / Z1 - 1)).
+const PRESS_Z1: u16 = 0x300;
+const PRESS_Z2: u16 = 0xA00;
+/// Temperature diode readings around room temperature (TEMP1 - TEMP0 is
+/// what software turns into degrees).
+const TEMP0: u16 = 0x0960;
+const TEMP1: u16 = 0x0A90;
 
 /// Touch screen controller emulation.
 ///
@@ -44,6 +65,13 @@ pub struct TouchScreen {
     // Latched touch coordinates
     press_x: u16,
     press_y: u16,
+
+    /// Microphone samples for the current frame (host data).
+    #[serde(skip)]
+    mic: Vec<i16>,
+    /// Bus cycles since the start of the frame, set before each transfer.
+    #[serde(skip)]
+    frame_pos: u64,
 }
 
 impl TouchScreen {
@@ -59,7 +87,37 @@ impl TouchScreen {
             press_x: 0,
             // DS Touch Screen Controller (TSC): https://problemkaputt.de/gbatek.htm#dstouchscreencontrollertsc
             press_y: 0xFFF, // 12-bit ADC "not pressed" value
+            mic: Vec::new(),
+            frame_pos: 0,
         }
+    }
+
+    /// Microphone input for the next frame (signed 16-bit mono, any
+    /// sample rate: the samples are spread over the frame). An empty
+    /// slice is silence.
+    pub fn set_mic_frame(&mut self, samples: &[i16]) {
+        self.mic.clear();
+        self.mic.extend_from_slice(samples);
+    }
+
+    /// Bus cycles since the start of the current frame.
+    pub const fn set_frame_pos(&mut self, cycles: u64) {
+        self.frame_pos = cycles;
+    }
+
+    /// AUX channel: the mic sample at this point of the frame, unsigned
+    /// 12-bit (800h = silence).
+    fn mic_sample(&self) -> u16 {
+        if self.mic.is_empty() {
+            return 0x800;
+        }
+        let pos = self.frame_pos.min(FRAME_CYCLES - 1);
+        let index = (pos * self.mic.len() as u64 / FRAME_CYCLES) as usize;
+        ((self.mic[index] as u16) ^ 0x8000) >> 4 // signed 16-bit -> unsigned 12-bit
+    }
+
+    const fn pressed(&self) -> bool {
+        self.press_y != 0xFFF
     }
 
     /// Power on (or reset) the touchscreen device.
@@ -105,7 +163,7 @@ impl TouchScreen {
     /// - Channel selection
     /// - ADC result shifting
     /// - Data position tracking
-    pub const fn transfer_data(&mut self, input: u8) -> u8 {
+    pub fn transfer_data(&mut self, input: u8) -> u8 {
         // Output previously prepared data
         let data = if self.data_pos == 0 {
             ((self.output_coords >> 5) & 0xFF) as u8 // first byte: ADC bits 5-11
@@ -123,10 +181,14 @@ impl TouchScreen {
 
             // Select ADC channel
             match channel {
+                0 => self.output_coords = TEMP0,
                 1 => self.output_coords = self.press_y, // Touch Y
+                3 => self.output_coords = if self.pressed() { PRESS_Z1 } else { 0 },
+                4 => self.output_coords = if self.pressed() { PRESS_Z2 } else { 0xFFF },
                 5 => self.output_coords = self.press_x, // Touch X
-                6 => self.output_coords = 0x800,        // Battery / auxiliary channel
-                _ => self.output_coords = 0xFFF,        // unsupported channel reads all ones
+                6 => self.output_coords = self.mic_sample(), // AUX: microphone
+                7 => self.output_coords = TEMP1,
+                _ => self.output_coords = 0xFFF, // battery (unused on the DS) reads all ones
             }
 
             // Conversion mode change
@@ -146,5 +208,39 @@ impl TouchScreen {
     /// like the original C++ `deselect()` method.
     pub const fn deselect(&mut self) {
         self.data_pos = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Selects `channel` (12-bit mode) and reads the two result bytes.
+    fn read(tsc: &mut TouchScreen, channel: u8) -> u16 {
+        tsc.transfer_data(0x80 | (channel << 4));
+        let hi = u16::from(tsc.transfer_data(0));
+        let lo = u16::from(tsc.transfer_data(0));
+        (hi << 5) | (lo >> 3)
+    }
+
+    #[test]
+    fn mic_follows_the_frame_position() {
+        let mut tsc = TouchScreen::new();
+        assert_eq!(read(&mut tsc, 6), 0x800, "no input: silence");
+        tsc.set_mic_frame(&[i16::MIN, 0, i16::MAX, 0]);
+        tsc.set_frame_pos(0);
+        assert_eq!(read(&mut tsc, 6), 0x000);
+        tsc.set_frame_pos(FRAME_CYCLES / 2);
+        assert_eq!(read(&mut tsc, 6), 0xFFF);
+    }
+
+    #[test]
+    fn pressure_reports_pen_down() {
+        let mut tsc = TouchScreen::new();
+        assert_eq!(read(&mut tsc, 3), 0);
+        tsc.press_event(100, 50);
+        assert_eq!(read(&mut tsc, 3), PRESS_Z1);
+        assert_eq!(read(&mut tsc, 4), PRESS_Z2);
+        assert_eq!(read(&mut tsc, 5), 100 << 4);
     }
 }

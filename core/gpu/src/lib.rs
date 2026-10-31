@@ -23,6 +23,8 @@ pub mod engine_3d;
 mod gpu;
 mod io;
 mod memory;
+mod threads;
 pub mod vram;
 
 pub use gpu::Gpu;
+pub use threads::{DEFAULT_RENDER_THREADS, render_threads, set_render_threads};

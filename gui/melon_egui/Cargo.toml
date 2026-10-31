@@ -71,3 +71,6 @@ i18n_derive = { path = "../i18n_derive" }
 [features]
 # Windows only: hides the console window and is what a distributed build sets.
 release = []
+# Set by gui/egui, which builds these sources on the Lunaris core
+# (`lunaris_melonds`); never set for melon_egui itself.
+lunaris = []

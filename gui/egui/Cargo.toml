@@ -1,4 +1,10 @@
-# egui/eframe front end. See docs/design/egui-migration-design.md.
+# The Lunaris egui front end: gui/melon_egui's sources (same windows, menus,
+# panes and settings) built against `lunaris_melonds`, which puts this
+# repository's core behind the `melonds` API. Whatever the core lacks (the
+# OpenGL renderers) is reported as unavailable and disabled in the UI.
+#
+# The previous Lunaris-only front end is still in `src/` but not built
+# (`autobins = false`).
 [package]
 name = "lunaris"
 version.workspace = true
@@ -11,11 +17,17 @@ license.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+autobins = false
+
+[[bin]]
+name = "lunaris"
+path = "../melon_egui/src/main.rs"
 
 [build-dependencies]
 winres = "0.1.12" # Meta information can be added to the exe.
 
 [dependencies]
+lunaris_rom_library = { workspace = true, features = ["egui"] }
 eframe = { version = "0.33", default-features = false, features = [
   "default_fonts",
   "glow",
@@ -23,20 +35,31 @@ eframe = { version = "0.33", default-features = false, features = [
   "wayland",
 ] }
 egui = "0.33"
-egui_plot = "0.34.1"
-
-gilrs = "0.11"
+egui_glow = "0.33"
 ico = "0.5.0"
-pollster = { version = "*" }
 rfd = "0.14"
+pollster = { version = "1.0.1" }
+cpal = "0.13.1"
+ringbuf = "0.2.2"
 serde.workspace = true
 serde_json = "1.0.149"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
-log = { workspace = true }
-ds_net = { workspace = true }
-lunaris_gui_common.workspace = true
-lunaris_rom_library = { workspace = true, features = ["egui"] }
-ds_net_gui.workspace = true
+# The core behind the melonds API, and melon_lan built against it.
+melonds = { package = "lunaris_melonds", path = "../lunaris_melonds" }
+melon_lan = { package = "lunaris_melon_lan", path = "../lunaris_melon_lan" }
+remote = { path = "../remote" }
+gilrs = "0.11"
+xbrz-rs = "0.1.0"
+log = "0.4"
+indexmap = { version = "2.14.0", features = ["serde"] }
+snafu = { version = "0.9.2" }
+
+i18n_derive = { path = "../i18n_derive" }
 
 [features]
+default = ["lunaris"]
+# Windows only: hides the console window and is what a distributed build sets.
 release = []
+# Built on the Lunaris core (see melon_egui `backend.rs`).
+lunaris = []

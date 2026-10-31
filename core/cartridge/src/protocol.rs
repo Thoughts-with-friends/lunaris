@@ -1,7 +1,7 @@
 //! Card protocol on the ROM bus: the 8-byte command buffer (ROMCMD),
 //! ROMCTRL and the data port. Commands are KEY1-encrypted during the
 //! secure area phase ([`crate::key1`]). See GBATEK "DS Cartridge Protocol".
-use crate::NDSCart;
+use crate::{NDSCart, NandCommand};
 
 /// Cartridge command types
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +22,10 @@ pub enum CartCommand {
     GetSecureAreaBlock = 6,
     /// Read ROM data
     ReadRom = 7,
+    /// NAND save command (KEY2 mode, NAND cards: backup/nand.rs).
+    Nand = 8,
+    /// SD sector read / write (homebrew DLDI, sd.rs).
+    Sd = 9,
 }
 
 impl CartCommand {
@@ -35,6 +39,8 @@ impl CartCommand {
             5 => Self::EnableKey2,
             6 => Self::GetSecureAreaBlock,
             7 => Self::ReadRom,
+            8 => Self::Nand,
+            9 => Self::Sd,
             _ => Self::Empty,
         }
     }
@@ -63,6 +69,8 @@ pub struct RegRomCtrl {
     pub key1_gap_clocks: bool,
     /// Block transfer in progress
     pub block_busy: bool,
+    /// ROMCTRL bit 30: data direction (1 = the CPU writes 0x04100010).
+    pub write_dir: bool,
 }
 
 impl RegRomCtrl {
@@ -79,6 +87,7 @@ impl RegRomCtrl {
             slow_transfer: false,
             key1_gap_clocks: false,
             block_busy: false,
+            write_dir: false,
         }
     }
 
@@ -109,6 +118,9 @@ impl RegRomCtrl {
             value |= 1 << 28; // ROMCTRL bit 28: KEY1 gap clocks
         }
         value |= 1 << 29; //Always one? Who knows
+        if self.write_dir {
+            value |= 1 << 30; // ROMCTRL bit 30: data direction write
+        }
 
         if self.block_busy {
             value |= 1 << 31; // ROMCTRL bit 31: block start / busy
@@ -159,11 +171,6 @@ impl NDSCart {
     // Moved functions to struct Emulator.
     // pub fn run(&mut self, cycles: i32);
 
-    /// Runs debug encryption test routine.
-    pub fn debug_encrypt(&mut self) {
-        todo!()
-    }
-
     /// Reads raw byte from ROM without timing effects.
     pub fn direct_read(&self, address: u32) -> u8 {
         self.rom.get(address as usize).copied().unwrap_or_else(|| {
@@ -207,7 +214,8 @@ impl NDSCart {
         } else {
             0x100 - (size >> 28) // chip ID size byte: 100h - size in 256MB units for large chips
         };
-        0xC2 | size_code << 8 // chip ID: manufacturer C2h (Macronix), size code in byte 1
+        let nand = if self.backup.is_nand() { 0x0800_0000 } else { 0 }; // bit 27: NAND card (melonDS)
+        0xC2 | size_code << 8 | nand // chip ID: manufacturer C2h (Macronix), size code in byte 1
     }
 
     /// Reads a word for the KEY2 "Get Data" command (B7).
@@ -283,6 +291,7 @@ impl NDSCart {
         self.romctrl.block_size = (value >> 24) & 0x7; // ROMCTRL data block size (bits 24-26)
         self.romctrl.slow_transfer = ((value >> 27) & 1) != 0;
         self.romctrl.key1_gap_clocks = ((value >> 28) & 1) != 0;
+        self.romctrl.write_dir = ((value >> 30) & 1) != 0;
         self.romctrl.block_busy = ((value >> 31) & 1) != 0;
 
         // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
@@ -335,6 +344,22 @@ impl NDSCart {
             self.command_id = CartCommand::Empty;
             #[cfg(feature = "log")]
             log::trace!(target: "card", "cmd {:02X?} len {:X}", self.command_buffer, self.bytes_left);
+
+            let cmd = self.command_buffer;
+            if self.cmd_encrypt_mode == 2
+                && matches!(cmd[0], 0xC0 | 0xC1)
+                && let Some(sd) = &mut self.sd
+            {
+                sd.start(cmd[0], u32::from_be_bytes([cmd[1], cmd[2], cmd[3], cmd[4]]));
+                self.command_id = CartCommand::Sd;
+                return;
+            }
+            if self.cmd_encrypt_mode == 2
+                && self.backup.nand_command(&self.command_buffer) == NandCommand::Nand
+            {
+                self.command_id = CartCommand::Nand;
+                return;
+            }
 
             match self.command_buffer[0] {
                 // DS Cartridge Protocol: https://problemkaputt.de/gbatek.htm#dscartridgeprotocol

@@ -99,16 +99,24 @@ impl Emulator {
 
         let div =
             self.nds_timing.timer_clock_divs[self.nds_timing.timers[index].clock_div as usize];
-        self.nds_timing.timers[index].cycles_left -= cycles;
-        while self.nds_timing.timers[index].cycles_left <= 0 {
-            self.nds_timing.timers[index].cycles_left += div;
-            let timer = &mut self.nds_timing.timers[index];
-            if timer.counter == 0xFFFF {
-                // counter about to overflow
-                self.overflow(index);
-            } else {
-                timer.counter += 1;
+        let timer = &mut self.nds_timing.timers[index];
+        timer.cycles_left -= cycles;
+        if timer.cycles_left > 0 {
+            return;
+        }
+        // Elapsed prescaler periods, applied at once rather than one loop
+        // turn each (a prescaler of 1 would loop once per cycle).
+        let mut ticks = 1 + (-timer.cycles_left / div) as u32;
+        timer.cycles_left += ticks as i32 * div;
+        loop {
+            // Increments until the one past 0xFFFF that overflows.
+            let to_overflow = 0x1_0000 - u32::from(self.nds_timing.timers[index].counter);
+            if ticks < to_overflow {
+                self.nds_timing.timers[index].counter += ticks as u16;
+                return;
             }
+            ticks -= to_overflow;
+            self.overflow(index); // counter = reload, IRQ, cascade
         }
     }
 }

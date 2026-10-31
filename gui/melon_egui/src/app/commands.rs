@@ -52,6 +52,7 @@ impl MelonEgui {
                 self.post(self.i18n().s(said));
             }
             Action::ImportSavefile => self.import_savefile(),
+            Action::ExportSavefile => self.export_savefile(),
             Action::SaveState(slot) => self.save_state(slot),
             Action::LoadState(slot) => self.load_state(slot),
             Action::UndoStateLoad => self.undo_state_load(),
@@ -107,13 +108,13 @@ impl MelonEgui {
             Action::SaveState(None) => self.ask_for_guest_file(
                 DialogPurpose::GuestSaveState,
                 crate::file::picker::Request::save(self.i18n().s(K::PickSaveGuestState)),
-                (K::FilterSavestate, &["ml1"]),
+                (K::FilterSavestate, &[crate::backend::STATE_EXT1]),
                 "states",
             ),
             Action::LoadState(None) => self.ask_for_guest_file(
                 DialogPurpose::GuestLoadState,
                 crate::file::picker::Request::open(self.i18n().s(K::PickLoadGuestState)),
-                (K::FilterSavestate, &["ml1"]),
+                (K::FilterSavestate, &[crate::backend::STATE_EXT1]),
                 "states",
             ),
             Action::UndoStateLoad => self.command_guest(Command::UndoStateLoad),
@@ -121,6 +122,12 @@ impl MelonEgui {
                 DialogPurpose::GuestImportSave,
                 crate::file::picker::Request::open(self.i18n().s(K::PickImportGuestSave)),
                 (K::FilterSaveFile, &["sav", "dsv", "bin"]),
+                "saves",
+            ),
+            Action::ExportSavefile => self.ask_for_guest_file(
+                DialogPurpose::GuestExportSave,
+                crate::file::picker::Request::save(self.i18n().s(K::PickExportGuestSave)),
+                (K::FilterSaveFile, &["sav"]),
                 "saves",
             ),
             Action::OpenDirectory => self.open_instance_directory(2),
@@ -164,6 +171,7 @@ impl MelonEgui {
             | Action::OpenRecent(_)
             | Action::InsertCart
             | Action::ImportSavefile
+            | Action::ExportSavefile
             | Action::SaveState(_)
             | Action::LoadState(_)
             | Action::UndoStateLoad

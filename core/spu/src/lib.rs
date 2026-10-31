@@ -17,10 +17,12 @@
 mod adpcm;
 mod capture;
 mod channel;
+mod interp;
 mod mixer;
 
 use capture::Capture;
 use channel::Channel;
+pub use interp::Interpolation;
 
 /// Nominal output sample rate in Hz.
 pub const SAMPLE_RATE: u32 = 32768;
@@ -51,6 +53,8 @@ pub struct Spu {
     captures: [Capture; 2],
     /// Interleaved stereo output not yet taken by the frontend.
     samples: Vec<i16>,
+    /// Sample interpolation of PCM / ADPCM channels.
+    pub interpolation: Interpolation,
 }
 
 /// Kept for the old name used across the code base.
@@ -76,14 +80,17 @@ impl Spu {
             bias: 0x200, // SOUNDBIAS reset value (200h = center)
             captures: Default::default(),
             samples: Vec::with_capacity(4096),
+            interpolation: Interpolation::None,
         }
     }
 
     /// Resets the unit (keeps the sample buffer allocation).
     pub fn power_on(&mut self) {
         let samples = std::mem::take(&mut self.samples);
+        let interpolation = self.interpolation;
         *self = Self::new();
         self.samples = samples;
+        self.interpolation = interpolation;
         self.samples.clear();
     }
 

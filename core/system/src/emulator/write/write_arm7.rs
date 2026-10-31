@@ -115,6 +115,7 @@ impl Emulator {
                 self.cart.set_auxspidata((word >> 16) as u8);
             }
             0x040001A4 => self.cart.set_romctrl(word), // ROMCTRL - Gamecard Bus ROMCTRL
+            0x04100010 if self.arm7_has_cart_rights() => self.cart_write_data(word), // Gamecard bus data out
             0x040001B0 => self.cart.set_lo_key2_seed0(word), // Encryption Seed 0 Lower 32bit
             0x040001B4 => self.cart.set_lo_key2_seed1(word), // Encryption Seed 1 Lower 32bit
 
@@ -231,6 +232,7 @@ impl Emulator {
 
             // DS I/O Maps: https://problemkaputt.de/gbatek.htm#dsiomaps
             0x04000128 => self.sio_cnt = halfword, // Debug SIOCNT
+            0x04000132 => self.write_keycnt(1, halfword), // KEYCNT - Key Interrupt Control
             0x04000134 => self.r_cnt = halfword,   // Debug RCNT
 
             // DS Real-Time Clock (RTC): https://problemkaputt.de/gbatek.htm#dsrealtimeclockrtc
@@ -267,13 +269,14 @@ impl Emulator {
             0x040001C0 => self.spi.set_spicnt(halfword), // SPICNT - SPI Bus Control/Status Register
             0x040001C2 => {
                 // SPIDATA - SPI Bus Data/Strobe Register
+                self.spi.set_frame_pos(self.system_timestamp - self.frame_start);
                 if self.spi.write_spidata((halfword & 0xFF) as u8) {
                     // SPIDATA (bits 0-7)
                     self.request_interrupt7(Interrupt::Spi);
                 }
             }
 
-            0x04000206 => {} // WIFIWAITCNT TODO
+            0x04000206 => self.wifi_wait_cnt = halfword & 0x3F, // WIFIWAITCNT (bits 0-5)
 
             // DS Interrupts: https://problemkaputt.de/gbatek.htm#dsinterrupts
             0x04000208 => self.int7_reg.ime = (halfword & 0x1) as u32, // IME - Interrupt Master Enable Register
@@ -356,6 +359,7 @@ impl Emulator {
             // DS Serial Peripheral Interface Bus (SPI): https://problemkaputt.de/gbatek.htm#dsserialperipheralinterfacebusspi
             0x040001C2 => {
                 // SPIDATA - SPI Bus Data/Strobe Register
+                self.spi.set_frame_pos(self.system_timestamp - self.frame_start);
                 if self.spi.write_spidata(byte) {
                     self.request_interrupt7(Interrupt::Spi);
                 }
@@ -372,6 +376,9 @@ impl Emulator {
                 if byte == 0x80 {
                     // ARM7 halt request
                     self.arm7.halt();
+                } else if byte == 0xC0 {
+                    // HALTCNT C0h: sleep
+                    self.enter_sleep();
                 } else {
                     #[cfg(feature = "log")]
                     log::error!("Unrecognized HALTCNT value {:02X} for ARM7", byte);

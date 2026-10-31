@@ -46,6 +46,7 @@ impl MelonEgui {
         match purpose {
             DialogPurpose::OpenRom => self.load(&path),
             DialogPurpose::ImportSave => self.import_savefile_from(&path),
+            DialogPurpose::ExportSave => self.export_savefile_to(&path),
             DialogPurpose::SaveState => self.write_state_to(&path),
             DialogPurpose::LoadState => self.read_state_from(&path),
             DialogPurpose::ImportCheats => self.import_cheats(&path),
@@ -55,6 +56,9 @@ impl MelonEgui {
                     self.post_error(self.i18n().f(K::CannotRead, &[&path.display(), &error]));
                 }
             },
+            DialogPurpose::GuestExportSave => {
+                self.command_guest(crate::guest::Command::ExportSave(path));
+            }
             DialogPurpose::GuestSaveState => {
                 self.command_guest(crate::guest::Command::SaveState(None, Some(path)));
             }

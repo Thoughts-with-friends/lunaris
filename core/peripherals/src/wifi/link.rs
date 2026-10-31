@@ -32,6 +32,8 @@ pub trait MpLink: Send + core::fmt::Debug {
     fn end(&mut self);
     /// Called once at the start of every emulated video frame.
     fn new_frame(&mut self) {}
+    /// The Wi-Fi microsecond clock advanced to `now` (melonDS `MP_Clock`).
+    fn clock(&mut self, _now: u64) {}
 
     /// Ordinary frame (beacon, management, data).
     fn send_packet(&mut self, frame: &[u8], timestamp: u64);

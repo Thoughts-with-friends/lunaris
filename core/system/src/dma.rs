@@ -5,7 +5,18 @@
 //! Direct Memory Access (DMA) controller for Nintendo DS
 //! Manages high-speed memory transfers between memory regions
 
-/// DMA control register
+/// DMA control register (DMAxCNT_H, plus the ARM9's word count bits 16-20).
+///
+/// ```text
+///  bit   15  14  13 12 11  10   9   8 7   6 5   4..0
+///  ARM9  en  irq [timing ]  32  rep  src   dst   count bits 16-20
+///  ARM7  en  irq [timing]   32  rep  src   dst   -
+///                 (12-13)
+/// ```
+///
+/// ARM9 timings: 0 immediate, 1 VBlank, 2 HBlank, 3 start of display,
+/// 4 main memory display, 5 DS cart, 6 GBA cart, 7 GXFIFO.
+/// ARM7 timings: 0 immediate, 1 VBlank, 2 DS cart, 3 Wi-Fi / GBA cart.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 pub struct DmaCnt {
     /// Destination address control (0=increment, 1=decrement, 2=fixed, 3=reload)
@@ -16,17 +27,19 @@ pub struct DmaCnt {
     pub repeat: bool,
     /// Use 32-bit transfers instead of 16-bit
     pub word_transfer: bool,
-    /// Start timing (0=immediate, 1=VBLANK, 2=HBLANK, 3=sync/special)
+    /// Start timing field as written (3 bits on ARM9, 2 bits on ARM7).
     pub timing: u32,
     /// Generate interrupt when transfer completes
     pub irq_after_transfer: bool,
     /// Enable this DMA channel
     pub enabled: bool,
+    /// ARM9 only: word count bits 16-20 (DMAxCNT_H bits 0-4).
+    pub count_hi: u32,
 }
 
 impl DmaCnt {
     /// Create new DMA control register
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             dest_control: 0,
             source_control: 0,
@@ -35,29 +48,28 @@ impl DmaCnt {
             timing: 0,
             irq_after_transfer: false,
             enabled: false,
+            count_hi: 0,
         }
     }
 
     /// Get register value as 16-bit halfword.
-    ///
-    /// `is_arm9` selects the *DMA Start Timing* field width per GBATEK: 3
-    /// bits (11-13) on ARM9, 2 bits (11-12) on ARM7.
     pub fn get(&self, is_arm9: bool) -> u16 {
         // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
-        let timing_mask = if is_arm9 { 0x7 } else { 0x3 }; // start timing: 3 bits on ARM9 (bits 11-13), 2 bits on ARM7 (bits 12-13)
-
         let mut value = 0_u16;
         value |= ((self.dest_control & 0x3) as u16) << 5; // dest address control (bits 5-6)
         value |= ((self.source_control & 0x3) as u16) << 7; // source address control (bits 7-8)
-
         if self.repeat {
-            // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
             value |= 1 << 9; // DMAxCNT_H bit 9: repeat
         }
         if self.word_transfer {
             value |= 1 << 10; // DMAxCNT_H bit 10: transfer type (1=32-bit)
         }
-        value |= ((self.timing & timing_mask) as u16) << 11; // DMAxCNT_H bit 11: start timing
+        if is_arm9 {
+            value |= ((self.timing & 0x7) as u16) << 11; // ARM9 start timing: bits 11-13
+            value |= (self.count_hi & 0x1F) as u16; // ARM9 word count bits 16-20
+        } else {
+            value |= ((self.timing & 0x3) as u16) << 12; // ARM7 start timing: bits 12-13
+        }
         if self.irq_after_transfer {
             value |= 1 << 14; // DMAxCNT_H bit 14: IRQ upon end of word count
         }
@@ -69,35 +81,23 @@ impl DmaCnt {
 
     /// Set register value from 16-bit halfword.
     ///
-    /// `is_arm9` selects the *DMA Start Timing* field width (see [`Self::get`]).
-    /// Previously this always masked to 2 bits, so ARM9-only timings 4-7
-    /// (Main-Memory-Display, DS-Cartridge, GBA-Cartridge, Geometry-Command-FIFO)
-    /// could never be represented, silently preventing cartridge- and
-    /// GXFIFO-triggered DMA from ever starting.
+    /// The start timing sits in bits 11-13 on the ARM9 but only in bits
+    /// 12-13 on the ARM7 (GBATEK "DS DMA Transfers"); reading the ARM7 one
+    /// from bit 11 turned its VBlank DMAs into timing 2 and its cartridge
+    /// DMAs into immediate ones.
     pub fn set(&mut self, value: u16, is_arm9: bool) {
-        let timing_mask = if is_arm9 { 0x7 } else { 0x3 }; // start timing: 3 bits on ARM9, 2 bits on ARM7
-
         self.dest_control = ((value >> 5) & 0x3) as u32; // dest address control (bits 5-6)
         self.source_control = ((value >> 7) & 0x3) as u32; // source address control (bits 7-8)
-        // DS DMA Transfers: https://problemkaputt.de/gbatek.htm#dsdmatransfers
         self.repeat = (value & (1 << 9)) != 0; // DMAxCNT_H bit 9: repeat
         self.word_transfer = (value & (1 << 10)) != 0; // DMAxCNT_H bit 10: transfer type (1=32-bit)
-        self.timing = ((value >> 11) & timing_mask) as u32;
+        if is_arm9 {
+            self.timing = ((value >> 11) & 0x7) as u32; // ARM9 start timing: bits 11-13
+            self.count_hi = (value & 0x1F) as u32; // ARM9 word count bits 16-20
+        } else {
+            self.timing = ((value >> 12) & 0x3) as u32; // ARM7 start timing: bits 12-13
+        }
         self.irq_after_transfer = (value & (1 << 14)) != 0; // DMAxCNT_H bit 14: IRQ upon end of word count
         self.enabled = (value & (1 << 15)) != 0; // DMAxCNT_H bit 15: DMA enable
-
-        #[cfg(feature = "log")]
-        log::debug!(
-            "DMA control register updated: value={:#010X}, dest_control={}, source_control={}, repeat={}, word_transfer={}, timing={}, irq_after_transfer={}, enabled={}",
-            value,
-            self.dest_control,
-            self.source_control,
-            self.repeat,
-            self.word_transfer,
-            self.timing,
-            self.irq_after_transfer,
-            self.enabled,
-        );
     }
 }
 
@@ -106,6 +106,19 @@ impl Default for DmaCnt {
         Self::new()
     }
 }
+
+/// Start modes in melonDS numbering ([`Dma::start_mode`]): the ARM9 timing,
+/// or `0x10 |` the ARM7 timing.
+pub const MODE_IMMEDIATE: u32 = 0x00;
+pub const MODE9_VBLANK: u32 = 0x01;
+pub const MODE9_HBLANK: u32 = 0x02;
+pub const MODE9_DISPLAY_START: u32 = 0x03;
+pub const MODE9_MAIN_MEMORY_DISPLAY: u32 = 0x04;
+pub const MODE9_CART: u32 = 0x05;
+pub const MODE9_GXFIFO: u32 = 0x07;
+pub const MODE7_IMMEDIATE: u32 = 0x10;
+pub const MODE7_VBLANK: u32 = 0x11;
+pub const MODE7_CART: u32 = 0x12;
 
 /// Individual DMA channel state
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
@@ -120,10 +133,14 @@ pub struct Dma {
     /// Destination address (internal working copy)
     pub internal_dest: u32,
 
-    /// Transfer length in units (user-controlled)
+    /// Word count register bits 0-15 (DMAxCNT_L) as written.
+    pub word_count: u32,
+    /// Units left in the current transfer (latched from the word count
+    /// when a transfer starts).
     pub length: u32,
-    /// Transfer length (internal working copy)
-    pub internal_len: u32,
+    /// A transfer was started and still has units left (a GXFIFO or
+    /// cartridge DMA waiting for its next request).
+    pub in_progress: bool,
 
     /// DMA control register
     pub cnt: DmaCnt,
@@ -137,18 +154,36 @@ pub struct Dma {
 
 impl Dma {
     /// Create new DMA channel
-    pub fn new(index: u32, is_arm9: bool) -> Self {
+    pub const fn new(index: u32, is_arm9: bool) -> Self {
         Self {
             source: 0,
             internal_source: 0,
             destination: 0,
             internal_dest: 0,
+            word_count: 0,
             length: 0,
-            internal_len: 0,
+            in_progress: false,
             cnt: DmaCnt::new(),
             index,
             is_arm9,
         }
+    }
+
+    /// Start mode in melonDS numbering (see the `MODE*` constants).
+    pub const fn start_mode(&self) -> u32 {
+        if self.is_arm9 { self.cnt.timing } else { 0x10 | self.cnt.timing }
+    }
+
+    /// Units of one whole transfer: the word count, 0 meaning the maximum
+    /// (ARM9 200000h, ARM7 DMA3 10000h, ARM7 DMA0-2 4000h).
+    pub const fn start_count(&self) -> u32 {
+        let mask = match (self.is_arm9, self.index & 3) {
+            (true, _) => 0x1F_FFFF,
+            (false, 3) => 0xFFFF,
+            (false, _) => 0x3FFF,
+        };
+        let count = ((self.cnt.count_hi << 16) | self.word_count) & mask;
+        if count == 0 { mask + 1 } else { count }
     }
 }
 
@@ -210,20 +245,12 @@ impl NDSDma {
             dma.is_arm9 = i < 4;
             dma.index = i as u32;
             dma.cnt.set(0, dma.is_arm9);
+            dma.in_progress = false;
         }
     }
 
     // moved emulator/dma.rs:
     // pub fn dma_event(&mut self, index: u32);
-
-    /// Update and process DMA transfer
-    #[expect(clippy::needless_pass_by_ref_mut)]
-    pub fn update_dma(&mut self) {
-        unimplemented!("C++ code is empty.")
-    }
-
-    // moved emulator/dma.rs:
-    // pub fn handle_event(&mut self, _event: &SchedulerEvent);
 
     /// Check if any DMA channel is active
     pub fn is_active(&self) -> bool {
@@ -241,7 +268,7 @@ impl NDSDma {
     /// Read transfer length of DMA channel
     pub fn read_len(&self, index: usize) -> u16 {
         match index < 8 {
-            true => (self.dmas[index].length & 0xFFFF) as u16, // word count (lower halfword)
+            true => self.dmas[index].word_count as u16, // word count (lower halfword)
             false => 0,
         }
     }
@@ -300,21 +327,12 @@ impl NDSDma {
         }
     }
 
-    /// Write transfer length to DMA channel
+    /// Write DMAxCNT_L (word count bits 0-15). The count is latched when
+    /// a transfer starts.
     pub fn write_len(&mut self, index: usize, len: u16) {
-        let dma = &mut self.dmas[index];
-
-        let is_ch7 = index == 7;
-        let len32 = len as u32;
-
-        dma.length = match (dma.is_arm9, len == 0, is_ch7) {
-            (true, true, _) => 0x200000,            // ARM9 word count 0 = 200000h
-            (true, false, _) => len32 & 0x1FFFFF,   // ARM9 word count: 21 bits
-            (false, true, true) => 0x10000,         // ARM7 DMA3 word count 0 = 10000h
-            (false, true, false) => 0x4000,         // ARM7 DMA0-2 word count 0 = 4000h
-            (false, false, true) => len32 & 0xFFFF, // ARM7 DMA3 word count: 16 bits
-            (false, false, false) => 0x3FFF, // ARM7 DMA0-2: 14-bit max (3FFFh); note the written count is not used here
-        };
+        if let Some(dma) = self.dmas.get_mut(index) {
+            dma.word_count = u32::from(len);
+        }
     }
 
     // moved emulator/dma.rs:

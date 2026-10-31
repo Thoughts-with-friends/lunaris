@@ -1694,17 +1694,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui_plot"
-version = "0.34.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67fc9b427a837264e55381a5cade6e28fe83ac5b165a61b9c888548c732a9c95"
-dependencies = [
- "ahash",
- "egui",
- "emath",
-]
-
-[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1953,10 +1942,6 @@ checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
 ]
-
-[[package]]
-name = "free_bios"
-version = "0.10.0"
 
 [[package]]
 name = "freya"
@@ -3116,21 +3101,28 @@ dependencies = [
 name = "lunaris"
 version = "0.10.0"
 dependencies = [
- "ds_net",
- "ds_net_gui",
+ "cpal 0.13.5",
  "eframe",
  "egui",
- "egui_plot",
+ "egui_glow",
  "gilrs",
+ "i18n_derive",
  "ico",
+ "image",
+ "indexmap",
  "log",
- "lunaris_gui_common",
+ "lunaris_melon_lan",
+ "lunaris_melonds",
  "lunaris_rom_library",
  "pollster 1.0.1",
+ "remote",
  "rfd 0.14.1",
+ "ringbuf",
  "serde",
  "serde_json",
+ "snafu",
  "winres",
+ "xbrz-rs",
 ]
 
 [[package]]
@@ -3180,6 +3172,26 @@ dependencies = [
  "serde_json",
  "xbrz-rs",
  "zstd",
+]
+
+[[package]]
+name = "lunaris_melon_lan"
+version = "0.10.0"
+dependencies = [
+ "log",
+ "lunaris_melonds",
+ "serde",
+]
+
+[[package]]
+name = "lunaris_melonds"
+version = "0.10.0"
+dependencies = [
+ "ds_emu",
+ "ds_gpu",
+ "ds_peripherals",
+ "ds_spu",
+ "log",
 ]
 
 [[package]]

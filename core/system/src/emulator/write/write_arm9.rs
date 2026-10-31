@@ -139,6 +139,7 @@ impl Emulator {
                 self.cart.set_auxspidata(((word >> 16) & 0xFF) as u8); // AUXSPIDATA (bits 16-23)
             }
             0x0400_01A4 => self.cart.set_romctrl(word), // ROMCTRL - Gamecard Bus ROMCTRL
+            0x0410_0010 if !self.arm7_has_cart_rights() => self.cart_write_data(word), // Gamecard bus data out
             0x0400_01A8 => {
                 // Gamecard bus 8-byte Command Out
                 self.cart.receive_command((word >> 24) as u8, 3);
@@ -360,6 +361,7 @@ impl Emulator {
             0x040000B4 => self.dma.write_dest_lo(0, halfword), // DMA0DAD - DMA 0 Destination Address
             0x040000B6 => self.dma.write_dest_hi(0, halfword), // DMA0DAD - DMA 0 Destination Address (upper halfword)
             0x040000B8 => self.dma.write_len(0, halfword),     // DMA0CNT_L - DMA 0 Word Count
+            0x04000132 => self.write_keycnt(0, halfword),      // KEYCNT - Key Interrupt Control
             0x040000BA => self.dma_write_cnt(0, halfword),     // DMA0CNT_H - DMA 0 Control
 
             0x040000BC => self.dma.write_source_lo(1, halfword), // DMA1SAD - DMA 1 Source Address

@@ -256,10 +256,19 @@ impl Vram {
 
     /// Reads `N` bytes at `offset` inside `region` (offset wraps at the
     /// region size). Unmapped pages read as 0.
-    #[inline]
+    #[inline(always)]
     pub fn read<const N: usize>(&self, region: Region, offset: u32) -> [u8; N] {
         let offset = offset & (region.size() - 1);
         let mut mask = self.maps[region as usize][(offset >> PAGE_SHIFT) as usize];
+        // Usual case, one bank mapped: copy straight out of it.
+        if mask.is_power_of_two() {
+            let mem = &self.banks[mask.trailing_zeros() as usize];
+            let start = offset as usize & (mem.len() - 1);
+            return match mem.get(start..start + N) {
+                Some(src) => core::array::from_fn(|i| src[i]),
+                None => [0; N],
+            };
+        }
         let mut out = [0u8; N];
         while mask != 0 {
             let bank = mask.trailing_zeros() as usize;

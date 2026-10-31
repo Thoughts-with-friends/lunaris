@@ -50,6 +50,7 @@ impl Emulator {
     ///       timers, IPC, cartridge, SPI, SPU, Wi-Fi...)
     /// ```
     pub fn read_word(&mut self, address: u32, cpu_type: CpuType) -> u32 {
+        self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Word, cpu_type) {
             return value;
         }
@@ -66,6 +67,7 @@ impl Emulator {
     /// CPU-side 16-bit load (Thumb fetch, LDRH/LDRSH); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_halfword().
     pub fn read_halfword(&mut self, address: u32, cpu_type: CpuType) -> u16 {
+        self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Half, cpu_type) {
             return value as u16;
         }
@@ -82,6 +84,7 @@ impl Emulator {
     /// CPU-side 8-bit load (LDRB/LDRSB); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_byte().
     pub fn read_byte(&mut self, address: u32, cpu_type: CpuType) -> u8 {
+        self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Byte, cpu_type) {
             return value as u8;
         }

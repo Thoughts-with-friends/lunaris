@@ -7,6 +7,7 @@ mod dma;
 mod emulator;
 mod error;
 pub mod slot2;
+pub mod slot2_devices;
 
 pub use ds_cartridge::{RomFingerprint, normalize_foreign_save};
 pub use ds_cpu::arm_cpu::CpuType;

@@ -257,6 +257,9 @@ impl Emulator {
 
                 // If the current line is within the visible screen
                 // and the frameskip condition is met, the GPU draws this line.
+                if (self.gpu.vertical_count as usize) < SCANLINES {
+                    self.fill_display_fifo_line();
+                }
                 if (self.gpu.vertical_count as usize) < SCANLINES
                     && self.gpu.frames_skipped >= self.config.frameskip
                 {
@@ -336,6 +339,8 @@ impl Emulator {
 
                     self.gpu.engine_upper.vblank_start();
                     self.gpu.engine_lower.vblank_start();
+                    self.gpu.display_fifo.reset();
+                    self.vblank_dma_request();
                 }
                 if self.gpu.vertical_count == 263 {
                     self.gpu.vertical_count = 0;
@@ -347,6 +352,7 @@ impl Emulator {
                         false => self.gpu.frames_skipped += 1,
                     }
                 }
+                self.display_start_dma_request(self.gpu.vertical_count);
 
                 self.reschedule_gpu_event(0, 256 * 6);
             }

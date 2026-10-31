@@ -148,7 +148,8 @@ impl Gpu {
 
         let width_mask = if size & 1 != 0 { 511 } else { 255 };
         let height_mask = if size & 2 != 0 { 511 } else { 255 };
-        let y = (vofs + line as u32) & height_mask;
+        let src_line = if e.bg_mosaic(index) { e.mosaic_state.bg_line } else { line as u32 };
+        let y = (vofs + src_line) & height_mask;
         let fine_y = y & 7;
         let mut row_base = screen_base + ((y >> 3) & 31) * 64;
         if y >= 256 {
@@ -158,6 +159,9 @@ impl Gpu {
 
         let mut cached_column = u32::MAX;
         let mut entry = 0u16;
+        // The 8 pixels of the current tile row (8 or 4 bits each), fetched
+        // once per tile instead of once per pixel.
+        let mut tile_row = 0u64;
         for (px, out_px) in out.iter_mut().enumerate() {
             let x = (hofs + px as u32) & width_mask;
             let column = x >> 3;
@@ -165,8 +169,20 @@ impl Gpu {
                 cached_column = column;
                 let block = if x >= 256 { 0x800 } else { 0 }; // right-hand 32x32 screen block
                 entry = self.vram.read_u16(region, row_base + block + (column & 31) * 2);
+                let tile = u32::from(entry & 0x3FF); // tile number (bits 0-9)
+                // LCD VRAM BG Screen Data Format (BG Map): https://problemkaputt.de/gbatek.htm#lcdvrambgscreendataformatbgmap
+                let ty = if entry & (1 << 11) != 0 {
+                    // map entry bit 11: vertical flip
+                    7 - fine_y
+                } else {
+                    fine_y
+                };
+                tile_row = if color_256 {
+                    self.vram.read_u64(region, char_base + tile * 64 + ty * 8)
+                } else {
+                    u64::from(self.vram.read_u32(region, char_base + tile * 32 + ty * 4))
+                };
             }
-            let tile = u32::from(entry & 0x3FF); // tile number (bits 0-9)
             // LCD VRAM BG Screen Data Format (BG Map): https://problemkaputt.de/gbatek.htm#lcdvrambgscreendataformatbgmap
             let tx = if entry & (1 << 10) != 0 {
                 // map entry bit 10: horizontal flip
@@ -174,16 +190,10 @@ impl Gpu {
             } else {
                 x & 7
             };
-            let ty = if entry & (1 << 11) != 0 {
-                // map entry bit 11: vertical flip
-                7 - fine_y
-            } else {
-                fine_y
-            };
             let pal_bank = u32::from(entry >> 12);
 
             let color = if color_256 {
-                let ci = u32::from(self.vram.read_u8(region, char_base + tile * 64 + ty * 8 + tx));
+                let ci = ((tile_row >> (tx * 8)) & 0xFF) as u32;
                 if ci == 0 {
                     continue;
                 }
@@ -195,9 +205,8 @@ impl Gpu {
                     self.bg_palette_color(a, ci)
                 }
             } else {
-                let byte = self.vram.read_u8(region, char_base + tile * 32 + ty * 4 + tx / 2);
                 // LCD VRAM Character Data: https://problemkaputt.de/gbatek.htm#lcdvramcharacterdata
-                let ci = u32::from(if tx & 1 != 0 { byte >> 4 } else { byte & 0xF }); // 4bpp: low nibble for even pixels, high nibble for odd
+                let ci = ((tile_row >> (tx * 4)) & 0xF) as u32; // 4bpp: low nibble first
                 if ci == 0 {
                     continue;
                 }
@@ -212,15 +221,15 @@ impl Gpu {
         let e = self.engine(a);
         if index == 2 {
             (
-                sign_extend_28(e.bg2x_internal),
-                sign_extend_28(e.bg2y_internal),
+                sign_extend_28(e.mosaic_state.affine_ref[0].0),
+                sign_extend_28(e.mosaic_state.affine_ref[0].1),
                 i32::from(e.bg2p[0] as i16),
                 i32::from(e.bg2p[2] as i16),
             )
         } else {
             (
-                sign_extend_28(e.bg3x_internal),
-                sign_extend_28(e.bg3y_internal),
+                sign_extend_28(e.mosaic_state.affine_ref[1].0),
+                sign_extend_28(e.mosaic_state.affine_ref[1].1),
                 i32::from(e.bg3p[0] as i16),
                 i32::from(e.bg3p[2] as i16),
             )

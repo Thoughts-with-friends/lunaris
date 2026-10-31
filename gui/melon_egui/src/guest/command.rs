@@ -21,6 +21,9 @@ pub enum Command {
     /// Replace the cart's backup memory and reboot, as `File ▸ Import
     /// savefile` does.
     ImportSave(Vec<u8>),
+    /// Write the cart's backup memory to this file, as `File ▸ Export
+    /// savefile` does.
+    ExportSave(PathBuf),
     /// Hand the console a fresh cheat list, or an empty one when cheats are
     /// switched off.
     SetCheats(Vec<Cheat>),

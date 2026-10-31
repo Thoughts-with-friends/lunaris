@@ -65,7 +65,7 @@
 //! GBATEK: [LCD OBJ - OAM Attributes](https://problemkaputt.de/gbatek.htm#lcdobjoamattributes),
 //! [LCD OBJ - OAM Rotation/Scaling Parameters](https://problemkaputt.de/gbatek.htm#lcdobjoamrotationscalingparameters),
 //! [DS Video OBJs](https://problemkaputt.de/gbatek.htm#dsvideoobjs)
-use super::compose::{LineLayers, OBJ_BITMAP, OBJ_SEMI, OPAQUE, W};
+use super::compose::{LineLayers, OBJ_BITMAP, OBJ_MOSAIC, OBJ_SEMI, OPAQUE, W};
 use crate::{Gpu, vram::Region};
 
 /// OBJ sizes in pixels: `[shape][size] = (width, height)`.
@@ -86,6 +86,7 @@ impl Gpu {
         let region = if a { Region::ObjA } else { Region::ObjB };
         let ext_region = if a { Region::ObjExtPalA } else { Region::ObjExtPalB };
         let dispcnt = self.engine(a).dispcnt;
+        let obj_mosaic_line = self.engine(a).mosaic_state.obj_line;
         let oam = |off: usize| {
             u16::from_le_bytes([self.oam[oam_base + off], self.oam[oam_base + off + 1]])
         };
@@ -107,10 +108,20 @@ impl Gpu {
             let (box_w, box_h) = if double { (width * 2, height * 2) } else { (width, height) };
 
             let y = u32::from(attr0 & 0xFF); // attribute 0: Y coordinate (bits 0-7)
-            let row = (line as u32).wrapping_sub(y) & 0xFF; // row within the sprite, wrapping at 256
+            let mut row = (line as u32).wrapping_sub(y) & 0xFF; // row within the sprite, wrapping at 256
             if row >= box_h {
                 continue;
             }
+            // attribute 0 bit 12: mosaic (not for OBJ window sprites). The
+            // block's first line may be above the sprite: clamp to its top.
+            let mosaic = attr0 & (1 << 12) != 0 && obj_mode != 2;
+            if mosaic {
+                row = (obj_mosaic_line.wrapping_sub(y)) & 0xFF;
+                if row >= box_h {
+                    row = 0;
+                }
+            }
+            let mosaic_flag = if mosaic { OBJ_MOSAIC } else { 0 };
             let mut x0 = i32::from(attr1 & 0x1FF); // attribute 1: X coordinate (bits 0-8)
             if x0 >= 256 {
                 x0 -= 512;
@@ -222,7 +233,7 @@ impl Gpu {
                 }
                 let existing = layers.obj[sx];
                 if existing & OPAQUE == 0 || priority <= (existing >> 16) & 3 {
-                    layers.obj[sx] = OPAQUE | (priority << 16) | color; // layer priority in bits 16-17
+                    layers.obj[sx] = OPAQUE | mosaic_flag | (priority << 16) | color; // layer priority in bits 16-17
                 }
             }
         }

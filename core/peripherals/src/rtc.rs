@@ -85,6 +85,19 @@ pub struct RealTimeClock {
     /// When set, the clock always reads this time instead of the host's
     /// local time (deterministic runs for testing).
     pub fixed_time: Option<chrono::NaiveDateTime>,
+
+    /// Seconds added to the host's local time (a clock set to another
+    /// date keeps running from there).
+    #[serde(default)]
+    pub time_offset: i64,
+    /// Clock adjustment register (command 3).
+    clock_adjust: u8,
+    /// Free register (command 7).
+    free_reg: u8,
+    /// Interrupt lines: bit 4 INT1, bit 5 INT2.
+    irq_flag: u8,
+    /// (day of week, hour, minute) seen by the last [`Self::tick`].
+    last_minute: Option<(u8, u8, u8)>,
 }
 
 impl Default for RealTimeClock {
@@ -121,7 +134,75 @@ impl RealTimeClock {
             output_bit_num: 0,
             output_index: 0,
             fixed_time: None,
+            time_offset: 0,
+            clock_adjust: 0,
+            free_reg: 0,
+            irq_flag: 0,
+            last_minute: None,
         }
+    }
+
+    /// Current local (or fixed) time.
+    fn now(&self) -> chrono::NaiveDateTime {
+        self.fixed_time.unwrap_or_else(|| {
+            chrono::Local::now().naive_local() + chrono::TimeDelta::seconds(self.time_offset)
+        })
+    }
+
+    /// Hour register value as read back: BCD, 12/24-hour mode, PM in bit 6.
+    fn hour_reg(&self, hour: u8) -> u8 {
+        let h = if self.stat1_reg & 0x2 != 0 { hour } else { hour % 12 }; // STAT1 bit 1: 24-hour mode
+        byte_to_bcd(h) | (u8::from(hour >= 12) << 6) // PM flag (bit 6)
+    }
+
+    /// Whether `alarm` matches: each field with bit 7 set is compared.
+    const fn alarm_matches(alarm: &Alarm, now: (u8, u8, u8)) -> bool {
+        (alarm.day_of_week & 0x80 == 0 || alarm.day_of_week & 0x07 == now.0)
+            && (alarm.hour & 0x80 == 0 || alarm.hour & 0x7F == now.1)
+            && (alarm.minute & 0x80 == 0 || alarm.minute & 0x7F == now.2)
+    }
+
+    /// Checks the minute interrupts (melonDS `RTC::ProcessIRQ` type 0);
+    /// call regularly (once per frame). Returns whether an interrupt line
+    /// went active, which raises the ARM7 RTC IRQ when RCNT routes it.
+    ///
+    /// ```text
+    ///  STAT2 bits 0-3 (INT1): 0010/0110/0011/0111 per-minute, 0100 alarm 1
+    ///  STAT2 bit 6    (INT2): alarm 2
+    /// ```
+    pub fn tick(&mut self) -> bool {
+        use chrono::{Datelike, Timelike};
+        let t = self.now();
+        let now = (
+            t.weekday().num_days_from_sunday() as u8,
+            self.hour_reg(t.hour() as u8),
+            byte_to_bcd(t.minute() as u8),
+        );
+        if self.last_minute.replace(now).is_none_or(|last| last == now) {
+            return false;
+        }
+        let old = self.irq_flag;
+        match self.stat2_reg & 0x0F {
+            0b0010 | 0b0110 | 0b0011 | 0b0111 => self.irq_flag |= 0x10,
+            0b0100 => {
+                if Self::alarm_matches(&self.alarm1, now) {
+                    self.irq_flag |= 0x10;
+                } else {
+                    self.irq_flag &= !0x10;
+                }
+            }
+            _ => {}
+        }
+        if self.stat2_reg & 0x40 != 0 {
+            if Self::alarm_matches(&self.alarm2, now) {
+                self.irq_flag |= 0x20;
+            } else {
+                self.irq_flag &= !0x20;
+            }
+        }
+        // The status register 1 shows the active lines.
+        self.stat1_reg |= self.irq_flag & 0x30;
+        old & 0x30 == 0 && self.irq_flag & 0x30 != 0
     }
 
     /// Pins the clock to a fixed date/time (or `None` to follow the host's
@@ -130,6 +211,18 @@ impl RealTimeClock {
         self.fixed_time = time.and_then(|(y, mo, d, h, mi, s)| {
             chrono::NaiveDate::from_ymd_opt(y, mo, d)?.and_hms_opt(h, mi, s)
         });
+    }
+
+    /// Runs the clock from `time` on (seconds offset from the host's local
+    /// time).
+    pub fn set_running_time(&mut self, time: (i32, u32, u32, u32, u32, u32)) {
+        let (y, mo, d, h, mi, s) = time;
+        if let Some(t) =
+            chrono::NaiveDate::from_ymd_opt(y, mo, d).and_then(|d| d.and_hms_opt(h, mi, s))
+        {
+            self.fixed_time = None;
+            self.time_offset = (t - chrono::Local::now().naive_local()).num_seconds();
+        }
     }
 
     /// Initialize RTC with default values
@@ -164,7 +257,12 @@ impl RealTimeClock {
             if (self.input & 0x80) != 0 {
                 // command byte bit 7: read
                 match self.command {
-                    0 => self.internal_output[0] = self.stat1_reg,
+                    0 => {
+                        self.internal_output[0] = self.stat1_reg;
+                        // reading status 1 acknowledges the interrupt flags
+                        self.stat1_reg &= !0x30;
+                        self.irq_flag = 0;
+                    }
                     1 => {
                         if (self.stat2_reg & 0x4) != 0 {
                             // STAT2 bit 2: INT1 frequency/alarm mode
@@ -210,7 +308,9 @@ impl RealTimeClock {
                         self.internal_output[6] = byte_to_bcd(now.second() as u8); // second
                     }
 
+                    3 => self.internal_output[0] = self.clock_adjust,
                     4 => self.internal_output[0] = self.stat2_reg,
+                    7 => self.internal_output[0] = self.free_reg,
                     5 => {
                         self.internal_output[0] = self.alarm2.day_of_week;
                         self.internal_output[1] = self.alarm2.hour;
@@ -249,12 +349,18 @@ impl RealTimeClock {
                 }
                 #[allow(clippy::match_same_arms)]
                 2 => {} // do nothing for now
-                #[allow(clippy::match_same_arms)]
-                3 => {} // TODO: clock adjustment
-
+                3 if self.input_index == 1 => self.clock_adjust = self.input as u8,
                 4 if self.input_index == 1 => {
                     self.stat2_reg = self.input as u8;
+                    // switching INT1 / INT2 off releases their lines
+                    if self.stat2_reg & 0x0F == 0 {
+                        self.irq_flag &= !0x10;
+                    }
+                    if self.stat2_reg & 0x40 == 0 {
+                        self.irq_flag &= !0x20;
+                    }
                 }
+                7 if self.input_index == 1 => self.free_reg = self.input as u8,
 
                 5 => match self.input_index {
                     1 => self.alarm2.day_of_week = self.input as u8,

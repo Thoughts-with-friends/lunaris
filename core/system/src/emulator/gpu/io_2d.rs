@@ -306,7 +306,11 @@ impl Emulator {
                     gpu.set_master_bright_b(half);
                 }
             }
-            // Unused / not emulated (0x4E, 0x56..0x5E, DISP_MMEM_FIFO 0x68).
+            // DS Video Capture and Main Memory Display Mode: DISP_MMEM_FIFO
+            // (engine A only), two pixels per word
+            0x68 if a => gpu.display_fifo.write_lo(half),
+            0x6A if a => gpu.display_fifo.write_hi(half),
+            // Unused (0x4E, 0x56..0x5E).
             _ => {}
         }
     }

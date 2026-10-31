@@ -493,9 +493,15 @@ impl ArmCpu {
         self.jp(self.exception_base + 0x08, true); // vector +08h: Software Interrupt (SWI)
     }
 
-    /// Debug helpers
+    /// Debug helper: prints PC, CPSR and r0-r15 to stderr.
     pub fn print_info(&self) {
-        todo!()
+        eprintln!(
+            "ARM{} pc={:08X} cpsr={:08X} r={:08X?}",
+            if self.cpu_id == 0 { 9 } else { 7 },
+            self.get_pc(),
+            self.cpsr.get(),
+            self.regs
+        );
     }
 
     /// Update register banking for a new CPU mode

@@ -196,6 +196,10 @@ pub struct WiFi {
 
     /// Wi-Fi clock (µs since power-on); the timestamp frames are sent with.
     us_timestamp: u64,
+    /// Frames run so far when the frame timebase is on (see
+    /// [`Self::set_frame_timebase`]); `None` keeps the clock where it was.
+    #[serde(default)]
+    frame_timebase: Option<u64>,
 
     tx_slots: [TxSlot; 6],
     /// Frame being handed to the link (TX header + 802.11 frame).
@@ -283,6 +287,7 @@ impl WiFi {
             cmd_counter: 0,
             us_until_power_on: 0,
             us_timestamp: 0,
+            frame_timebase: None,
             tx_slots: [TxSlot::default(); 6],
             tx_buffer: vec![0; 0x2000], // 8K transmit staging buffer
             com_status: 0,
@@ -513,8 +518,18 @@ impl WiFi {
         (self.is_mp, self.is_mp_client)
     }
 
+    /// Starts the Wi-Fi clock at `frames * 16716` µs on every power-on and
+    /// counts frames from `frames` on (melonDS's shared timebase for linked
+    /// consoles); `None` turns it off.
+    pub const fn set_frame_timebase(&mut self, frames: Option<u64>) {
+        self.frame_timebase = frames;
+    }
+
     /// Start of an emulated video frame: lets the link pump its transport.
     pub fn new_frame(&mut self) {
+        if let Some(f) = self.frame_timebase.as_mut() {
+            *f += 1;
+        }
         if let Some(link) = self.link.as_mut() {
             link.new_frame();
         }
@@ -584,6 +599,11 @@ impl WiFi {
             self.power_on = on;
             self.cycle_acc = 0;
             if on {
+                if let Some(frames) = self.frame_timebase {
+                    // melonDS: start the clock on the video-frame timeline so
+                    // a pair of consoles shares one timebase (~16716 µs/frame).
+                    self.us_timestamp = frames * 16716;
+                }
                 self.begin_link();
             } else {
                 self.end_link();
@@ -769,6 +789,9 @@ impl WiFi {
     /// One `US_STEP` µs tick (melonDS `USTimer`).
     fn us_timer(&mut self) {
         self.us_timestamp += u64::from(US_STEP);
+        if let Some(link) = self.link.as_mut() {
+            link.clock(self.us_timestamp);
+        }
 
         // A MP client runs in lockstep with its host: frames from the host
         // are delivered at the timestamp they were sent with, and the clock

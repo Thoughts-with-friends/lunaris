@@ -8,10 +8,13 @@ mod button;
 mod cartridge;
 pub mod cheats;
 mod dma;
+#[cfg(test)]
+mod dma_tests;
 pub mod emu_config;
 mod gpu;
 mod interrupt;
 mod load;
+mod power;
 mod read;
 mod runner;
 mod sound;
@@ -69,6 +72,12 @@ pub struct Emulator {
 
     /// Scheduling
     pub system_timestamp: u64,
+    /// `system_timestamp` when the current `run()` (frame) started.
+    pub frame_start: u64,
+    /// ARM9 / ARM7 timestamps up to which their timers, 3D engine and SPU
+    /// have run (`sync_arm9_devices` / `sync_arm7_devices`).
+    pub dev_sync9: u64,
+    pub dev_sync7: u64,
     pub next_event_time: u64,
     pub gpu_event: SchedulerEvent,
     pub dma_event: SchedulerEvent,
@@ -101,6 +110,15 @@ pub struct Emulator {
     pub key_input: KeyInputReg,
     /// Input state - extended buttons
     pub ext_key_in: ExtKeyInReg,
+    /// KEYCNT of the ARM9 (0) and ARM7 (1).
+    pub key_cnt: [u16; 2],
+    /// KEYINPUT at the last keypad IRQ check.
+    pub last_keys: u16,
+    /// Sleep mode (HALTCNT = C0h) until the ARM7 wakes up.
+    pub sleeping: bool,
+    /// WIFIWAITCNT (0x04000206): Wi-Fi bus waitstates (stored; the Wi-Fi
+    /// region keeps its fixed timing).
+    pub wifi_wait_cnt: u16,
 
     /// Power control register
     pub pow_cnt2: PowCnt2Reg,
@@ -198,6 +216,9 @@ impl Emulator {
             arm9_bios: Default::default(),
             arm7_bios: Default::default(),
             system_timestamp: Default::default(),
+            frame_start: 0,
+            dev_sync9: 0,
+            dev_sync7: 0,
             next_event_time: Default::default(),
             gpu_event: Default::default(),
             dma_event: Default::default(),
@@ -211,6 +232,10 @@ impl Emulator {
             int9_reg: Default::default(),
             key_input: Default::default(),
             ext_key_in: Default::default(),
+            key_cnt: [0; 2],
+            last_keys: 0x03FF,
+            sleeping: false,
+            wifi_wait_cnt: 0,
             pow_cnt2: Default::default(),
             dma_fill: Default::default(),
             sio_cnt: Default::default(),
@@ -418,6 +443,9 @@ impl Emulator {
         self.pow_cnt2.speakers = true;
         self.pow_cnt2.wifi = false;
 
+        if let Some(user) = &self.config.user_settings {
+            self.spi.firmware.set_user_settings(user);
+        }
         if let Some(mac) = self.config.mac_address {
             self.spi.firmware.set_mac_address(mac);
         }
@@ -425,6 +453,8 @@ impl Emulator {
         self.wifi.set_power_cnt(false);
 
         self.system_timestamp = 0;
+        self.dev_sync9 = 0;
+        self.dev_sync7 = 0;
         self.next_event_time = 0xffffffff; // no event scheduled
         self.gpu_event.activation_time = 0;
         self.gpu_event.id = 0;
@@ -602,6 +632,7 @@ impl Emulator {
         self.ex_mem_cnt = 0xE880;
         // DS Cartridge I/O Ports: https://problemkaputt.de/gbatek.htm#dscartridgeioports
         self.cart.set_auxspicnt(0x8000); // AUXSPICNT bit 15: NDS slot enable
+        self.cart.cmd_encrypt_mode = 2; // the card is in KEY2 (main data) mode after boot
 
         // DS Memory Control - BIOS: https://problemkaputt.de/gbatek.htm#dsmemorycontrolbios
         self.bios_prot = 0x1204; // BIOSPROT: ARM7 BIOS protected from 1204h
@@ -742,12 +773,18 @@ impl Emulator {
     /// Called by the frontends after run().
     pub fn get_upper_frame(&self, buffer: &mut [u32]) {
         self.gpu.get_upper_frame(buffer);
+        if self.sleeping {
+            buffer.fill(0xFF00_0000); // LCDs off while asleep
+        }
     }
 
     /// Copies the finished bottom (touch) screen into `buffer`.
     /// Called by the frontends after run().
     pub fn get_lower_frame(&self, buffer: &mut [u32]) {
         self.gpu.get_lower_frame(buffer);
+        if self.sleeping {
+            buffer.fill(0xFF00_0000); // LCDs off while asleep
+        }
     }
 
     /// Replaces the top screen buffer (unused by the frontends).
@@ -762,15 +799,14 @@ impl Emulator {
 
     /* frame, display and dma ===== (public) ===== */
 
-    /// Not implemented (CorgiDS API placeholder); use `gpu.is_frame_complete()`.
+    /// Whether the current frame has reached VBlank.
     pub fn frame_complete(&self) -> bool {
-        unimplemented!();
+        self.gpu.is_frame_complete()
     }
 
-    /// Not implemented (CorgiDS API placeholder); POWCNT1 bit 15 decides
-    /// which engine drives the top screen.
+    /// POWCNT1 bit 15: engine A drives the top screen.
     pub fn display_swapped(&self) -> bool {
-        unimplemented!();
+        self.gpu.display_swapped()
     }
 
     /// Whether any DMA channel is transferring; execute() stalls both CPUs
@@ -835,16 +871,15 @@ impl Emulator {
         self.gpu_event.activation_time += relative_time;
     }
 
-    /// Schedules DMA channel `event_id` to run `relative_time` cycles from
-    /// now; run() then calls dma_handle_event(). Only one DMA event is
-    /// pending at a time (the last one scheduled wins).
-    pub fn add_dma_event(&mut self, event_id: i32, relative_time: u64) {
-        #[cfg(feature = "log")]
-        log::trace!("call add_dma_event");
-
-        self.dma_event.id = event_id;
+    /// Schedules the DMA event `relative_time` cycles from now; run() then
+    /// calls dma_handle_event(), which runs every channel marked in
+    /// `dma.active_dmas`. An earlier pending event is kept.
+    pub fn add_dma_event(&mut self, relative_time: u64) {
+        let at = self.system_timestamp + relative_time;
+        if !self.dma_event.processing || at < self.dma_event.activation_time {
+            self.dma_event.activation_time = at;
+        }
         self.dma_event.processing = true;
-        self.dma_event.activation_time = self.system_timestamp + relative_time;
 
         if self.dma_event.activation_time < self.next_event_time {
             self.next_event_time = self.dma_event.activation_time;
@@ -893,6 +928,27 @@ impl Emulator {
     }
 
     /* ===== touchscreen (public) ===== */
+
+    /// Microphone input for the next `run()`: signed 16-bit mono samples
+    /// covering one frame (about 1/60 s; the count sets the rate). Call
+    /// before every frame while the mic is live.
+    pub fn set_mic_input(&mut self, samples: &[i16]) {
+        self.spi.set_mic_frame(samples);
+    }
+
+    /// Blowing into the mic without one: white noise for the next frame
+    /// (like melonDS's "white noise" mic mode).
+    pub fn mic_blow(&mut self) {
+        let mut noise = [0_i16; 735]; // 44.1 kHz / 60
+        let mut lfsr = (self.system_timestamp as u32) | 1;
+        for s in &mut noise {
+            lfsr ^= lfsr << 13; // xorshift32
+            lfsr ^= lfsr >> 17;
+            lfsr ^= lfsr << 5;
+            *s = lfsr as i16;
+        }
+        self.spi.set_mic_frame(&noise);
+    }
 
     /// Sets the stylus position for the next frames: pixel `x, y` on the
     /// bottom screen, or `y == 0xFFF` for "not touching".

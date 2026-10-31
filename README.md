@@ -111,15 +111,15 @@ Further details regarding the design of the NDS emulator are summarized in the f
 ## Todo List
 
 - [x] **Phase 0 (100%)**: FreeBIOS Development
-- [ ] **Phase 1 (20%)**: Optimization / Debugging
+- [ ] **Phase 1 (90%)**: Optimization / Debugging
   - [x] **Phase 1-1 (100%)**: Support Controller Input
-  - [ ] **Phase 1-2 (30%)**: Save Data System (.sav)
-  - [ ] **Phase 1-3 (20%)**: 2D Graphics
-  - [ ] **Phase 1-4 (10%)**: 3D Graphics
-  - [ ] **Phase 1-5 (10%)**: Loading Any ROM
-- [ ] **Phase 2 (30%)**: WiFi / Networking
-- [ ] **Phase 3 (10%)**: VPN Network support
-- [ ] **Phase 4 (0%)**: JIT Compile
+  - [x] **Phase 1-2 (100%)**: Save Data System (.sav)
+  - [x] **Phase 1-3 (100%)**: 2D Graphics
+  - [x] **Phase 1-4 (100%)**: 3D Graphics
+  - [ ] **Phase 1-5 (70%)**: Loading Any ROM
+- [ ] **Phase 2 (80%)**: WiFi / Networking
+- [x] **Phase 3 (100%)**: VPN Network support
+- [ ] **Phase 4 (0%)**: Performance (CPU/GPU RAM)
 
 ## UI Images
 
@@ -146,7 +146,7 @@ Our CI tests are run using [GitHub Actions](https://github.com/Thoughts-with-fri
 This project is a modified/extended version based on NDS-Emulator.
 
 - Emulators
-  - [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528): Base on the original NDS Emulator
+  - [NDS Emulator](https://github.com/Ace314159/NDS-Emulator/tree/e7c8a317db7e1d370f90a17637b338782737b528): A Nintendo DS Emulator written in Rust
   - [dust](https://github.com/kelpsyberry/dust): A Nintendo DS emulator written in Rust
   - [CorgiDS](https://github.com/PSI-Rockin/CorgiDS): A dog-themed DS emulator
   - [desmume](https://github.com/TASEmulators/desmume): Nintendo DS emulator written in C and C++

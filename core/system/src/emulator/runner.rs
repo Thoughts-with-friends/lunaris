@@ -43,6 +43,8 @@ impl Emulator {
     ///       take_audio_samples, then calls run() again next frame
     /// ```
     pub fn run(&mut self) {
+        self.frame_start = self.system_timestamp;
+        self.power_frame_start();
         self.gpu.start_frame();
         self.wifi.new_frame();
         self.run_cheats();
@@ -54,23 +56,15 @@ impl Emulator {
             let slice = (self.system_timestamp - before) as i32;
             while self.arm9.get_timestamp() < (self.system_timestamp << 1) {
                 self.execute(CpuType::Arm9);
-                // ARM9 timestamps count 66 MHz cycles. Halve the timestamps
-                // rather than the difference: `cycles_ran() >> 1` truncates
-                // one-cycle steps to 0, so a tight GXSTAT/timer polling
-                // loop never let the 3D engine or the timers advance
-                // (Pokemon Ranger waited forever on GXSTAT busy).
-                let ran =
-                    (self.arm9.timestamp >> 1).wrapping_sub(self.arm9.last_timestamp >> 1) as i64;
-                self.run_timers9(ran as i32);
-                self.run_3d(ran);
             }
+            self.sync_arm9_devices();
 
             // Now handle ARM7
             while self.arm7.get_timestamp() < self.system_timestamp {
                 self.execute(CpuType::Arm7);
-                self.run_timers7(self.arm7.cycles_ran() as i32);
-                self.run_spu(self.arm7.cycles_ran() as u32);
             }
+            self.sync_arm7_devices();
+            self.update_sleep();
             self.wifi.run(slice as u32);
             self.raise_wifi_irq();
             if self.slot2.tick(slice as u32) {
@@ -89,10 +83,57 @@ impl Emulator {
             self.cartridge_run(slice);
         }
 
+        self.slot2.end_frame();
+        // Mic samples are given per frame; none next frame is silence.
+        self.spi.set_mic_frame(&[]);
+
         if let Err(_err) = self.cart.save_check() {
             #[cfg(feature = "log")]
             log::error!("{_err}");
         };
+    }
+
+    /// Brings the ARM9's timers and 3D engine up to the ARM9's current
+    /// time. Called once per slice and before every ARM9 I/O access, so
+    /// software reading TMxCNT / GXSTAT sees them current without running
+    /// them after every instruction.
+    ///
+    /// ARM9 timestamps count 66 MHz cycles. The timestamps are halved
+    /// rather than the difference: halving short steps truncated one-cycle
+    /// steps to 0, so a tight GXSTAT/timer polling loop never let the 3D
+    /// engine or the timers advance (Pokemon Ranger waited forever on
+    /// GXSTAT busy).
+    pub(crate) fn sync_arm9_devices(&mut self) {
+        let now = self.arm9.timestamp;
+        let ran = (now >> 1).wrapping_sub(self.dev_sync9 >> 1) as i64;
+        self.dev_sync9 = now;
+        if ran > 0 {
+            self.run_timers9(ran as i32);
+            self.run_3d(ran);
+        }
+    }
+
+    /// Brings the ARM7's timers and the SPU up to the ARM7's current time
+    /// (once per slice and before every ARM7 I/O access).
+    pub(crate) fn sync_arm7_devices(&mut self) {
+        let now = self.arm7.timestamp;
+        let ran = now.wrapping_sub(self.dev_sync7) as i64;
+        self.dev_sync7 = now;
+        if ran > 0 {
+            self.run_timers7(ran as i32);
+            self.run_spu(ran as u32);
+        }
+    }
+
+    /// Before a CPU accesses I/O: its devices catch up first.
+    #[inline]
+    pub(crate) fn sync_before_io(&mut self, address: u32, cpu_type: CpuType) {
+        if address >> 24 == 0x04 {
+            match cpu_type {
+                CpuType::Arm9 => self.sync_arm9_devices(),
+                CpuType::Arm7 => self.sync_arm7_devices(),
+            }
+        }
     }
 
     /// Executes one instruction on `cpu_type`, or idles it when it is

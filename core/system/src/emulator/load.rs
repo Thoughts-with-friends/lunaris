@@ -59,6 +59,23 @@ impl Emulator {
         self.cart.load_database(name)
     }
 
+    /// Puts a ROM image (and its save data) in the slot and powers the
+    /// console on, without touching the file system: the frontend keeps
+    /// the save itself ([`ds_cartridge::BackupMemory::take_dirty`]).
+    pub fn load_rom_image(&mut self, rom: Vec<u8>, name: &str, save: Option<&[u8]>) {
+        if let Err(_err) = self.cart.flush_save() {
+            #[cfg(feature = "log")]
+            log::error!("{_err}");
+        }
+        self.cartridge_install(rom, name.to_owned(), save, None);
+        if !self.spi.firmware.is_loaded()
+            && let Ok(image) = read_firmware_image(&self.config.firmware_path)
+        {
+            self.spi.init(&image);
+        }
+        self.power_on();
+    }
+
     /// Loads a `.nds` file and powers the console on.
     ///
     /// ```text

@@ -131,6 +131,8 @@ pub enum DialogPurpose {
     OpenRom,
     /// A `.sav` to write into the cart's backup memory.
     ImportSave,
+    /// Where to write the cart's backup memory.
+    ExportSave,
     /// Where to write a savestate.
     SaveState,
     /// A savestate to read.
@@ -142,6 +144,7 @@ pub enum DialogPurpose {
     /// compile error rather than a command that quietly drives the wrong
     /// console — which is the bug this whole mechanism exists to prevent.
     GuestImportSave,
+    GuestExportSave,
     GuestSaveState,
     GuestLoadState,
     /// A directory for one of the Path settings.

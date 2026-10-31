@@ -45,6 +45,7 @@
 //! GBATEK: [LCD I/O Color Special Effects](https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects)
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 
+use super::mosaic;
 use crate::{Gpu, display::hires::hd_3d_info};
 
 pub(super) const W: usize = PIXELS_PER_LINE;
@@ -57,6 +58,8 @@ pub(super) const OBJ_SEMI: u32 = 1 << 30;
 pub(super) const OBJ_BITMAP: u32 = 1 << 29;
 /// BG0 pixel comes from the 3D engine.
 pub(super) const BG_3D: u32 = 1 << 28;
+/// OBJ pixel comes from an OBJ with mosaic on (attribute 0 bit 12).
+pub(super) const OBJ_MOSAIC: u32 = 1 << 27;
 
 /// Line buffers for one scanline of one engine.
 pub(super) struct LineLayers {
@@ -175,6 +178,7 @@ impl Gpu {
 
         let mut layers = LineLayers { bg: [[0; W]; 4], obj: [0; W], obj_window: [false; W] };
 
+        self.engine_mut(a).mosaic_line_start(line);
         let dispcnt = self.engine(a).dispcnt;
         let mode = dispcnt.bg_mode;
         let shown =
@@ -196,14 +200,21 @@ impl Gpu {
                 (3, 3..=5) => self.render_bg_extended(a, 3, &mut layers.bg[3]),
                 _ => {}
             }
+            // The 3D layer has no mosaic.
+            let is_3d = index == 0 && a && dispcnt.bg_3d;
+            if !is_3d && self.engine(a).bg_mosaic(index) {
+                mosaic::bg_mosaic_x(&mut layers.bg[index], self.engine(a).bg_mosaic_size().0);
+            }
         }
 
         if dispcnt.display_obj || dispcnt.obj_win_display {
             self.render_objs(a, line, &mut layers);
+            mosaic::obj_mosaic_x(&mut layers.obj, self.engine(a).obj_mosaic_size().0);
         }
 
         self.composite(a, line, &layers);
         self.advance_affine_refs(a);
+        self.engine_mut(a).mosaic_line_end();
     }
 
     /// Steps the internal BG2/BG3 affine reference points by PB/PD after
@@ -227,16 +238,40 @@ impl Gpu {
         let eva = u32::from(e.bldalpha & 0x1F).min(16); // BLDALPHA EVA (bits 0-4), capped at 16
         let evb = u32::from((e.bldalpha >> 8) & 0x1F).min(16); // BLDALPHA EVB (bits 8-12), capped at 16
         let evy = u32::from(e.bldy & 0x1F).min(16); // BLDY EVY (bits 0-4), capped at 16
-        let first_target = |layer: usize| match layer {
-            0..=3 => bld.bg_first_target_pix[layer],
-            4 => bld.obj_first_target_pix,
-            _ => bld.bd_first_target_pix,
-        };
-        let second_target = |layer: usize| match layer {
-            0..=3 => bld.bg_second_target_pix[layer],
-            4 => bld.obj_second_target_pix,
-            _ => bld.bd_second_target_pix,
-        };
+        // BLDCNT targets per layer id (0-3 BG, 4 OBJ, 5 backdrop).
+        let firsts = [
+            bld.bg_first_target_pix[0],
+            bld.bg_first_target_pix[1],
+            bld.bg_first_target_pix[2],
+            bld.bg_first_target_pix[3],
+            bld.obj_first_target_pix,
+            bld.bd_first_target_pix,
+        ];
+        let seconds = [
+            bld.bg_second_target_pix[0],
+            bld.bg_second_target_pix[1],
+            bld.bg_second_target_pix[2],
+            bld.bg_second_target_pix[3],
+            bld.obj_second_target_pix,
+            bld.bd_second_target_pix,
+        ];
+        let first_target = |layer: usize| firsts[layer];
+        let second_target = |layer: usize| seconds[layer];
+        let effect = bld.effect;
+
+        // Displayed BGs grouped by priority (lower index first), so each
+        // pixel checks only the layers that exist instead of 4 x 4 pairs.
+        let d = e.dispcnt;
+        let shown = [d.display_bg0, d.display_bg1, d.display_bg2, d.display_bg3];
+        let mut groups = [[0usize; 4]; 4];
+        let mut group_len = [0usize; 4];
+        for bg in 0..4 {
+            if shown[bg] {
+                let p = usize::from(bgcnt[bg] & 3);
+                groups[p][group_len[p]] = bg;
+                group_len[p] += 1;
+            }
+        }
 
         let mut row = [0u32; W];
         // Engine A: how each 3D pixel was composited (display::hires).
@@ -246,20 +281,21 @@ impl Gpu {
             // (layer id, pixel); layer 5 = backdrop.
             let mut found = [(5usize, u32::from(backdrop)); 2];
             let mut count = 0;
-            'search: for prio in 0..4u32 {
-                let obj = layers.obj[x];
-                if obj & OPAQUE != 0 && (obj >> 16) & 3 == prio && mask & 0x10 != 0 {
-                    // window mask bit 4: OBJ enabled
+            let obj = layers.obj[x];
+            // window mask bit 4: OBJ enabled
+            let obj_prio =
+                if obj & OPAQUE != 0 && mask & 0x10 != 0 { ((obj >> 16) & 3) as usize } else { 4 };
+            'search: for prio in 0..4 {
+                if obj_prio == prio {
                     found[count] = (4, obj);
                     count += 1;
                     if count == 2 {
                         break 'search;
                     }
                 }
-                for (bg, bg_line) in layers.bg.iter().enumerate() {
-                    let px = bg_line[x];
-                    if px & OPAQUE != 0 && u32::from(bgcnt[bg] & 3) == prio && mask & (1 << bg) != 0
-                    {
+                for &bg in &groups[prio][..group_len[prio]] {
+                    let px = layers.bg[bg][x];
+                    if px & OPAQUE != 0 && mask & (1 << bg) != 0 {
                         found[count] = (bg, px);
                         count += 1;
                         if count == 2 {
@@ -275,7 +311,8 @@ impl Gpu {
             let second_color = (second & 0x7FFF) as u16; // BGR555 color
             let effects = mask & 0x20 != 0; // window mask bit 5: color special effects enabled
 
-            let color = if !effects {
+            // Fast path: no special effect possible for this pixel.
+            let color = if !effects || (effect == 0 && top & (OBJ_SEMI | OBJ_BITMAP | BG_3D) == 0) {
                 top_color
             } else if top_layer == 4
                 && top & (OBJ_SEMI | OBJ_BITMAP) != 0

@@ -139,7 +139,7 @@ impl MelonEgui {
         if chip(ui, "instance1", FAINT).clicked() {
             action = Some(Action::OpenDirectory);
         }
-        if chip(ui, "⚙ melonDS", ACCENT_2).clicked() {
+        if chip(ui, crate::backend::CORE_CHIP, ACCENT_2).clicked() {
             action = Some(Action::TogglePane(Pane::EmuSettings));
         }
 

@@ -56,6 +56,7 @@ impl Emulator {
     ///       DMAs, raise IRQs (IPC), feed the GX FIFO, clock SPI...
     /// ```
     pub fn write_word(&mut self, address: u32, word: u32, cpu_type: CpuType) {
+        self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
             && self.slot2.write(address, word, Width::Word)
@@ -75,6 +76,7 @@ impl Emulator {
     /// CPU-side 16-bit store (STRH); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_halfword().
     pub fn write_halfword(&mut self, address: u32, halfword: u16, cpu_type: CpuType) {
+        self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
             && self.slot2.write(address, halfword.into(), Width::Half)
@@ -94,6 +96,7 @@ impl Emulator {
     /// CPU-side 8-bit store (STRB); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_byte().
     pub fn write_byte(&mut self, address: u32, byte: u8, cpu_type: CpuType) {
+        self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
             && self.slot2.write(address, byte.into(), Width::Byte)

@@ -274,6 +274,7 @@ impl Emulator {
             0x0400_010C => self.nds_timing.read_lo(7), // TM3CNT_L - Timer 3 Counter/Reload
             // GBA Keypad Input: https://problemkaputt.de/gbatek.htm#gbakeypadinput
             0x0400_0130 => self.key_input.get_value(), // KEYINPUT - Key Status
+            0x0400_0132 => self.key_cnt[0],            // KEYCNT - Key Interrupt Control
             // DS Inter Process Communication (IPC): https://problemkaputt.de/gbatek.htm#dsinterprocesscommunicationipc
             0x0400_0180 => self.ipc.read_sync(Side::Arm9), // IPCSYNC - IPC Synchronize Register
             0x0400_0184 => self.ipc.read_cnt(Side::Arm9),  // IPCFIFOCNT - IPC Fifo Control Register

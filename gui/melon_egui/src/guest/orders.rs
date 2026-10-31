@@ -68,6 +68,12 @@ pub(crate) fn perform_commands(
                     Err(error) => Note::new(K::ImportFailed, &[&error]),
                 });
             }
+            Command::ExportSave(path) => {
+                shared.say(match emu.export_save_to(&path) {
+                    Ok(bytes) => Note::new(K::Exported, &[&path.display(), &bytes]),
+                    Err(error) => Note::new(K::ExportFailed, &[&error]),
+                });
+            }
             Command::SetCheats(cheats) => emu.nds.set_cheats(cheats.as_slice()),
             Command::FlushSave => emu.flush_save(),
             Command::SetClock(clock) => emu.set_clock(clock),

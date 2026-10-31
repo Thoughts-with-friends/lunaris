@@ -1,7 +1,7 @@
 //! One of the 16 sound channels: sample fetch through the channel FIFO
 //! (PCM8 / PCM16 / ADPCM), PSG square waves (channels 8-13) and noise
 //! (channels 14-15). See GBATEK "DS Sound Channels".
-use crate::{Bus, adpcm};
+use crate::{Bus, Interpolation, adpcm};
 
 /// Duty cycles 0-7 of the PSG channels (eighths high).
 const PSG_TABLE: [[i16; 8]; 8] = {
@@ -39,6 +39,8 @@ pub(crate) struct Channel {
     pub(crate) timer: u32,
     pub(crate) pos: i32,
     pub(crate) cur_sample: i16,
+    /// Previous samples (newest first) for interpolation.
+    pub(crate) prev: [i16; 3],
     pub(crate) noise: u16,
 
     pub(crate) adpcm_val: i32,
@@ -91,6 +93,7 @@ impl Channel {
         self.timer = u32::from(self.timer_reload);
         self.pos = if self.format() == 3 { -1 } else { -3 };
         self.noise = 0x7FFF; // noise LFSR seed
+        self.prev = [0; 3];
         self.cur_sample = 0;
         self.fifo_read = 0;
         self.fifo_write = 0;
@@ -245,7 +248,7 @@ impl Channel {
 
     /// Advances the channel by `cycles` SPU cycles (16.76 MHz) and returns
     /// its volume-scaled output.
-    pub(crate) fn run(&mut self, cycles: u32, bus: &mut Bus) -> i32 {
+    pub(crate) fn run(&mut self, cycles: u32, bus: &mut Bus, interp: Interpolation) -> i32 {
         if self.cnt & (1 << 31) == 0 {
             // SOUNDxCNT bit 31: channel stopped
             return 0;
@@ -268,6 +271,9 @@ impl Channel {
         self.timer += cycles;
         while self.timer >> 16 != 0 {
             self.timer = u32::from(self.timer_reload) + (self.timer - 0x1_0000); // timer counts up and overflows at 10000h
+            if kind < 3 && interp != Interpolation::None {
+                self.prev = [self.cur_sample, self.prev[0], self.prev[1]];
+            }
             match kind {
                 0 => self.next_pcm8(bus),
                 1 => self.next_pcm16(bus),
@@ -281,7 +287,15 @@ impl Channel {
             }
         }
 
-        (i32::from(self.cur_sample) << self.volume_shift) * self.volume
+        let sample = if kind < 3 && interp != Interpolation::None {
+            // progress towards the next sample, 0..=FFh
+            let reload = u32::from(self.timer_reload);
+            let pos = (self.timer.saturating_sub(reload) * 0x100) / (0x1_0000 - reload).max(1);
+            interp.apply(self.cur_sample, self.prev, pos as i32)
+        } else {
+            i32::from(self.cur_sample)
+        };
+        (sample << self.volume_shift) * self.volume
     }
 
     /// Adds the sample to left/right with the channel panning.

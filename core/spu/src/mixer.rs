@@ -34,7 +34,7 @@ impl Spu {
             // SOUNDCNT bit 15: master enable
             let mut out = [0_i32; 16];
             for (o, ch) in out.iter_mut().zip(self.channels.iter_mut()) {
-                *o = ch.run(cycles, bus);
+                *o = ch.run(cycles, bus, self.interpolation);
             }
             for (i, &o) in out.iter().enumerate() {
                 // SOUNDCNT bits 12/13: channel 1/3 not sent to the mixer.

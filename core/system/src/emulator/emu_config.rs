@@ -17,6 +17,11 @@ pub struct Config {
     /// Enable direct boot
     pub direct_boot_enabled: bool,
 
+    /// Raw FAT disk image used as the SD card of homebrew (DLDI).
+    pub sd_image: Option<std::path::PathBuf>,
+    /// Open the SD image read-only.
+    pub sd_read_only: bool,
+
     /// Pause emulator when window is unfocused
     pub pause_when_unfocused: bool,
 
@@ -45,6 +50,10 @@ pub struct Config {
     /// consoles playing together must not share one (the built-in
     /// firmware's is fixed). `None` keeps the firmware's.
     pub mac_address: Option<[u8; 6]>,
+
+    /// Firmware user settings (nickname, birthday, language...) written
+    /// into the firmware at power-on. `None` keeps the firmware's.
+    pub user_settings: Option<ds_peripherals::spi::firmware::UserSettings>,
 
     /// Debugging aid: print every executed instruction of the selected CPU
     /// (bit 0 = ARM9, bit 1 = ARM7) to stderr.
@@ -77,6 +86,8 @@ impl Config {
             savelist_path: Default::default(),
             save_dir: None,
             direct_boot_enabled: true,
+            sd_image: None,
+            sd_read_only: false,
             pause_when_unfocused: Default::default(),
             bg_enable: Default::default(),
             frameskip: Default::default(),
@@ -84,6 +95,7 @@ impl Config {
             hle_bios: true,
             test: Default::default(),
             mac_address: None,
+            user_settings: None,
             trace_cpus: 0,
             trace_trigger: None,
             watch_addr: None,

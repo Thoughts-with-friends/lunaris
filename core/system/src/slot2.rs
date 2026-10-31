@@ -56,6 +56,8 @@ pub trait Slot2Device: Send {
     /// Advances the device by `cycles` ARM7-clock (33.51 MHz) cycles.
     /// Returns whether its interrupt line is asserted.
     fn tick(&mut self, cycles: u32) -> bool;
+    /// Called after every frame (save flushing, rumble state).
+    fn end_frame(&mut self) {}
     /// Name shown by front ends.
     fn name(&self) -> &str;
     /// For front ends that know the concrete type (debuggers).
@@ -114,6 +116,12 @@ impl Slot2Bus {
 
     pub fn tick(&mut self, cycles: u32) -> bool {
         self.device.as_mut().is_some_and(|d| d.tick(cycles))
+    }
+
+    pub fn end_frame(&mut self) {
+        if let Some(d) = self.device.as_mut() {
+            d.end_frame();
+        }
     }
 }
 

@@ -178,7 +178,7 @@ impl Emu {
         crate::file::settings::Settings::redirect(
             self.state_dir.as_ref(),
             &self.rom_path,
-            &format!("ml{slot}"),
+            &format!("{}{slot}", crate::backend::STATE_EXT),
         )
     }
 
@@ -202,6 +202,17 @@ impl Emu {
             std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         self.nds.load_state(&buffer).map_err(|e| e.to_string())?;
         Ok(snapshot.then_some(before))
+    }
+
+    /// Write the cart's backup memory, as it is now, to `path` (raw, the
+    /// same `.sav` layout both cores read). Returns the bytes written.
+    pub fn export_save_to(&mut self, path: &Path) -> Result<usize, String> {
+        let data = self.nds.save_memory();
+        if data.is_empty() {
+            return Err("this cart has no save memory".to_owned());
+        }
+        std::fs::write(path, &data).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        Ok(data.len())
     }
 
     /// Replace the cart's backup memory with `data` and reboot.

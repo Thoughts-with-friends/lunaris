@@ -1,0 +1,24 @@
+# gui/melon_lan's sources built against `lunaris_melonds` instead of the
+# melonDS bindings, for the Lunaris build of the melon_egui front end
+# (gui/egui). Same code, same wire format: a Lunaris console and a melonDS
+# console speak the same LAN protocol.
+[package]
+name = "lunaris_melon_lan"
+version.workspace = true
+authors.workspace = true
+categories.workspace = true
+description.workspace = true
+edition.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "../melon_lan/src/lib.rs"
+
+[dependencies]
+melonds = { package = "lunaris_melonds", path = "../lunaris_melonds" }
+serde.workspace = true
+log = "0.4"

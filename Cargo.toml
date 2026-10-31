@@ -14,7 +14,6 @@ rust-version = "1.91"
 default-members = ["gui/egui"]
 members = [
   "core/*",
-  "free_bios",
   "gui/*",
   "xtask",
 ]
@@ -59,16 +58,16 @@ ds_net = { path = "./core/net" }
 ds_peripherals = { path = "./core/peripherals" }
 ds_spu = { path = "./core/spu" }
 
-free_bios = { path = "./free_bios" }
 lunaris_gui_common = { path = "./gui/common" }
 lunaris_rom_library = { path = "./gui/rom_library" }
+lunaris_melonds = { path = "./gui/lunaris_melonds" }
 ds_net_gui = { path = "./gui/net" }
 
 
 [workspace.lints.clippy]
-all = {level = "warn", priority = -1}
-cargo = {level = "warn", priority = -1}
-nursery = {level = "warn", priority = -1}
+all = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 
 # allow list
 collapsible_if = "allow"

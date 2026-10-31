@@ -51,11 +51,13 @@
 //! [DS Video BG Modes / Control](https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol)
 mod bg;
 pub(crate) mod compose;
+mod mosaic;
 mod obj;
 pub mod regs;
 mod window;
 
 use ds_mem_addr::*;
+pub use mosaic::MosaicState;
 pub use regs::{BldCnt, DispCapCnt, DispCnt, WinIn, WinOut};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
@@ -104,6 +106,8 @@ pub struct Gpu2DEngine {
     pub win1v: u16,
 
     pub mosaic: u16,
+    /// Mosaic block counters and the latched affine reference points.
+    pub mosaic_state: MosaicState,
 
     pub winin: WinIn,
     pub winout: WinOut,
@@ -157,6 +161,7 @@ impl Gpu2DEngine {
             win1v: 0,
 
             mosaic: 0,
+            mosaic_state: MosaicState::default(),
 
             winin: WinIn::default(),
             winout: WinOut::default(),

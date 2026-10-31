@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ds_cartridge::{BackupMemory, CartCommand, CartridgeError, SaveMemType, game_db};
 
@@ -46,30 +46,48 @@ impl Emulator {
             CartridgeError::MetadataRom { path: rom_file.to_path_buf(), source }
         })?;
 
-        let rom_size = metadata.len();
-        self.cart.rom_size = rom_size;
-
-        // #[cfg(feature = "log")]
-        // log::info!("Allocating {} bytes for ROM", rom_size);
-
-        self.cart.rom.resize(rom_size as usize, 0);
-
-        // #[cfg(feature = "log")]
-        // log::info!("Loading ROM into memory");
-
-        file.read_exact(&mut self.cart.rom)
+        let mut rom = vec![0; metadata.len() as usize];
+        file.read_exact(&mut rom)
             .map_err(|source| CartridgeError::ReadRom { path: rom_file.to_path_buf(), source })?;
+        let name =
+            rom_file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
 
-        // Remove extension
-        if let Some(stem) = rom_file.file_stem() {
-            self.cart.rom_name = stem.to_string_lossy().to_string();
-        }
+        let save_path = match &self.config.save_dir {
+            Some(dir) => dir.join(rom_file.with_extension("sav").file_name().unwrap_or_default()),
+            None => rom_file.with_extension("sav"),
+        };
+        let existing = match std::fs::read(&save_path) {
+            Ok(data) => Some(data),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(source) => {
+                return Err(CartridgeError::ReadSave { path: save_path, source });
+            }
+        };
+        self.cartridge_install(rom, name, existing.as_deref(), Some(save_path));
+        Ok(())
+    }
 
-        self.cartridge_setup_backup(rom_file)?;
+    /// Puts `rom` in the slot with its save data, without touching the
+    /// file system. The save chip is picked as for a file
+    /// ([`Self::cartridge_setup_backup`]); `save_path`, if any, is where the
+    /// chip flushes to (`None`: the frontend persists
+    /// [`ds_cartridge::BackupMemory::data`] itself).
+    pub fn cartridge_install(
+        &mut self,
+        rom: Vec<u8>,
+        name: String,
+        save: Option<&[u8]>,
+        save_path: Option<std::path::PathBuf>,
+    ) {
+        self.cart.rom_size = rom.len() as u64;
+        self.cart.rom = rom;
+        self.cart.rom_name = name;
+        self.cartridge_setup_backup(save, save_path);
+        self.cartridge_setup_sd();
 
         // Only re-encrypt the ROM if this is not a direct boot
         if self.config.direct_boot_enabled {
-            return Ok(());
+            return;
         }
 
         // Safe little-endian reads
@@ -115,8 +133,6 @@ impl Emulator {
         }
 
         self.cartridge_init_keycode(game_code, 2, 2);
-
-        Ok(())
     }
 
     /// Picks the save chip for the loaded ROM and loads its `.sav` file.
@@ -130,20 +146,7 @@ impl Emulator {
     ///
     /// The save lives next to the ROM (`<rom>.sav`) unless
     /// [`crate::emulator::emu_config::Config::save_dir`] is set.
-    fn cartridge_setup_backup(&mut self, rom_file: &Path) -> Result<(), CartridgeError> {
-        let save_path = match &self.config.save_dir {
-            Some(dir) => dir.join(rom_file.with_extension("sav").file_name().unwrap_or_default()),
-            None => rom_file.with_extension("sav"),
-        };
-
-        let existing = match std::fs::read(&save_path) {
-            Ok(data) => Some(data),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(source) => {
-                return Err(CartridgeError::ReadSave { path: save_path, source });
-            }
-        };
-
+    fn cartridge_setup_backup(&mut self, existing: Option<&[u8]>, save_path: Option<PathBuf>) {
         let header = |offset: usize| {
             self.cart
                 .rom
@@ -159,17 +162,22 @@ impl Emulator {
             // DS Cartridge Backup: https://problemkaputt.de/gbatek.htm#dscartridgebackup
             .filter(|&t| t != 0xFF) // FFh = unknown save type
             .or_else(|| self.corgids_database_type())
-            .or_else(|| existing.as_ref().and_then(|d| BackupMemory::type_from_size(d.len())))
+            .or_else(|| existing.and_then(|d| BackupMemory::type_from_size(d.len())))
             .unwrap_or(if homebrew { 0 } else { 3 });
 
         self.cart.backup = BackupMemory::new(mem_type);
         // Game codes starting with 'I' are carts with an infrared port
         // (melonDS `NDSCartSlot::ParseROM`).
         self.cart.backup.set_infrared(game_code & 0xFF == u32::from(b'I')); // gamecode starting with 'I': infrared cartridge
-        if let Some(data) = &existing {
+        if let Some(data) = existing {
             self.cart.backup.load_contents(data);
         }
-        self.cart.backup.set_path(Some(save_path));
+        if self.cart.backup.is_nand() {
+            let base =
+                self.cart.rom.get(0x96..0x98).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
+            self.cart.backup.nand_setup(base); // header 96h: save area start / 20000h
+        }
+        self.cart.backup.set_path(save_path);
 
         #[cfg(feature = "log")]
         log::info!(
@@ -178,7 +186,33 @@ impl Emulator {
             self.cart.backup.size(),
             self.cart.backup.path().map_or_else(String::new, |p| p.display().to_string()),
         );
-        Ok(())
+    }
+
+    /// Homebrew with [`crate::Config::sd_image`] set: open the image and
+    /// patch the ROM's DLDI stub with the SD driver (melonDS
+    /// `CartHomebrew::Reset`).
+    fn cartridge_setup_sd(&mut self) {
+        self.cart.sd = None;
+        let Some(path) = self.config.sd_image.clone() else { return };
+        let word = |o: usize| {
+            self.cart.rom.get(o..o + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let homebrew = word(0x20) < 0x4000 || word(0x0C) == 0x2323_2323;
+        if !homebrew {
+            return;
+        }
+        match ds_cartridge::sd::SdCard::open(&path, self.config.sd_read_only) {
+            Ok(sd) => {
+                let _patched = ds_cartridge::sd::apply_dldi(&mut self.cart.rom, sd.is_read_only());
+                #[cfg(feature = "log")]
+                log::info!("SD image {}: {_patched} DLDI stub(s) patched", path.display());
+                self.cart.sd = Some(sd);
+            }
+            Err(_e) => {
+                #[cfg(feature = "log")]
+                log::error!("SD image {}: {_e}", path.display());
+            }
+        }
     }
 
     /// Looks the ROM up in a CorgiDS save database (19-byte entries: 16 header
@@ -300,8 +334,12 @@ impl Emulator {
                 }
 
                 CartCommand::ReadRom => {
-                    self.cart.data_output =
-                        self.cart.read_rom_b7_word(self.cart.rom_data_index as u32);
+                    let addr = self.cart.rom_data_index as u32;
+                    self.cart.data_output = if self.cart.backup.nand_hides(addr) {
+                        u32::MAX // NAND save area in ROM mode
+                    } else {
+                        self.cart.read_rom_b7_word(addr)
+                    };
 
                     // #[cfg(feature = "log")]
                     // log::debug!(
@@ -311,6 +349,23 @@ impl Emulator {
                     // );
 
                     self.cart.rom_data_index += 4;
+                    self.cart.romctrl.word_ready = true;
+                }
+
+                CartCommand::Sd => {
+                    if !self.cart.romctrl.write_dir
+                        && let Some(sd) = &mut self.cart.sd
+                    {
+                        self.cart.data_output = sd.receive();
+                    }
+                    self.cart.romctrl.word_ready = true;
+                }
+
+                CartCommand::Nand => {
+                    // Write transfers wait for the CPU to store a word.
+                    if !self.cart.romctrl.write_dir {
+                        self.cart.data_output = self.cart.backup.nand_receive();
+                    }
                     self.cart.romctrl.word_ready = true;
                 }
 
@@ -352,6 +407,24 @@ impl Emulator {
             self.cart_end_transfer();
         }
         data
+    }
+
+    /// Writes the card data port (0x04100010) during a write transfer
+    /// (ROMCTRL bit 30; NAND command 81).
+    pub fn cart_write_data(&mut self, value: u32) {
+        let c = &mut self.cart;
+        if !(c.romctrl.write_dir && c.romctrl.word_ready) {
+            return;
+        }
+        match (&c.command_id, &mut c.sd) {
+            (CartCommand::Sd, Some(sd)) => sd.transmit(value),
+            _ => c.backup.nand_transmit(value),
+        }
+        c.romctrl.word_ready = false;
+        c.cycles_left = 8;
+        if c.romctrl.block_busy && c.bytes_left <= 0 {
+            self.cart_end_transfer();
+        }
     }
 
     /// Clears ROMCTRL busy and raises the transfer-complete IRQ if enabled,

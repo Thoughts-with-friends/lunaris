@@ -106,7 +106,10 @@ fn xbrz(src: &[u32], scale: usize) -> Vec<u32> {
             .map(|c| 0xFF00_0000 | u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2])) // opaque ARGB8888
             .collect()
     };
-    (0..XBRZ_BANDS).into_par_iter().map(|i| band(i * rows)).collect::<Vec<_>>().concat()
+    crate::threads::run(|| {
+        (0..XBRZ_BANDS).into_par_iter().map(|i| band(i * rows)).collect::<Vec<_>>()
+    })
+    .concat()
 }
 
 /// 0xAARRGGBB -> `scale`x upscaled with nearest neighbour.
@@ -215,39 +218,41 @@ impl HdFrame {
         let (info, lines) = (&self.info, &self.lines);
         let w = PIXELS_PER_LINE * scale;
         // One native line (scale rows of `out`) per task.
-        out.par_chunks_mut(w * scale)
-            .zip(lines.par_iter())
-            .enumerate()
-            .filter(|(_, (_, line))| line.graphics)
-            .for_each(|(y, (block, line))| {
-                // LCD I/O BG Scrolling: https://problemkaputt.de/gbatek.htm#lcdiobgscrolling
-                let xpos = usize::from(line.bg0_hofs & 0x1FF); // BG0HOFS X offset (bits 0-8)
-                for x in 0..PIXELS_PER_LINE {
-                    let i = info[y * PIXELS_PER_LINE + x];
-                    if i & HD_3D == 0 {
-                        continue;
-                    }
-                    // Same scrolling as render_bg_3d.
-                    let sx = x + xpos;
-                    let sx = if xpos & 0x100 != 0 {
-                        // bit 8: negative scroll
-                        sx.wrapping_sub(512)
-                    } else {
-                        sx
-                    };
-                    if sx >= PIXELS_PER_LINE {
-                        continue;
-                    }
-                    for j in 0..scale {
-                        let src = &hi.line(y * scale + j)[sx * scale..(sx + 1) * scale];
-                        let dst = &mut block[j * w + x * scale..j * w + (x + 1) * scale];
-                        for (d, &c) in dst.iter_mut().zip(src) {
-                            let px = rgb555_to_888(shade_3d(c, i));
-                            *d = master_bright(px, line.master_bright);
+        crate::threads::run(|| {
+            out.par_chunks_mut(w * scale)
+                .zip(lines.par_iter())
+                .enumerate()
+                .filter(|(_, (_, line))| line.graphics)
+                .for_each(|(y, (block, line))| {
+                    // LCD I/O BG Scrolling: https://problemkaputt.de/gbatek.htm#lcdiobgscrolling
+                    let xpos = usize::from(line.bg0_hofs & 0x1FF); // BG0HOFS X offset (bits 0-8)
+                    for x in 0..PIXELS_PER_LINE {
+                        let i = info[y * PIXELS_PER_LINE + x];
+                        if i & HD_3D == 0 {
+                            continue;
+                        }
+                        // Same scrolling as render_bg_3d.
+                        let sx = x + xpos;
+                        let sx = if xpos & 0x100 != 0 {
+                            // bit 8: negative scroll
+                            sx.wrapping_sub(512)
+                        } else {
+                            sx
+                        };
+                        if sx >= PIXELS_PER_LINE {
+                            continue;
+                        }
+                        for j in 0..scale {
+                            let src = &hi.line(y * scale + j)[sx * scale..(sx + 1) * scale];
+                            let dst = &mut block[j * w + x * scale..j * w + (x + 1) * scale];
+                            for (d, &c) in dst.iter_mut().zip(src) {
+                                let px = rgb555_to_888(shade_3d(c, i));
+                                *d = master_bright(px, line.master_bright);
+                            }
                         }
                     }
-                }
-            });
+                })
+        });
     }
 }
 

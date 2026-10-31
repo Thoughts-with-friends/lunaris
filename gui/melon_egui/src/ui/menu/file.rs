@@ -32,6 +32,7 @@ pub(super) fn file_menu(app: &mut MelonEgui, ui: &mut Ui) -> Option<Action> {
         ui.separator();
 
         m.item(app, ui, loaded, K::ImportSavefile, Action::ImportSavefile);
+        m.item(app, ui, loaded, K::ExportSavefile, Action::ExportSavefile);
         ui.separator();
 
         ui.menu_button(app.i18n().s(K::SaveState), |ui| {

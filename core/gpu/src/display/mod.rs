@@ -17,6 +17,7 @@
 //!
 //! GBATEK: [DS Power Control](https://problemkaputt.de/gbatek.htm#dspowercontrol),
 //! [LCD Dimensions and Timings](https://problemkaputt.de/gbatek.htm#lcddimensionsandtimings)
+pub mod fifo;
 pub mod hires;
 pub(crate) mod output;
 pub mod regs;

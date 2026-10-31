@@ -12,8 +12,10 @@
 //! [`BackupMemory::flush`] (see [`BackupMemory::end_frame`] for the debounce).
 mod eeprom;
 mod flash;
-
+mod nand;
 use std::path::{Path, PathBuf};
+
+pub use nand::NandCommand;
 
 /// Save memory types as used by the melonDS game database
 /// ([`crate::game_db::ROM_LIST`]).
@@ -24,7 +26,7 @@ use std::path::{Path, PathBuf};
 /// | 1    | EEPROM tiny  | 512 B   |
 /// | 2..4 | EEPROM       | 8K/64K/128K |
 /// | 5..7 | FLASH        | 256K/512K/1M |
-/// | 8..10| NAND         | 8M/16M/64M (unsupported, treated as none) |
+/// | 8..10| NAND         | 8M/16M/64M (ROM bus, see nand.rs) |
 pub type SaveMemType = u8;
 
 /// Chip size in bytes for each [`SaveMemType`] code.
@@ -53,6 +55,8 @@ pub enum SaveChip {
     Eeprom,
     /// SPI FLASH with 3 address bytes.
     Flash,
+    /// NAND on the ROM bus (KEY2 commands, [`nand`]); AUXSPI floats.
+    Nand,
 }
 
 /// Status register bit 1: write enable latch.
@@ -86,6 +90,9 @@ pub struct BackupMemory {
     ir_pos: u32,
     ir_cmd: u8,
 
+    /// NAND controller (NAND cards only).
+    nand: Option<nand::Nand>,
+
     /// Contents changed since the last flush.
     dirty: bool,
     /// Frames elapsed since the last write while `dirty`.
@@ -106,8 +113,8 @@ impl BackupMemory {
             1 => SaveChip::EepromTiny,
             2..=4 => SaveChip::Eeprom,
             5..=7 => SaveChip::Flash,
-            // NAND carts (WarioWare DIY, Jam with the Band) use the ROM bus,
-            // not AUXSPI; they are not emulated.
+            // NAND carts (WarioWare DIY, Jam with the Band) use the ROM bus.
+            8..=10 => SaveChip::Nand,
             _ => SaveChip::None,
         };
         let size = if chip == SaveChip::None { 0 } else { SAVE_SIZES[mem_type as usize] };
@@ -124,6 +131,7 @@ impl BackupMemory {
             ir: false,
             ir_pos: 0,
             ir_cmd: 0,
+            nand: (chip == SaveChip::Nand).then(nand::Nand::new),
             dirty: false,
             idle_frames: 0,
         }
@@ -136,7 +144,7 @@ impl BackupMemory {
 
     /// Maps a save file length to a database type, if it is a valid chip size.
     pub fn type_from_size(len: usize) -> Option<SaveMemType> {
-        (1..=7).find(|&t| SAVE_SIZES[t] == len).map(|t| t as SaveMemType)
+        (1..SAVE_SIZES.len()).find(|&t| SAVE_SIZES[t] == len).map(|t| t as SaveMemType)
     }
 
     /// Chip protocol.
@@ -180,6 +188,15 @@ impl BackupMemory {
         self.load_contents(&raw);
         self.dirty = true;
         self.idle_frames = 0;
+    }
+
+    /// Whether the contents changed since the last call (or flush); clears
+    /// the flag. For frontends that persist [`Self::data`] themselves.
+    pub const fn take_dirty(&mut self) -> bool {
+        let dirty = self.dirty;
+        self.dirty = false;
+        self.idle_frames = 0;
+        dirty
     }
 
     /// Whether there are unwritten changes.
@@ -283,7 +300,7 @@ impl BackupMemory {
 
     /// Status/write-enable commands common to all chips, then the chip-specific protocol.
     fn transfer_chip(&mut self, value: u8) -> u8 {
-        if self.chip == SaveChip::None {
+        if matches!(self.chip, SaveChip::None | SaveChip::Nand) {
             return 0xFF; // data bus idle
         }
 
@@ -302,7 +319,7 @@ impl BackupMemory {
                 SaveChip::EepromTiny => self.eeprom_tiny(value),
                 SaveChip::Eeprom => self.eeprom(value),
                 SaveChip::Flash => self.flash(value),
-                SaveChip::None => 0xFF, // no chip: data bus idle
+                SaveChip::None | SaveChip::Nand => 0xFF, // no SPI chip: data bus idle
             }
         };
 
@@ -328,7 +345,7 @@ const fn is_write_command(chip: SaveChip, cmd: u8) -> bool {
         SaveChip::EepromTiny => matches!(cmd, 0x01 | 0x02 | 0x0A), // WRSR / WRITE / WRITE high half
         SaveChip::Eeprom => matches!(cmd, 0x01 | 0x02),            // WRSR / WRITE
         SaveChip::Flash => matches!(cmd, 0x02 | 0x0A | 0xDB | 0xD8 | 0xC7), // PROGRAM / PAGE WRITE / PAGE ERASE / SECTOR ERASE / CHIP ERASE
-        SaveChip::None => false,
+        SaveChip::None | SaveChip::Nand => false,
     }
 }
 

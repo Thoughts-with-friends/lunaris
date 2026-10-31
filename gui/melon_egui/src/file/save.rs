@@ -2,6 +2,8 @@
 //!
 //! * **Import savefile** — pick a file → strip a DeSmuME `.dsv` footer if
 //!   present → write it as the cart's `.sav` → reboot the console on it.
+//! * **Export savefile** — pick a file → write the cart's backup memory to it
+//!   as a raw `.sav`.
 //! * **Save / Load state** — a numbered slot (`<rom>.mlN`) acts at once;
 //!   "File..." opens a dialog first and acts when it answers
 //!   ([`crate::file::dialog`]).
@@ -28,6 +30,35 @@ impl MelonEgui {
                 .any_file()
                 .directory(self.dialog_dir("saves")),
         );
+    }
+
+    /// Ask where to write the cart's backup memory.
+    pub(crate) fn export_savefile(&mut self) {
+        let Some(emu) = &self.emu else {
+            return self.post_error(self.i18n().s(K::ExportNoCart));
+        };
+        let name = emu
+            .rom_path
+            .file_stem()
+            .map_or_else(|| "save".to_owned(), |stem| stem.to_string_lossy().into_owned());
+        self.ask(
+            DialogPurpose::ExportSave,
+            crate::file::picker::Request::save(self.i18n().s(K::PickExportSave))
+                .filter(self.i18n().t(K::FilterSaveFile), &["sav"])
+                .file_name(format!("{name}.sav"))
+                .directory(self.dialog_dir("saves")),
+        );
+    }
+
+    /// Perform the export the dialog asked about.
+    pub(crate) fn export_savefile_to(&mut self, path: &Path) {
+        let Some(emu) = self.emu.as_mut() else {
+            return self.post_error(self.i18n().s(K::ExportNoCart));
+        };
+        match emu.export_save_to(path) {
+            Ok(bytes) => self.post_ok(self.i18n().f(K::Exported, &[&path.display(), &bytes])),
+            Err(e) => self.post_error(self.i18n().f(K::ExportFailed, &[&e])),
+        }
     }
 
     /// Perform the import the dialog asked about.
@@ -93,8 +124,8 @@ impl MelonEgui {
             return self.ask(
                 DialogPurpose::SaveState,
                 crate::file::picker::Request::save(self.i18n().s(K::SaveState))
-                    .filter(self.i18n().t(K::FilterSavestate), &["ml1"])
-                    .file_name(format!("{suggestion}.ml1"))
+                    .filter(self.i18n().t(K::FilterSavestate), &[crate::backend::STATE_EXT1])
+                    .file_name(format!("{suggestion}.{}", crate::backend::STATE_EXT1))
                     .directory(directory),
             );
         };
@@ -121,7 +152,7 @@ impl MelonEgui {
             return self.ask(
                 DialogPurpose::LoadState,
                 crate::file::picker::Request::open(self.i18n().s(K::LoadState))
-                    .filter(self.i18n().t(K::FilterSavestate), &["ml1"])
+                    .filter(self.i18n().t(K::FilterSavestate), &[crate::backend::STATE_EXT1])
                     .directory(self.dialog_dir("states")),
             );
         };

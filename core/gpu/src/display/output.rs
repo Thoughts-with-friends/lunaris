@@ -76,7 +76,8 @@ impl Gpu {
     ///        0 off       -> white row
     ///        1 normal    -> framebuffer row
     ///        2 VRAM      -> LCDC bank row (BGR555 -> RGB888)
-    ///        (3 main memory FIFO: not implemented)
+    ///        3 main memory -> display FIFO line (filled by the
+    ///                         emulator's DMA before this line)
     ///      -> front_framebuffer row
     ///   3. engine A capture (DISPCAPCNT): blend source A (2D/3D) and B
     ///      (VRAM) into the capture bank
@@ -161,6 +162,15 @@ impl Gpu {
                     engine.front_framebuffer[line_start + x] = 0xFF000000 | (r << 16) | (g << 8) | b // opaque ARGB8888
                 }
             }
+            3 if is_engine_a && line_start < PIXELS_PER_LINE * SCANLINES => {
+                for x in 0..PIXELS_PER_LINE {
+                    let c = u32::from(self.display_fifo.line[x]);
+                    let (r, g, b) =
+                        ((c & 0x1F) << 3, ((c >> 5) & 0x1F) << 3, ((c >> 10) & 0x1F) << 3); // BGR555 -> 8 bits
+                    self.engine_upper.front_framebuffer[line_start + x] =
+                        0xFF00_0000 | (r << 16) | (g << 8) | b; // opaque ARGB8888
+                }
+            }
             _ => {}
         }
 
@@ -211,7 +221,10 @@ impl Gpu {
                         false => &self.engine_lower,
                     };
                     let source_a = engine.framebuffer[line_start + x];
-                    let source_b = {
+                    let source_b = if engine.dispcapcnt.b_display_fifo {
+                        // DISPCAPCNT bit 25: source B = main memory display FIFO
+                        u32::from(self.display_fifo.line[x])
+                    } else {
                         let vram_src = self.get_vram_block(vram_block);
                         vram_src[(read_offset + x) & 0xFFFF] as u32 // offset wraps within the 128K bank (64K halfwords)
                     };

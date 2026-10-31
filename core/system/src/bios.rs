@@ -42,6 +42,10 @@ impl SwiContext for Caller<'_> {
         self.emu.read_word(addr, self.cpu)
     }
 
+    fn write8(&mut self, addr: u32, value: u8) {
+        self.emu.write_byte(addr, value, self.cpu);
+    }
+
     fn write16(&mut self, addr: u32, value: u16) {
         self.emu.write_halfword(addr, value, self.cpu);
     }
@@ -58,18 +62,21 @@ impl SwiContext for Caller<'_> {
         self.emu.get_cpu_mut(self.cpu).halt();
     }
 
-    /// Approximates `IntrWait` / `VBlankIntrWait`: the real BIOS waits for
-    /// a *new* occurrence tracked in a shared RAM flag; this enables the
-    /// interrupts in IE and IME and halts, relying on the normal interrupt
-    /// path to wake the CPU (enough for games that sync on VBlank).
-    fn wait_for_interrupt(&mut self, mask: u32) {
-        let int = match self.cpu {
-            CpuType::Arm9 => &mut self.emu.int9_reg,
-            CpuType::Arm7 => &mut self.emu.int7_reg,
-        };
-        int.irq_enable |= mask;
-        int.ime = 1;
-        self.emu.get_cpu_mut(self.cpu).halt();
+    fn irq_check_flags_addr(&self) -> u32 {
+        match self.cpu {
+            // BIOS Halt Functions: DTCM+3FF8h (CP15 c9,c1,0 region base)
+            CpuType::Arm9 => (self.emu.arm9_cp15.read(0x910) & 0xFFFF_F000) + 0x3FF8,
+            CpuType::Arm7 => 0x0380_FFF8,
+        }
+    }
+
+    /// Points the PC back at the `SWI` (it was fetched two instructions
+    /// ago); an interrupt taken meanwhile returns there.
+    fn restart_swi(&mut self) {
+        let cpu = self.emu.get_cpu_mut(self.cpu);
+        let width = if cpu.get_cpsr().thumb_on { 2 } else { 4 };
+        let swi = cpu.get_pc().wrapping_sub(2 * width);
+        cpu.jp(swi, false);
     }
 }
 
