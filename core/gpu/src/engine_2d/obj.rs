@@ -66,7 +66,10 @@
 //! [LCD OBJ - OAM Rotation/Scaling Parameters](https://problemkaputt.de/gbatek.htm#lcdobjoamrotationscalingparameters),
 //! [DS Video OBJs](https://problemkaputt.de/gbatek.htm#dsvideoobjs)
 use super::compose::{LineLayers, OBJ_BITMAP, OBJ_MOSAIC, OBJ_SEMI, OPAQUE, W};
-use crate::{Gpu, vram::Region};
+use crate::{
+    Gpu,
+    vram::{Region, Vram},
+};
 
 /// OBJ sizes in pixels: `[shape][size] = (width, height)`.
 const OBJ_SIZES: [[(u32, u32); 4]; 4] = [
@@ -75,6 +78,42 @@ const OBJ_SIZES: [[(u32, u32); 4]; 4] = [
     [(8, 16), (8, 32), (16, 32), (32, 64)],
     [(8, 8), (8, 8), (8, 8), (8, 8)], // prohibited shape
 ];
+
+/// The 8 pixels of the tile row last read by a sprite.
+///
+/// Scope: one sprite on one line. A tile row is 4 bytes (4bpp) or 8 bytes
+/// (8bpp), aligned, so it never crosses a VRAM mapping page and one wide read
+/// returns exactly the bytes the per-pixel reads would.
+struct TileRowCache {
+    /// Region offset of the cached row (`u32::MAX`: empty).
+    addr: u32,
+    bits: u64,
+}
+
+impl TileRowCache {
+    const fn new() -> Self {
+        Self { addr: u32::MAX, bits: 0 }
+    }
+
+    /// Color index of pixel `x` (0-7) of the tile row at `row_addr`.
+    #[inline]
+    fn pixel(&mut self, vram: &Vram, region: Region, row_addr: u32, color_256: bool, x: u32) -> u32 {
+        if self.addr != row_addr {
+            self.addr = row_addr;
+            self.bits = if color_256 {
+                vram.read_u64(region, row_addr)
+            } else {
+                u64::from(vram.read_u32(region, row_addr))
+            };
+        }
+        // LCD VRAM Character Data: https://problemkaputt.de/gbatek.htm#lcdvramcharacterdata
+        if color_256 {
+            ((self.bits >> (x * 8)) & 0xFF) as u32 // 8bpp: one byte per pixel
+        } else {
+            ((self.bits >> (x * 4)) & 0xF) as u32 // 4bpp: low nibble first
+        }
+    }
+}
 
 impl Gpu {
     /// Renders every OBJ crossing `line` into `layers.obj` (and the OBJ
@@ -146,6 +185,8 @@ impl Gpu {
                 (h, 0, 0, v)
             };
 
+            // One 8-pixel tile row is fetched per tile instead of per pixel.
+            let mut row_cache = TileRowCache::new();
             let half_w = box_w as i32 / 2;
             let half_h = box_h as i32 / 2;
             let ly = row as i32 - half_h;
@@ -201,14 +242,12 @@ impl Gpu {
                     } else {
                         tile * 32
                     };
-                    let ci = if color_256 {
-                        let addr = base + (tile_row + (tx / 8) * 2) * 32 + (ty & 7) * 8 + (tx & 7);
-                        u32::from(self.vram.read_u8(region, addr))
+                    let row_addr = if color_256 {
+                        base + (tile_row + (tx / 8) * 2) * 32 + (ty & 7) * 8
                     } else {
-                        let addr = base + (tile_row + tx / 8) * 32 + (ty & 7) * 4 + (tx & 7) / 2;
-                        let byte = self.vram.read_u8(region, addr);
-                        u32::from(if tx & 1 != 0 { byte >> 4 } else { byte & 0xF }) // 4bpp: low nibble for even pixels, high nibble for odd
+                        base + (tile_row + tx / 8) * 32 + (ty & 7) * 4
                     };
+                    let ci = row_cache.pixel(&self.vram, region, row_addr, color_256, tx & 7);
                     if ci == 0 {
                         continue;
                     }
@@ -234,6 +273,40 @@ impl Gpu {
                 let existing = layers.obj[sx];
                 if existing & OPAQUE == 0 || priority <= (existing >> 16) & 3 {
                     layers.obj[sx] = OPAQUE | mosaic_flag | (priority << 16) | color; // layer priority in bits 16-17
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cached row gives the same color index as reading each pixel's
+    /// byte on its own, for 4bpp and 8bpp rows, including two banks
+    /// mapped over one another (the read ORs them).
+    #[test]
+    fn tile_row_cache_matches_per_pixel_reads() {
+        let mut vram = Vram::new();
+        vram.set_cnt(0, 0x82); // VRAMCNT_A = 82h: enable, MST 2 (engine A OBJ)
+        vram.set_cnt(1, 0x82); // VRAMCNT_B = 82h: also engine A OBJ (overlapping)
+        for i in 0..0x400u32 {
+            vram.write(Region::ObjA, i, &[(i * 37 + 11) as u8]);
+        }
+        for color_256 in [false, true] {
+            let mut cache = TileRowCache::new();
+            let step = if color_256 { 8 } else { 4 };
+            for row in (0..0x400).step_by(step) {
+                for x in 0..8 {
+                    let expect = if color_256 {
+                        u32::from(vram.read_u8(Region::ObjA, row + x))
+                    } else {
+                        let byte = vram.read_u8(Region::ObjA, row + x / 2);
+                        u32::from(if x & 1 != 0 { byte >> 4 } else { byte & 0xF })
+                    };
+                    let got = cache.pixel(&vram, Region::ObjA, row, color_256, x);
+                    assert_eq!(got, expect, "row {row:X} x {x} 256 {color_256}");
                 }
             }
         }
