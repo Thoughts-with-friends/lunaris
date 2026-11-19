@@ -173,12 +173,12 @@ impl NDSCart {
 
     /// Reads raw byte from ROM without timing effects.
     pub fn direct_read(&self, address: u32) -> u8 {
-        self.rom.get(address as usize).copied().unwrap_or_else(|| {
-            #[cfg(feature = "log")]
+        let byte = self.rom.get(address as usize).copied();
+        #[cfg(feature = "log")]
+        if byte.is_none() {
             log::warn!("Direct read out of bounds: {address:08X}");
-
-            0
-        })
+        }
+        byte.unwrap_or(0)
     }
 
     /// Reads little-endian halfword from ROM.

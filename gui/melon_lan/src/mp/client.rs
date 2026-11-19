@@ -55,6 +55,7 @@ impl Client {
             shared.boxes[self.instance].replies.clear();
         }
 
+        #[expect(clippy::needless_range_loop)]
         for other in 0..MAX_INSTANCES {
             if other == self.instance || !shared.boxes[other].connected {
                 continue;

@@ -2,7 +2,7 @@
 //! needs around it.
 //!
 //! ```text
-//!  front end (egui / freya)
+//!  front end (egui / designer)
 //!    |  press_key / press_screen / emulate_frame / get_screens / ...
 //!    v
 //!  Console

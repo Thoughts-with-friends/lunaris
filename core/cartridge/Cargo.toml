@@ -14,7 +14,6 @@ version.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-serde-big-array = { workspace = true }
 log = { workspace = true, optional = true }
 
 

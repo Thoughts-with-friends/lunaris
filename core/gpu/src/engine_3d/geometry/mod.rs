@@ -463,9 +463,9 @@ impl Gpu3D {
                         .wrapping_add(dir[1].wrapping_mul(m[4 + c]))
                         .wrapping_add(dir[2].wrapping_mul(m[8 + c]))
                 };
-                for c in 0..3 {
+                for (c, out) in self.light_direction[l].iter_mut().enumerate() {
                     // DS 3D Polygon Light Parameters: https://problemkaputt.de/gbatek.htm#ds3dpolygonlightparameters
-                    self.light_direction[l][c] = ((-(dot(c) >> 12)) << 21 >> 21) as i16; // light vector component, sign-extended 11 bits
+                    *out = ((-(dot(c) >> 12)) << 21 >> 21) as i16; // light vector component, sign-extended 11 bits
                 }
                 let den = -((dot(2) << 9) >> 21) + (1 << 9); // 1.0 minus half-vector z, 9-bit fixed point
                 self.spec_recip[l] = if den == 0 { 0 } else { (1 << 18) / den }; // reciprocal in 18-bit fixed point

@@ -1,5 +1,5 @@
-# Remote Desktop, shared by every front end and core (melon_egui; freya on
-# the melonDS and Lunaris cores): one PC runs both consoles and streams the
+# Remote Desktop, shared by every front end and core (melon_egui on melonDS,
+# gui/egui on the Lunaris core): one PC runs both consoles and streams the
 # second one to the other PC. See src/lib.rs.
 [package]
 name = "remote"

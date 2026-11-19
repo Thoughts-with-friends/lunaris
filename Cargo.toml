@@ -19,19 +19,6 @@ members = [
 ]
 resolver = "3"
 
-# cogids-rs's front-end helpers (`ds_common`, used by gui/freya) are built
-# on this repository's core instead of their own copy.
-[patch."https://github.com/Thoughts-with-friends/cogids-rs.git"]
-ds_bios = { path = "./core/bios" }
-ds_cartridge = { path = "./core/cartridge" }
-ds_cpu = { path = "./core/cpu" }
-ds_emu = { path = "./core/system" }
-ds_gpu = { path = "./core/gpu" }
-ds_interrupt = { path = "./core/interrupt" }
-ds_mem_addr = { path = "./core/mem_addr" }
-ds_peripherals = { path = "./core/peripherals" }
-ds_spu = { path = "./core/spu" }
-
 [profile.release]
 debug = true
 
@@ -60,8 +47,6 @@ ds_spu = { path = "./core/spu" }
 
 lunaris_gui_common = { path = "./gui/common" }
 lunaris_rom_library = { path = "./gui/rom_library" }
-lunaris_melonds = { path = "./gui/lunaris_melonds" }
-ds_net_gui = { path = "./gui/net" }
 
 
 [workspace.lints.clippy]

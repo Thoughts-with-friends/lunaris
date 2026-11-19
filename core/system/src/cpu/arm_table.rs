@@ -104,7 +104,10 @@ const fn decode_000(hi: usize, lo: usize) -> InterpreterFunc {
     }
 }
 
-#[cfg(test)]
+// Handler identity is compared by address; without `log` several handlers
+// compile to identical bodies that the linker may fold into one, so the
+// comparison is only meaningful with `log` enabled.
+#[cfg(all(test, feature = "log"))]
 mod tests {
     use super::*;
 
@@ -146,7 +149,6 @@ mod tests {
             (0xE1C1_00D0, undefined, "ldrd slot (unimplemented)"), // LDRD r0, [r1]
         ];
         for (instruction, expected, asm) in cases {
-            #[cfg(feature = "log")]
             assert!(std::ptr::fn_addr_eq(lookup(instruction), expected), "{asm}");
         }
     }

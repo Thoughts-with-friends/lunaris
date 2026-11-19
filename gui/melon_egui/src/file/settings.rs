@@ -48,8 +48,7 @@ pub struct Settings {
     /// egui's UI scale. 0 means "follow the system".
     pub ui_scale: f32,
     pub dark_theme: bool,
-    /// How opaque the window's background is, 0.3 to 1.0 (freya's "Window
-    /// opacity"). The DS screens themselves always stay opaque.
+    /// How opaque the window's background is, 0.3 to 1.0. The DS screens themselves always stay opaque.
     pub window_opacity: f32,
     /// Which translation the UI is drawn in.
     pub language: crate::i18n::Language,

@@ -1,17 +1,12 @@
 //! Build/run dispatcher for the interchangeable GUI front ends.
 //!
 //! Cargo has no native syntax for a custom `--gui <name>` flag on `build`/
-//! `run`, so this crate provides it: `cargo xtask <build|run> [--gui
-//! egui|melon|freya] [--backend lunaris|melon] [cargo args...]
-//! [-- <args passed to the emulator>]` simply re-invokes
-//! `cargo <build|run> -p <package for that GUI> ...`.
+//! `run`, so this crate provides it: `cargo xtask <build|run|check> [--gui
+//! egui|melon|designer] [cargo args...] [-- <args passed to the emulator>]`
+//! simply re-invokes `cargo <build|run|check> -p <package for that GUI> ...`.
 //!
-//! `--backend` (freya only) fixes the core of the build: it becomes
-//! `--no-default-features --features <backend>`, since cargo itself has no
-//! such flag. Default: `lunaris`.
-//!
-//! `--gui melon` and `--gui freya --backend melon` additionally locate an LLVM
-//! toolchain for the melonDS C++ build; see [`export_llvm_root`].
+//! `--gui melon` additionally locates an LLVM toolchain for the melonDS C++
+//! build; see [`export_llvm_root`].
 //!
 //! `--gui` defaults to `egui`, matching the workspace's `default-members`
 //! (`gui/egui`) so that plain `cargo build`/`cargo run` also default to the
@@ -29,9 +24,6 @@ enum Gui {
     Egui,
     /// The melonDS-core reference front end, `gui/melon_egui`.
     Melon,
-    /// The freya front end, `gui/freya`; its core (Lunaris or melonDS) is
-    /// chosen at build time with `--backend`.
-    Freya,
     /// The block-design debugger, `gui/designer`.
     Designer,
 }
@@ -43,7 +35,6 @@ impl Gui {
         match self {
             Gui::Egui => "lunaris",
             Gui::Melon => "melon_egui",
-            Gui::Freya => "lunaris_freya",
             Gui::Designer => "designer",
         }
     }
@@ -51,11 +42,10 @@ impl Gui {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <build|run> [--gui egui|melon|freya|designer] [--backend lunaris|melon] [cargo args...] [-- <emulator args>]"
+        "usage: cargo xtask <build|run> [--gui egui|melon|designer] [cargo args...] [-- <emulator args>]"
     );
     eprintln!("       --gui defaults to `egui` when omitted");
     eprintln!("       --gui melon builds gui/melon_egui (the melonDS-core reference front end)");
-    eprintln!("       --gui freya builds gui/freya; --backend picks its core (default `lunaris`)");
     eprintln!("       --gui designer builds gui/designer (block design + hardware debugger)");
 }
 
@@ -71,7 +61,6 @@ fn main() -> ExitCode {
     }
 
     let mut gui = Gui::Egui;
-    let mut backend: Option<&'static str> = None;
     let mut cargo_args: Vec<String> = Vec::new();
     let mut emulator_args: Vec<String> = Vec::new();
 
@@ -83,24 +72,10 @@ fn main() -> ExitCode {
                 gui = match rest.get(i + 1).map(String::as_str) {
                     Some("egui") => Gui::Egui,
                     Some("melon") => Gui::Melon,
-                    Some("freya") => Gui::Freya,
                     Some("designer") => Gui::Designer,
                     other => {
                         eprintln!(
-                            "invalid --gui value: {other:?} (expected `egui`, `melon`, `freya` or `designer`)"
-                        );
-                        return ExitCode::FAILURE;
-                    }
-                };
-                i += 2;
-            }
-            "--backend" => {
-                backend = match rest.get(i + 1).map(String::as_str) {
-                    Some("lunaris") => Some("lunaris"),
-                    Some("melon" | "melonds") => Some("melon"),
-                    other => {
-                        eprintln!(
-                            "invalid --backend value: {other:?} (expected `lunaris` or `melon`)"
+                            "invalid --gui value: {other:?} (expected `egui`, `melon` or `designer`)"
                         );
                         return ExitCode::FAILURE;
                     }
@@ -121,36 +96,24 @@ fn main() -> ExitCode {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut cmd = Command::new(cargo);
     cmd.arg(&cargo_subcommand).arg("-p").arg(gui.package()).args(&cargo_args);
-    if backend.is_some() && !matches!(gui, Gui::Freya) {
-        eprintln!("--backend only applies to --gui freya");
-        return ExitCode::FAILURE;
-    }
-    if matches!(gui, Gui::Freya) {
-        let backend = backend.unwrap_or("lunaris");
-        let mut features = backend.to_owned();
-        // As for melon_egui: a release build has no console window.
-        if cargo_args.iter().any(|arg| arg == "--release" || arg == "-r") {
-            features.push_str(",release");
+    let release = cargo_args.iter().any(|arg| arg == "--release" || arg == "-r");
+    match gui {
+        Gui::Egui => {}
+        Gui::Designer => {
+            if release {
+                cmd.arg("--features").arg("release");
+            }
         }
-        cmd.arg("--no-default-features").arg("--features").arg(features);
-        if backend == "melon" {
+        Gui::Melon => {
             export_llvm_root(&mut cmd);
-        }
-    }
-    if matches!(gui, Gui::Designer)
-        && cargo_args.iter().any(|arg| arg == "--release" || arg == "-r")
-    {
-        cmd.arg("--features").arg("release");
-    }
-    if matches!(gui, Gui::Melon) {
-        export_llvm_root(&mut cmd);
-        // A release build of `melon_egui` is a build meant to be handed to
-        // someone, so it gets the two things that make it a single file they can
-        // double-click: no console window (the crate's `release` feature) and no
-        // dependency on the MSVC runtime redistributable.
-        if cargo_args.iter().any(|arg| arg == "--release" || arg == "-r") {
-            cmd.arg("--features").arg("release");
-            append_rustflag(&mut cmd, "-C target-feature=+crt-static");
+            // A release build of `melon_egui` is a build meant to be handed to
+            // someone, so it gets the two things that make it a single file they
+            // can double-click: no console window (the crate's `release` feature)
+            // and no dependency on the MSVC runtime redistributable.
+            if release {
+                cmd.arg("--features").arg("release");
+                append_rustflag(&mut cmd, "-C target-feature=+crt-static");
+            }
         }
     }
     if !emulator_args.is_empty() {

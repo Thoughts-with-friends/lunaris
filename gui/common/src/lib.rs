@@ -1,4 +1,4 @@
-//! What the lunaris front ends (egui, freya) share on top of the core
+//! What the lunaris front ends (egui, designer) share on top of the core
 //! crates: [`console::Console`] (one running DS with its audio), boot,
 //! savestate files, cheats, config, input and screen math.
 

@@ -182,7 +182,7 @@ pub(crate) const OSD_LIFETIME: Duration = Duration::from_secs(3);
 pub(crate) const CHROME_HEIGHT: f32 = 26.0 + crate::ui::status::STATUS_HEIGHT;
 
 /// The faintest the window background may go: below this the menus and panes
-/// stop being readable over whatever is behind the window (freya's limit).
+/// stop being readable over whatever is behind the window.
 pub const OPACITY_MIN: f32 = 0.3;
 
 /// A fully opaque background, the default.

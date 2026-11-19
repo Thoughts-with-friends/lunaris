@@ -29,7 +29,7 @@ impl eframe::App for MelonEgui {
         let mut action = None;
         egui::TopBottomPanel::top("menu").show(ctx, |ui| action = menu::bar(self, ui));
         let mut status_action = None;
-        // At the bottom of the window (freya keeps its bar under the title bar).
+        // At the bottom of the window.
         egui::TopBottomPanel::bottom("status")
             .exact_height(crate::ui::status::STATUS_HEIGHT)
             .show(ctx, |ui| status_action = self.status_bar(ui));

@@ -392,10 +392,8 @@ impl WiFi {
             self.bb_regs[id] = val;
             self.bb_read_only[id] = true;
         }
-        for id in 0x69..0x100 {
-            // BB registers 69h-FFh are read-only
-            self.bb_read_only[id] = true;
-        }
+        // BB registers 69h-FFh are read-only
+        self.bb_read_only[0x69..].fill(true);
 
         // DS Wifi RF Chip: https://problemkaputt.de/gbatek.htm#dswifirfchip
         self.rf_regs = [0; 0x40]; // RF chip registers

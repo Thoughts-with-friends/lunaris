@@ -770,7 +770,7 @@ pub fn thumb_store_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
 pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
     let instruction: u16 = emu.get_cpu(cpu_type).get_current_instr() as u16;
 
-    let destination: u32 = (instruction & 0x7) as u32; // Rd (bits 0-2)
+    let destination = i32::from(instruction & 0x7); // Rd (bits 0-2)
     let base: u32 = ((instruction >> 3) & 0x7) as u32; // Rb (bits 3-5)
     let mut offset: u32 = ((instruction >> 6) & 0x1F) as u32; // 5-bit immediate offset (bits 6-10)
     let is_byte: bool = (instruction & (1 << 12)) != 0; // B bit (12): byte transfer
@@ -787,7 +787,7 @@ pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
 
         emu.get_cpu_mut(cpu_type).add_n16_data(address, 1);
         let value = emu.read_byte(address, cpu_type);
-        emu.get_cpu_mut(cpu_type).set_register(destination as i32, value as u32);
+        emu.get_cpu_mut(cpu_type).set_register(destination, value as u32);
     } else {
         offset <<= 2;
         address = address.wrapping_add(offset);
@@ -803,7 +803,7 @@ pub fn thumb_load_imm_offset(emu: &mut Emulator, cpu_type: CpuType) {
         let addr = emu.read_word(aligned_addr, cpu_type);
         let word = emu.get_cpu_mut(cpu_type).rotr32(addr, rotate, false);
 
-        emu.get_cpu_mut(cpu_type).set_register(destination as i32, word);
+        emu.get_cpu_mut(cpu_type).set_register(destination, word);
     }
 
     emu.get_cpu_mut(cpu_type).add_internal_cycles(1);

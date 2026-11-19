@@ -1,4 +1,4 @@
-//! The status bar at the bottom of the window, laid out as the freya GUI's: every item
+//! The status bar at the bottom of the window: every item
 //! is a chip that changes what it shows, or opens where it is set.
 //!
 //! ```text
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn speeds_read_as_freya_writes_them() {
+    fn speed_labels_drop_trailing_zeros() {
         assert_eq!(speed_label(0.5), "0.5x");
         assert_eq!(speed_label(1.0), "1x");
         assert_eq!(speed_label(1.5), "1.5x");

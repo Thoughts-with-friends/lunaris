@@ -259,6 +259,10 @@ pub struct Nds {
 impl Nds {
     /// A console with `rom` in the slot and `save` in its save chip.
     /// `instance_id` makes the Wi-Fi MAC unique for a linked pair.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadRom`] when `rom` is shorter than a cartridge header.
     pub fn new(
         rom: &[u8],
         save: Option<&[u8]>,
@@ -268,10 +272,13 @@ impl Nds {
         if rom.len() < 0x200 {
             return Err(Error::BadRom);
         }
+
         let mut emu = Box::new(Emulator::new());
         emu.config.mac_address = Some([0x00, 0x09, 0xBF, 0x11, 0x22, 0x33 + instance_id as u8]);
+
         let host = Arc::new(Mutex::new(host));
-        emu.wifi.set_link(Some(Box::new(HostLink { host: host.clone(), now: 0 })));
+        emu.wifi.set_link(Some(Box::new(HostLink { host: Arc::clone(&host), now: 0 })));
+
         Ok(Self {
             emu,
             host,
@@ -507,11 +514,20 @@ impl Nds {
     }
 
     /// A savestate in the core's own format.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Savestate`] when the core fails to serialize its state.
     pub fn save_state(&mut self, buf: &mut Vec<u8>) -> Result<(), Error> {
         *buf = self.emu.save_state().map_err(|_| Error::Savestate)?;
         Ok(())
     }
 
+    /// Restores a savestate written by [`Self::save_state`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Savestate`] when `buf` is not a valid state for this core.
     pub fn load_state(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.emu.load_state(buf).map_err(|_| Error::Savestate)?;
         self.emu.cart.backup.take_dirty();

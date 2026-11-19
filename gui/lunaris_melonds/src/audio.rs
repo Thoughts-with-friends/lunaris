@@ -24,6 +24,9 @@ impl Resampler {
         let step = IN_RATE / OUT_RATE;
         for pair in input.as_chunks::<2>().0 {
             let cur = (f64::from(pair[0]), f64::from(pair[1]));
+            // `phase` is a bounded fractional accumulator (step > 0), so the
+            // loop always terminates.
+            #[allow(clippy::while_float)]
             while self.phase < 1.0 {
                 let t = self.phase;
                 let l = (cur.0 - self.prev.0).mul_add(t, self.prev.0);

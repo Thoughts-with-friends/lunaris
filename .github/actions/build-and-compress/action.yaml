@@ -14,11 +14,6 @@ inputs:
     description: Cargo binary name (the file cargo builds)
     required: true
 
-  bin_name:
-    description: Binary name inside the archive (default app_name), e.g. melon_freya for the melonDS build of lunaris_freya
-    required: false
-    default: ""
-
   profile:
     description: Cargo build profile
     required: false
@@ -28,11 +23,6 @@ inputs:
     description: Cargo features
     required: false
     default: ""
-
-  no_default_features:
-    description: Pass --no-default-features (e.g. freya, whose backend is a feature)
-    required: false
-    default: "false"
 
   asset_name:
     description: Output archive name without extension
@@ -50,9 +40,6 @@ runs:
       shell: bash
       run: |
         args=(--${{ inputs.profile }} --package "${{ inputs.package }}" --target "${{ inputs.target }}")
-        if [ "${{ inputs.no_default_features }}" = "true" ]; then
-          args+=(--no-default-features)
-        fi
         if [ -n "${{ inputs.features }}" ]; then
           args+=(--features "${{ inputs.features }}")
         fi
@@ -70,7 +57,7 @@ runs:
       run: |
         cp \
           "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}" \
-          "build/${{ inputs.bin_name || inputs.app_name }}"
+          "build/${{ inputs.app_name }}"
 
     - name: Copy binary
       if: runner.os == 'Windows'
@@ -78,7 +65,7 @@ runs:
       run: |
         Copy-Item `
           "target/${{ inputs.target }}/${{ inputs.profile }}/${{ inputs.app_name }}.exe" `
-          "build/${{ inputs.bin_name || inputs.app_name }}.exe"
+          "build/${{ inputs.app_name }}.exe"
 
     - name: Compress Unix
       if: runner.os != 'Windows'
@@ -87,7 +74,7 @@ runs:
         tar \
           -C build \
           -czf "${{ inputs.asset_name }}.tar.gz" \
-          "${{ inputs.bin_name || inputs.app_name }}"
+          "${{ inputs.app_name }}"
 
     - name: Compress Windows
       if: runner.os == 'Windows'
@@ -100,5 +87,5 @@ runs:
         }
 
         Compress-Archive `
-          -Path "build/${{ inputs.bin_name || inputs.app_name }}.exe" `
+          -Path "build/${{ inputs.app_name }}.exe" `
           -DestinationPath $assetName

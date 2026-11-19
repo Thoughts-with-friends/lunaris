@@ -218,12 +218,6 @@ impl Emulator {
                 s.loopcond = s.cond;
                 s.loopcondstack = s.condstack;
             }
-            0xC4 => {
-                // C4: offset = address of this code
-                #[cfg(feature = "log")]
-                log::warn!("AR: opcode C4000000 is not supported");
-                return Flow::Stop;
-            }
             0xC5 => {
                 // C5: counter IF
                 s.c5count = s.c5count.wrapping_add(1);
@@ -234,9 +228,15 @@ impl Emulator {
                 }
             }
             0xC6 => self.arm7_write_word(b, s.offset), // C6: store offset
+            // C4 (offset = address of this code) is unsupported, like any
+            // unknown opcode: both stop the code list.
             _ => {
                 #[cfg(feature = "log")]
-                log::warn!("AR: bad opcode {op:02X}");
+                if op == 0xC4 {
+                    log::warn!("AR: opcode C4000000 is not supported");
+                } else {
+                    log::warn!("AR: bad opcode {op:02X}");
+                }
                 return Flow::Stop;
             }
         }

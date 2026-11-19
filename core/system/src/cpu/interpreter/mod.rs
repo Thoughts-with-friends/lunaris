@@ -34,27 +34,14 @@ pub fn arm_interpret(emu: &mut Emulator, cpu_type: CpuType) {
 
     // In ARM, PC reads as current + 8
     let cpu_id = emu.get_cpu(cpu_type).get_id();
-    let test_mode = emu.config.test;
 
-    // Debug
-    if cpu_id <= 0 && test_mode {
-        if cpu_id <= 0 {
-            #[cfg(feature = "log")]
-            log::trace!("(9A)");
-        } else {
-            #[cfg(feature = "log")]
-            log::trace!("(7A)");
-        }
+    // Debug: trace ARM9 instructions in test mode.
+    #[cfg(feature = "log")]
+    if cpu_id <= 0 && emu.config.test {
+        log::trace!("(9A)");
         let pc: u32 = emu.get_cpu(cpu_type).get_pc().wrapping_sub(8);
-
-        #[cfg(feature = "log")]
         log::trace!("[{pc:08X}] {instruction:08X} - ");
-
-        let cpu = emu.get_cpu_mut(cpu_type);
-
-        #[cfg(feature = "log")]
-        let disasm = ds_cpu::disassemble::disasm_arm(cpu, instruction, pc);
-        #[cfg(feature = "log")]
+        let disasm = ds_cpu::disassemble::disasm_arm(emu.get_cpu_mut(cpu_type), instruction, pc);
         log::trace!("disasm: {disasm}");
     }
 

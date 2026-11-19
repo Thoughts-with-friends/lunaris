@@ -14,8 +14,6 @@
     "egui": "cargo run --release --features release --package lunaris",
     "egui:gnu": "cargo +stable-x86_64-pc-windows-gnu run --release",
     "melon": "cargo run --release --features release --package melon_egui",
-    "freya:lunaris": "cargo build --release -p lunaris_freya --features release",
-    "freya:melon": "cargo build --release -p lunaris_freya --no-default-features --features melon,release",
     "design": "cargo run --release --features release --package designer",
     "test": "cargo test -p ds_bios -p ds_cartridge -p ds_cpu -p ds_emu -p ds_gpu -p ds_interrupt -p ds_mem_addr -p ds_net -p ds_peripherals -p ds_spu",
     "test:gpu": "cargo test -p ds_gpu",

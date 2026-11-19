@@ -158,8 +158,8 @@ impl Renderer {
 fn scaled_bounds(p: &Polygon, verts: &[Vertex], s: i32) -> Polygon {
     let mut q = *p;
     let (mut ytop, mut ybot, mut xtop, mut xbot) = (192 * s, 0, 256 * s, 0);
-    for i in 0..p.num_vertices {
-        let Some(v) = verts.get(p.vertices[i]) else {
+    for (i, &vi) in p.vertices[..p.num_vertices].iter().enumerate() {
+        let Some(v) = verts.get(vi) else {
             q.degenerate = true;
             return q;
         };
