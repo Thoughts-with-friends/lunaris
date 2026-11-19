@@ -6,6 +6,8 @@ struct Mock {
     regs: [u32; 16],
     halted: bool,
     restarted: bool,
+    /// Set by `restart_swi`, consumed by `take_swi_resumed`.
+    resume_armed: bool,
 }
 
 const SWI_AT: u32 = 0xF000;
@@ -13,7 +15,13 @@ const FLAGS_AT: u32 = 0x3FF8;
 
 impl Mock {
     fn new() -> Self {
-        Self { mem: vec![0; 0x1_0000], regs: [0; 16], halted: false, restarted: false }
+        Self {
+            mem: vec![0; 0x1_0000],
+            regs: [0; 16],
+            halted: false,
+            restarted: false,
+            resume_armed: false,
+        }
     }
 
     fn put(&mut self, addr: u32, bytes: &[u8]) {
@@ -84,6 +92,10 @@ impl SwiContext for Mock {
     }
     fn restart_swi(&mut self) {
         self.restarted = true;
+        self.resume_armed = true;
+    }
+    fn take_swi_resumed(&mut self) -> bool {
+        core::mem::take(&mut self.resume_armed)
     }
 }
 
@@ -157,12 +169,28 @@ fn cpu_fast_set_rounds_up_to_eight_words() {
 fn intr_wait_waits_for_a_new_flag() {
     let mut m = Mock::new();
     m.put(FLAGS_AT, &1_u32.to_le_bytes()); // old VBlank flag
-    m.swi(true, 0x05, [0; 4]);
+    m.swi(true, 0x04, [1, 1, 0, 0]); // IntrWait, discard old flags
     assert!(m.halted && m.restarted, "discards the old flag and waits");
-    assert_eq!(m.regs[0], 0, "the restarted SWI does not discard again");
+    assert_eq!(m.get(FLAGS_AT, 4), &0_u32.to_le_bytes());
 
     m.put(FLAGS_AT, &3_u32.to_le_bytes()); // handler raised VBlank + HBlank
-    m.swi(true, 0x04, [0, 1, 0, 0]);
+    m.swi(true, 0x04, [1, 1, 0, 0]); // the same SWI, resumed
     assert!(!m.halted && !m.restarted);
     assert_eq!(m.get(FLAGS_AT, 4), &2_u32.to_le_bytes(), "only the waited flag is cleared");
+}
+
+#[test]
+fn vblank_intr_wait_returns_after_the_next_vblank() {
+    let mut m = Mock::new();
+    m.put(FLAGS_AT, &1_u32.to_le_bytes()); // stale VBlank flag
+    m.swi(true, 0x05, [0; 4]);
+    assert!(m.halted && m.restarted, "a new call discards the stale flag and waits");
+
+    m.swi(true, 0x05, [0; 4]); // woken by another IRQ: no VBlank flag yet
+    assert!(m.halted && m.restarted, "keeps waiting");
+
+    m.put(FLAGS_AT, &1_u32.to_le_bytes()); // VBlank handler set the flag
+    m.swi(true, 0x05, [0; 4]); // resumed: must not discard it again
+    assert!(!m.halted && !m.restarted, "returns on the new VBlank");
+    assert_eq!(m.get(FLAGS_AT, 4), &0_u32.to_le_bytes());
 }

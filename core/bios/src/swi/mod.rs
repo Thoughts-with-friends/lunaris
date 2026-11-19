@@ -73,6 +73,10 @@ pub trait SwiContext {
     /// Makes the CPU execute the `SWI` instruction again once it resumes
     /// (after the halt and the interrupt handler).
     fn restart_swi(&mut self);
+    /// Whether this `SWI` is the one [`Self::restart_swi`] re-armed (same
+    /// instruction, same stack), i.e. an `IntrWait` resuming after its
+    /// halt rather than a new call. Consumes the mark.
+    fn take_swi_resumed(&mut self) -> bool;
 }
 
 /// `SWI` number from the instruction before the return address.
@@ -144,7 +148,12 @@ fn common(ctx: &mut impl SwiContext, op: u8, arm9: bool) {
             let (discard, mask) = (ctx.reg(0), ctx.reg(1));
             intr_wait(ctx, discard != 0, mask);
         }
-        0x05 => intr_wait(ctx, true, 1), // SWI 05h: VBlankIntrWait (VBlank, IE/IF bit 0)
+        0x05 => {
+            // SWI 05h: VBlankIntrWait = IntrWait(r0 = 1, r1 = 1) (the BIOS sets r0/r1)
+            ctx.set_reg(0, 1);
+            ctx.set_reg(1, 1);
+            intr_wait(ctx, true, 1); // VBlank, IE/IF bit 0
+        }
         0x06 => ctx.halt(),              // SWI 06h: Halt
         0x09 => div(ctx),                // SWI 09h: Div
         0x0B => cpu_set(ctx, arm9),      // SWI 0Bh: CpuSet
@@ -182,26 +191,30 @@ fn common(ctx: &mut impl SwiContext, op: u8, arm9: bool) {
 /// interrupt ends the wait.
 ///
 /// ```text
-///  SWI (discard)   clear flags & mask
-///  SWI (r0 = 0)    flags & mask set? -> clear them, return
-///   |                    no
+///  SWI (new call, discard)   clear flags & mask
+///  SWI (else)                flags & mask set? -> clear them, return
+///   |                              no
 ///   v
-///  IME = 1, halt, restart_swi() with r0 = 0
-///   -> IRQ -> handler sets the flag -> returns to the SWI -> check again
+///  IME = 1, halt, restart_swi()
+///   -> IRQ -> handler sets the flag -> returns to the SWI, which is
+///      recognised as resuming (take_swi_resumed) -> check, never discard
 /// ```
+///
+/// The resume is tracked outside the registers: `VBlankIntrWait` always
+/// asks to discard, so deciding from r0 would throw away the very flag
+/// the handler just set and wait forever (Star Wars Episode III).
 fn intr_wait(ctx: &mut impl SwiContext, discard: bool, mask: u32) {
     let addr = ctx.irq_check_flags_addr();
     ctx.write32(0x0400_0208, 1); // IME = 1
+    let resumed = ctx.take_swi_resumed();
     let flags = ctx.read32(addr);
-    if discard {
+    if discard && !resumed {
         ctx.write32(addr, flags & !mask);
     } else if flags & mask != 0 {
         ctx.write32(addr, flags & !mask);
         return;
     }
     // Wait for the next interrupt, then check again without discarding.
-    ctx.set_reg(0, 0);
-    ctx.set_reg(1, mask);
     ctx.halt();
     ctx.restart_swi();
 }

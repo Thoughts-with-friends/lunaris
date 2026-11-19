@@ -73,10 +73,40 @@ impl SwiContext for Caller<'_> {
     /// Points the PC back at the `SWI` (it was fetched two instructions
     /// ago); an interrupt taken meanwhile returns there.
     fn restart_swi(&mut self) {
-        let cpu = self.emu.get_cpu_mut(self.cpu);
+        let swi = self.swi_addr();
+        let sp = self.reg(13);
+        self.emu.hle_intr_wait[self.cpu_index()] = Some((swi, sp));
+        self.emu.get_cpu_mut(self.cpu).jp(swi, false);
+    }
+
+    /// The wait is identified by its instruction and stack, so another
+    /// thread calling the same wrapper starts a fresh wait.
+    fn take_swi_resumed(&mut self) -> bool {
+        let here = Some((self.swi_addr(), self.reg(13)));
+        let slot = &mut self.emu.hle_intr_wait[self.cpu_index()];
+        if *slot == here {
+            *slot = None;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Caller<'_> {
+    /// Address of the `SWI` being handled (the PC is two instructions
+    /// ahead of it).
+    fn swi_addr(&self) -> u32 {
+        let cpu = self.emu.get_cpu(self.cpu);
         let width = if cpu.get_cpsr().thumb_on { 2 } else { 4 };
-        let swi = cpu.get_pc().wrapping_sub(2 * width);
-        cpu.jp(swi, false);
+        cpu.get_pc().wrapping_sub(2 * width)
+    }
+
+    const fn cpu_index(&self) -> usize {
+        match self.cpu {
+            CpuType::Arm9 => 0,
+            CpuType::Arm7 => 1,
+        }
     }
 }
 

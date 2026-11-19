@@ -169,6 +169,10 @@ pub struct Emulator {
     pub last_arm9_timestamp: u64,
     /// Last ARM7 execution timestamp
     pub last_arm7_timestamp: u64,
+
+    /// HLE `IntrWait` halted on the ARM9 (0) / ARM7 (1): the `SWI`
+    /// address and stack pointer it will resume at (see `bios.rs`).
+    pub hle_intr_wait: [Option<(u32, u32)>; 2],
 }
 
 impl Drop for Emulator {
@@ -258,6 +262,7 @@ impl Emulator {
             total_timestamp: Default::default(),
             last_arm9_timestamp: Default::default(),
             last_arm7_timestamp: Default::default(),
+            hle_intr_wait: [None; 2],
         }
     }
 
