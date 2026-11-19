@@ -150,10 +150,10 @@ mod tests {
             let mut layers = LineLayers { bg: [[0; W]; 4], obj: [0; W], obj_window: [false; W] };
             let mut masks = [0u8; W];
             for x in 0..W {
-                for bg in 0..4 {
+                for (bg, line) in layers.bg.iter_mut().enumerate() {
                     // about half opaque, distinct colors per layer
                     if rand() & 1 != 0 {
-                        layers.bg[bg][x] = OPAQUE | (bg as u32) << 12 | (rand() & 0x7FF);
+                        line[x] = OPAQUE | (bg as u32) << 12 | (rand() & 0x7FF);
                     }
                 }
                 if rand() & 1 != 0 {
