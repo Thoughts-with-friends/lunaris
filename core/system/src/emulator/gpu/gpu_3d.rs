@@ -237,12 +237,13 @@ impl Emulator {
     ///     3. visible line -> hblank_dma_request()
     ///     4. reschedule id 1 in 99 * 6 cycles
     ///   id 1 = end of HBlank (next line)
-    ///     1. HBlank flag off; V-count match flag + IRQ per CPU
+    ///     1. HBlank flag off
     ///     2. vertical_count += 1
     ///     3. line 215: gpu.render_3d_frame()    (shown next frame)
     ///     4. line 192: VBlank start -> engine_3d.end_of_frame() (swap),
     ///        frame_complete = true, VBlank IRQs, 2D vblank_start()
     ///     5. line 263: wrap to 0, VBlank flag off, frameskip counter
+    ///     V-count match flag + IRQ per CPU (against the new line)
     ///     6. reschedule id 0 in 256 * 6 cycles
     ///   |
     ///   v
@@ -292,22 +293,6 @@ impl Emulator {
                 self.gpu.display_status_arm7.is_hblank = false;
                 self.gpu.display_status_arm9.is_hblank = false;
 
-                self.gpu.display_status_arm7.is_vcounter =
-                    self.gpu.vertical_count == self.gpu.display_status_arm7.vcounter;
-                if self.gpu.display_status_arm7.is_vcounter
-                    && self.gpu.display_status_arm7.irq_on_vcounter
-                {
-                    self.request_interrupt7(Interrupt::VCountMatch);
-                }
-
-                self.gpu.display_status_arm9.is_vcounter =
-                    self.gpu.vertical_count == self.gpu.display_status_arm9.vcounter;
-                if self.gpu.display_status_arm9.is_vcounter
-                    && self.gpu.display_status_arm9.irq_on_vcounter
-                {
-                    self.request_interrupt9(Interrupt::VCountMatch);
-                }
-
                 self.gpu.vertical_count += 1;
                 // VBLANK Counter
                 #[cfg(feature = "log")]
@@ -352,6 +337,28 @@ impl Emulator {
                         false => self.gpu.frames_skipped += 1,
                     }
                 }
+                // The V-count match is checked against the line that is
+                // starting now (after the increment/wrap), so a match on
+                // line N is seen while VCOUNT reads N. Checking the old
+                // line raised it one line late: a VCOUNT=191 alarm fired
+                // together with VBlank and saw VCOUNT=192.
+                // DS Video DISPSTAT: https://problemkaputt.de/gbatek.htm#dsvideodisplaysystemcontrol
+                self.gpu.display_status_arm7.is_vcounter =
+                    self.gpu.vertical_count == self.gpu.display_status_arm7.vcounter;
+                if self.gpu.display_status_arm7.is_vcounter
+                    && self.gpu.display_status_arm7.irq_on_vcounter
+                {
+                    self.request_interrupt7(Interrupt::VCountMatch);
+                }
+
+                self.gpu.display_status_arm9.is_vcounter =
+                    self.gpu.vertical_count == self.gpu.display_status_arm9.vcounter;
+                if self.gpu.display_status_arm9.is_vcounter
+                    && self.gpu.display_status_arm9.irq_on_vcounter
+                {
+                    self.request_interrupt9(Interrupt::VCountMatch);
+                }
+
                 self.display_start_dma_request(self.gpu.vertical_count);
 
                 self.reschedule_gpu_event(0, 256 * 6);

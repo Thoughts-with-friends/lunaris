@@ -65,19 +65,21 @@ impl DispStatReg {
             value |= 32;
         }
         // LCD I/O Interrupts and Status: https://problemkaputt.de/gbatek.htm#lcdiointerruptsandstatus
-        value |= (self.vcounter & 0xFF) << 8; // DISPSTAT V-count setting (bits 8-15)
+        value |= (self.vcounter & 0xFF) << 8; // DISPSTAT V-count setting LSBs (bits 8-15)
+        value |= (self.vcounter & 0x100) >> 1; // DISPSTAT V-count setting MSB (bit 7)
         value
     }
 
-    /// Set register value from 16-bit halfword
+    /// Set register value from 16-bit halfword (a CPU write).
+    ///
+    /// Bits 0-2 (VBlank/HBlank/V-count match flags) are read-only status
+    /// and are kept; the V-count setting is 9 bits on the DS (bit 7 = MSB).
     pub fn set(&mut self, value: u16) {
-        self.is_vblank = (value & 1) != 0;
-        self.is_hblank = (value & 2) != 0;
-        self.is_vcounter = (value & 4) != 0;
         self.irq_on_vblank = (value & 8) != 0;
         self.irq_on_hblank = (value & 16) != 0;
         self.irq_on_vcounter = (value & 32) != 0;
-        self.vcounter = (value >> 8) & 0xFF; // DISPSTAT V-count setting (bits 8-15)
+        // DS DISPSTAT: https://problemkaputt.de/gbatek.htm#dsvideodisplaysystemcontrol
+        self.vcounter = ((value >> 8) & 0xFF) | ((value & 0x80) << 1); // bits 8-15 + bit 7 (MSB)
     }
 }
 
