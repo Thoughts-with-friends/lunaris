@@ -16,6 +16,7 @@ mod interrupt;
 mod load;
 mod power;
 mod read;
+mod fast_ram;
 mod runner;
 mod sound;
 pub mod state;

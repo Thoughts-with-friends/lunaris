@@ -47,6 +47,7 @@ impl Emulator {
     ///   |
     ///   v
     /// write_word(address, word, cpu)
+    ///   0. TCM / plain RAM (no watch armed) -> fast_write() (fast_ram.rs)
     ///   1. check_watch()                     debug watchpoint
     ///   2. ARM9: CP15 TCM hit? -> TCM, else -> arm9_write_word()
     ///      ARM7:                            -> arm7_write_word()
@@ -56,6 +57,9 @@ impl Emulator {
     ///       DMAs, raise IRQs (IPC), feed the GX FIFO, clock SPI...
     /// ```
     pub fn write_word(&mut self, address: u32, word: u32, cpu_type: CpuType) {
+        if self.fast_write(address, &word.to_le_bytes(), cpu_type) {
+            return; // TCM / plain RAM (fast_ram.rs)
+        }
         self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
@@ -76,6 +80,9 @@ impl Emulator {
     /// CPU-side 16-bit store (STRH); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_halfword().
     pub fn write_halfword(&mut self, address: u32, halfword: u16, cpu_type: CpuType) {
+        if self.fast_write(address, &halfword.to_le_bytes(), cpu_type) {
+            return; // TCM / plain RAM (fast_ram.rs)
+        }
         self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
@@ -96,6 +103,9 @@ impl Emulator {
     /// CPU-side 8-bit store (STRB); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_byte().
     pub fn write_byte(&mut self, address: u32, byte: u8, cpu_type: CpuType) {
+        if self.fast_write(address, &[byte], cpu_type) {
+            return; // TCM / plain RAM (fast_ram.rs)
+        }
         self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)

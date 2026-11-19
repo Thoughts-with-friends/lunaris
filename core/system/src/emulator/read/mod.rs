@@ -41,6 +41,7 @@ impl Emulator {
     ///   |
     ///   v
     /// read_word(address, cpu)
+    ///   TCM / plain RAM?           -> fast_read() (fast_ram.rs)
     ///   ARM9: CP15 ITCM/DTCM hit?  -> TCM contents
     ///         otherwise            -> arm9_read_word()
     ///   ARM7:                      -> arm7_read_word()
@@ -50,6 +51,9 @@ impl Emulator {
     ///       timers, IPC, cartridge, SPI, SPU, Wi-Fi...)
     /// ```
     pub fn read_word(&mut self, address: u32, cpu_type: CpuType) -> u32 {
+        if let Some(bytes) = self.fast_read::<4>(address, cpu_type) {
+            return u32::from_le_bytes(bytes); // TCM / plain RAM (fast_ram.rs)
+        }
         self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Word, cpu_type) {
             return value;
@@ -67,6 +71,9 @@ impl Emulator {
     /// CPU-side 16-bit load (Thumb fetch, LDRH/LDRSH); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_halfword().
     pub fn read_halfword(&mut self, address: u32, cpu_type: CpuType) -> u16 {
+        if let Some(bytes) = self.fast_read::<2>(address, cpu_type) {
+            return u16::from_le_bytes(bytes); // TCM / plain RAM (fast_ram.rs)
+        }
         self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Half, cpu_type) {
             return value as u16;
@@ -84,6 +91,9 @@ impl Emulator {
     /// CPU-side 8-bit load (LDRB/LDRSB); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_byte().
     pub fn read_byte(&mut self, address: u32, cpu_type: CpuType) -> u8 {
+        if let Some(bytes) = self.fast_read::<1>(address, cpu_type) {
+            return bytes[0]; // TCM / plain RAM (fast_ram.rs)
+        }
         self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Byte, cpu_type) {
             return value as u8;
