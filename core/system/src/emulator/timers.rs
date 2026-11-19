@@ -97,17 +97,12 @@ impl Emulator {
             return; // driven by the previous timer's overflow
         }
 
-        let div =
-            self.nds_timing.timer_clock_divs[self.nds_timing.timers[index].clock_div as usize];
         let timer = &mut self.nds_timing.timers[index];
         timer.cycles_left -= cycles;
         if timer.cycles_left > 0 {
             return;
         }
-        // Elapsed prescaler periods, applied at once rather than one loop
-        // turn each (a prescaler of 1 would loop once per cycle).
-        let mut ticks = 1 + (-timer.cycles_left / div) as u32;
-        timer.cycles_left += ticks as i32 * div;
+        let mut ticks = elapsed_ticks(&mut timer.cycles_left, timer.clock_div as u8);
         loop {
             // Increments until the one past 0xFFFF that overflows.
             let to_overflow = 0x1_0000 - u32::from(self.nds_timing.timers[index].counter);
@@ -117,6 +112,51 @@ impl Emulator {
             }
             ticks -= to_overflow;
             self.overflow(index); // counter = reload, IRQ, cascade
+        }
+    }
+}
+
+/// log2 of the timer prescalers 1, 64, 256 and 1024 (TMxCNT_H bits 0-1),
+/// the same values as `NDSTiming::timer_clock_divs`.
+// DS Timers: https://problemkaputt.de/gbatek.htm#dstimers
+const PRESCALER_SHIFT: [u32; 4] = [0, 6, 8, 10];
+
+/// Prescaler periods that have elapsed once `cycles_left` reached 0 or
+/// below: `1 + -cycles_left / div`, applied at once rather than one loop
+/// turn each (a prescaler of 1 would loop once per cycle). `cycles_left`
+/// moves on to the next period. The prescalers are powers of two, so the
+/// division is a shift; this runs for every enabled timer in every slice.
+#[inline]
+const fn elapsed_ticks(cycles_left: &mut i32, clock_div: u8) -> u32 {
+    let shift = PRESCALER_SHIFT[(clock_div & 3) as usize];
+    let ticks = 1 + ((cycles_left.unsigned_abs()) >> shift);
+    *cycles_left += (ticks << shift) as i32;
+    ticks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prescaler_shifts_match_the_divider_table() {
+        let divs = ds_peripherals::timers::NDSTiming::new().timer_clock_divs;
+        for (i, &div) in divs.iter().enumerate() {
+            assert_eq!(1 << PRESCALER_SHIFT[i], div);
+        }
+    }
+
+    #[test]
+    fn elapsed_ticks_matches_division() {
+        for clock_div in 0..4u8 {
+            let div = 1 << PRESCALER_SHIFT[clock_div as usize];
+            for left in -5000..=0 {
+                let mut fast = left;
+                let ticks = elapsed_ticks(&mut fast, clock_div);
+                let expect = 1 + (-left / div) as u32;
+                assert_eq!(ticks, expect, "left {left} div {div}");
+                assert_eq!(fast, left + expect as i32 * div);
+            }
         }
     }
 }
