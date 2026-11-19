@@ -97,7 +97,14 @@ impl TileRowCache {
 
     /// Color index of pixel `x` (0-7) of the tile row at `row_addr`.
     #[inline]
-    fn pixel(&mut self, vram: &Vram, region: Region, row_addr: u32, color_256: bool, x: u32) -> u32 {
+    fn pixel(
+        &mut self,
+        vram: &Vram,
+        region: Region,
+        row_addr: u32,
+        color_256: bool,
+        x: u32,
+    ) -> u32 {
         if self.addr != row_addr {
             self.addr = row_addr;
             self.bits = if color_256 {

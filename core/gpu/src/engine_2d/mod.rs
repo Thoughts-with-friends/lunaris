@@ -51,6 +51,7 @@
 //! [DS Video BG Modes / Control](https://problemkaputt.de/gbatek.htm#dsvideobgmodescontrol)
 mod bg;
 pub(crate) mod compose;
+mod layer_stack;
 mod mosaic;
 mod obj;
 pub mod regs;

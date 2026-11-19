@@ -45,7 +45,7 @@
 //! GBATEK: [LCD I/O Color Special Effects](https://problemkaputt.de/gbatek.htm#lcdiocolorspecialeffects)
 use ds_mem_addr::{PIXELS_PER_LINE, SCANLINES};
 
-use super::mosaic;
+use super::{layer_stack::LayerStack, mosaic};
 use crate::{Gpu, display::hires::hd_3d_info};
 
 pub(super) const W: usize = PIXELS_PER_LINE;
@@ -259,54 +259,20 @@ impl Gpu {
         let second_target = |layer: usize| seconds[layer];
         let effect = bld.effect;
 
-        // Displayed BGs grouped by priority (lower index first), so each
-        // pixel checks only the layers that exist instead of 4 x 4 pairs.
+        // Top two visible layers of every pixel (layer_stack.rs).
         let d = e.dispcnt;
         let shown = [d.display_bg0, d.display_bg1, d.display_bg2, d.display_bg3];
-        let mut groups = [[0usize; 4]; 4];
-        let mut group_len = [0usize; 4];
-        for bg in 0..4 {
-            if shown[bg] {
-                let p = usize::from(bgcnt[bg] & 3);
-                groups[p][group_len[p]] = bg;
-                group_len[p] += 1;
-            }
-        }
+        let bg_prio: [Option<u8>; 4] =
+            core::array::from_fn(|bg| shown[bg].then_some((bgcnt[bg] & 3) as u8));
+        let stack = LayerStack::build(layers, &masks, bg_prio, u32::from(backdrop));
 
         let mut row = [0u32; W];
         // Engine A: how each 3D pixel was composited (display::hires).
         let mut hd = [0u32; W];
         for x in 0..W {
             let mask = masks[x];
-            // (layer id, pixel); layer 5 = backdrop.
-            let mut found = [(5usize, u32::from(backdrop)); 2];
-            let mut count = 0;
-            let obj = layers.obj[x];
-            // window mask bit 4: OBJ enabled
-            let obj_prio =
-                if obj & OPAQUE != 0 && mask & 0x10 != 0 { ((obj >> 16) & 3) as usize } else { 4 };
-            'search: for prio in 0..4 {
-                if obj_prio == prio {
-                    found[count] = (4, obj);
-                    count += 1;
-                    if count == 2 {
-                        break 'search;
-                    }
-                }
-                for &bg in &groups[prio][..group_len[prio]] {
-                    let px = layers.bg[bg][x];
-                    if px & OPAQUE != 0 && mask & (1 << bg) != 0 {
-                        found[count] = (bg, px);
-                        count += 1;
-                        if count == 2 {
-                            break 'search;
-                        }
-                    }
-                }
-            }
-
-            let (top_layer, top) = found[0];
-            let (second_layer, second) = found[1];
+            let (top_layer, top) = (usize::from(stack.top_layer[x]), stack.top[x]);
+            let (second_layer, second) = (usize::from(stack.second_layer[x]), stack.second[x]);
             let top_color = (top & 0x7FFF) as u16; // BGR555 color
             let second_color = (second & 0x7FFF) as u16; // BGR555 color
             let effects = mask & 0x20 != 0; // window mask bit 5: color special effects enabled
