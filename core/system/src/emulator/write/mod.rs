@@ -56,10 +56,17 @@ impl Emulator {
     /// to:   RAM / VRAM or a device register; register writes can start
     ///       DMAs, raise IRQs (IPC), feed the GX FIFO, clock SPI...
     /// ```
+    #[inline]
     pub fn write_word(&mut self, address: u32, word: u32, cpu_type: CpuType) {
-        if self.fast_write(address, &word.to_le_bytes(), cpu_type) {
-            return; // TCM / plain RAM (fast_ram.rs)
+        if !self.fast_write(address, &word.to_le_bytes(), cpu_type) {
+            self.write_word_bus(address, word, cpu_type); // not TCM / plain RAM (fast_ram.rs)
         }
+    }
+
+    /// The full bus path of [`Self::write_word`] (watchpoint, devices, Slot-2,
+    /// I/O, VRAM...), kept out of line so the RAM fast path inlines.
+    #[inline(never)]
+    fn write_word_bus(&mut self, address: u32, word: u32, cpu_type: CpuType) {
         self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
@@ -79,10 +86,17 @@ impl Emulator {
 
     /// CPU-side 16-bit store (STRH); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_halfword().
+    #[inline]
     pub fn write_halfword(&mut self, address: u32, halfword: u16, cpu_type: CpuType) {
-        if self.fast_write(address, &halfword.to_le_bytes(), cpu_type) {
-            return; // TCM / plain RAM (fast_ram.rs)
+        if !self.fast_write(address, &halfword.to_le_bytes(), cpu_type) {
+            self.write_halfword_bus(address, halfword, cpu_type); // not TCM / plain RAM (fast_ram.rs)
         }
+    }
+
+    /// The full bus path of [`Self::write_halfword`] (watchpoint, devices, Slot-2,
+    /// I/O, VRAM...), kept out of line so the RAM fast path inlines.
+    #[inline(never)]
+    fn write_halfword_bus(&mut self, address: u32, halfword: u16, cpu_type: CpuType) {
         self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)
@@ -102,10 +116,17 @@ impl Emulator {
 
     /// CPU-side 8-bit store (STRB); same routing as [`Self::write_word`]
     /// via arm9_/arm7_write_byte().
+    #[inline]
     pub fn write_byte(&mut self, address: u32, byte: u8, cpu_type: CpuType) {
-        if self.fast_write(address, &[byte], cpu_type) {
-            return; // TCM / plain RAM (fast_ram.rs)
+        if !self.fast_write(address, &[byte], cpu_type) {
+            self.write_byte_bus(address, byte, cpu_type); // not TCM / plain RAM (fast_ram.rs)
         }
+    }
+
+    /// The full bus path of [`Self::write_byte`] (watchpoint, devices, Slot-2,
+    /// I/O, VRAM...), kept out of line so the RAM fast path inlines.
+    #[inline(never)]
+    fn write_byte_bus(&mut self, address: u32, byte: u8, cpu_type: CpuType) {
         self.sync_before_io(address, cpu_type);
         if Slot2Bus::decodes(address)
             && self.owns_slot2(cpu_type)

@@ -50,10 +50,18 @@ impl Emulator {
     /// to:   RAM / BIOS / VRAM or the I/O register of a device (GPU, DMA,
     ///       timers, IPC, cartridge, SPI, SPU, Wi-Fi...)
     /// ```
+    #[inline]
     pub fn read_word(&mut self, address: u32, cpu_type: CpuType) -> u32 {
-        if let Some(bytes) = self.fast_read::<4>(address, cpu_type) {
-            return u32::from_le_bytes(bytes); // TCM / plain RAM (fast_ram.rs)
+        match self.fast_read::<4>(address, cpu_type) {
+            Some(bytes) => u32::from_le_bytes(bytes), // TCM / plain RAM (fast_ram.rs)
+            None => self.read_word_bus(address, cpu_type),
         }
+    }
+
+    /// The full bus path of [`Self::read_word`] (devices, Slot-2, I/O, VRAM...),
+    /// kept out of line so the RAM fast path inlines into its callers.
+    #[inline(never)]
+    fn read_word_bus(&mut self, address: u32, cpu_type: CpuType) -> u32 {
         self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Word, cpu_type) {
             return value;
@@ -70,10 +78,18 @@ impl Emulator {
 
     /// CPU-side 16-bit load (Thumb fetch, LDRH/LDRSH); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_halfword().
+    #[inline]
     pub fn read_halfword(&mut self, address: u32, cpu_type: CpuType) -> u16 {
-        if let Some(bytes) = self.fast_read::<2>(address, cpu_type) {
-            return u16::from_le_bytes(bytes); // TCM / plain RAM (fast_ram.rs)
+        match self.fast_read::<2>(address, cpu_type) {
+            Some(bytes) => u16::from_le_bytes(bytes), // TCM / plain RAM (fast_ram.rs)
+            None => self.read_halfword_bus(address, cpu_type),
         }
+    }
+
+    /// The full bus path of [`Self::read_halfword`] (devices, Slot-2, I/O, VRAM...),
+    /// kept out of line so the RAM fast path inlines into its callers.
+    #[inline(never)]
+    fn read_halfword_bus(&mut self, address: u32, cpu_type: CpuType) -> u16 {
         self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Half, cpu_type) {
             return value as u16;
@@ -90,10 +106,18 @@ impl Emulator {
 
     /// CPU-side 8-bit load (LDRB/LDRSB); same routing as
     /// [`Self::read_word`] via arm9_/arm7_read_byte().
+    #[inline]
     pub fn read_byte(&mut self, address: u32, cpu_type: CpuType) -> u8 {
-        if let Some(bytes) = self.fast_read::<1>(address, cpu_type) {
-            return bytes[0]; // TCM / plain RAM (fast_ram.rs)
+        match self.fast_read::<1>(address, cpu_type) {
+            Some(bytes) => bytes[0], // TCM / plain RAM (fast_ram.rs)
+            None => self.read_byte_bus(address, cpu_type),
         }
+    }
+
+    /// The full bus path of [`Self::read_byte`] (devices, Slot-2, I/O, VRAM...),
+    /// kept out of line so the RAM fast path inlines into its callers.
+    #[inline(never)]
+    fn read_byte_bus(&mut self, address: u32, cpu_type: CpuType) -> u8 {
         self.sync_before_io(address, cpu_type);
         if let Some(value) = self.slot2_read(address, Width::Byte, cpu_type) {
             return value as u8;
