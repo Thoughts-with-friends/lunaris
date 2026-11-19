@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn elapsed_ticks_matches_division() {
-        for clock_div in 0..4u8 {
+        for clock_div in 0..4_u8 {
             let div = 1 << PRESCALER_SHIFT[clock_div as usize];
             for left in -5000..=0 {
                 let mut fast = left;
